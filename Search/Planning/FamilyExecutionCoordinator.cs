@@ -338,16 +338,44 @@ public static partial class FamilyExecutionCoordinator
         bool failOnPhysicalRecovery = false,
         bool? gpuAvailable = null,
         SearchContinuationSnapshot? continuation = null,
+        bool? gpuFloat64Available = null) =>
+        Start(plan, false, queueCapacity, diagnosticSink, traceSingleCandidateSeed, failOnPhysicalRecovery,
+            gpuAvailable, continuation, gpuFloat64Available);
+
+    internal static ProductionSearchSession Start(
+        PreparedSearch plan,
+        bool enableGpuPowerDiagnostics,
+        int queueCapacity = 64,
+        IRuntimePredictionDiagnosticSink? diagnosticSink = null,
+        string traceSingleCandidateSeed = "",
+        bool failOnPhysicalRecovery = false,
+        bool? gpuAvailable = null,
+        SearchContinuationSnapshot? continuation = null,
         bool? gpuFloat64Available = null)
     {
         using var logScope = RuntimeLog.SearchScope(RuntimeLog.SessionId.Length > 0 ? RuntimeLog.SessionId : Guid.NewGuid().ToString("N"));
+        try
+        {
+            SearchContinuationIdentity.BeginPreparation(plan);
+            return StartPrepared(plan, enableGpuPowerDiagnostics, queueCapacity, diagnosticSink, traceSingleCandidateSeed,
+                failOnPhysicalRecovery, gpuAvailable, continuation, gpuFloat64Available);
+        }
+        catch
+        {
+            Infrastructure.Snapshots.ProductionSearchReplay.LogSessionWorkload(plan, RuntimeLog.SessionId);
+            throw;
+        }
+    }
+
+    private static ProductionSearchSession StartPrepared(PreparedSearch plan, bool enableGpuPowerDiagnostics, int queueCapacity,
+        IRuntimePredictionDiagnosticSink? diagnosticSink, string traceSingleCandidateSeed, bool failOnPhysicalRecovery,
+        bool? gpuAvailable, SearchContinuationSnapshot? continuation, bool? gpuFloat64Available)
+    {
         // Device eligibility constrains planning. A prior GPU failure does not
         // reject an allocation that can execute entirely on admitted CPU filters.
-        FamilyAuxiliaryEvidence.Read(nameof(FamilyExecutionCoordinator), "SaveWorkloadDiagnostic", () =>
-        { Infrastructure.Snapshots.ProductionSearchReplay.LogSessionWorkload(plan, RuntimeLog.SessionId); return true; }, false,
-            plan.SnapshotFingerprint);
         long started=Stopwatch.GetTimestamp();
         FamilyExecutionPlan executionPlan = Plan(plan, gpuAvailable, gpuFloat64Available);
+        double planningMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         FamilyAuxiliaryEvidence.Read(nameof(FamilyExecutionCoordinator), "AllocationDiagnostics", () =>
         {
             if (executionPlan.DecisionEvidence.Any(e => e.StartsWith("GpuFloat64Unavailable;", StringComparison.Ordinal)))
@@ -383,12 +411,17 @@ public static partial class FamilyExecutionCoordinator
         var unavailableEta = new FamilySearchEtaProjectionV1(FamilySearchEtaStatus.Unavailable, null,
             "EtaPreparationFailed", executionPlan, Math.Max(1, plan.TargetMatchCount), plan.ScanCount,
             null, null, null, null, null, null, null, null, null, null, null, [], ["EtaPreparationFailed"]);
+        long etaStarted = Stopwatch.GetTimestamp();
         FamilySearchEtaProjectionV1 eta = FamilyAuxiliaryEvidence.Read(nameof(FamilyExecutionCoordinator), "EtaPreparation",
             () => FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(plan, executionPlan), executionPlan),
             unavailableEta, plan.SnapshotFingerprint);
-        return new ProductionSearchSession(
+        long sessionStarted = Stopwatch.GetTimestamp();
+        var session = new ProductionSearchSession(
             plan, executionPlan, eta, executionWindowSize, queueCapacity, diagnosticSink, traceSingleCandidateSeed, failOnPhysicalRecovery,
-            continuation: continuation, allowInitialGpuCreationFallback: !HasExplicitPhysicalControl());
+            continuation: continuation, allowInitialGpuCreationFallback: !HasExplicitPhysicalControl(),
+            enableGpuPowerDiagnostics: enableGpuPowerDiagnostics, logWorkload: true);
+        RuntimeLog.TryBackgroundInfo($"searchStartup=true;phase=CoordinatorReturned;planningMs={planningMs:F4};allocationEvidenceMs={Stopwatch.GetElapsedTime(started, etaStarted).TotalMilliseconds - planningMs:F4};etaMs={Stopwatch.GetElapsedTime(etaStarted, sessionStarted).TotalMilliseconds:F4};sessionConstructionMs={Stopwatch.GetElapsedTime(sessionStarted).TotalMilliseconds:F4}");
+        return session;
     }
 
     internal static int ResolveExecutionWindowSize(PreparedSearch plan, IReadOnlyList<FilterBodyDescription> families)
@@ -483,9 +516,8 @@ public static partial class FamilyExecutionCoordinator
             model.CompiledSearch.NormalizedQuery.ElitePrefixResearch is not null) &&
             model.ProfileId == RuntimeProfileId.Beta111)
             families.Add(StandardMapFamily.Prepare(model, preferences, preferGpu, preferGpuFloat64));
-        // Scoped replay has no accepted cost quote. Register it after the
-        // established filters so their cheap rejection runs before replay;
-        // retain the planner's unknown-evidence policy and explicit manual order.
+        // Preserve the registration fallback for unpriced scoped replay;
+        // fixed-pool numerical T participates with its own local quote.
         if (transformation is not null && scopedTransformation) families.Add(transformation);
         RuntimeLog.TryBackgroundInfo($"searchStartup=true;phase=FamilyDescriptionsPrepared;elapsedMs={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F4};families={string.Join(',',families.Select(f=>f.FamilyId))};gpuResourcesCreated=false");
         return families;

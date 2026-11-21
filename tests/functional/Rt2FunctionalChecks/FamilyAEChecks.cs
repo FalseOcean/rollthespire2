@@ -551,9 +551,10 @@ internal static class FamilyAEChecks
   var fake=new EventResultSearchCondition(EventResultConditionKind.FakeMerchantOfferedFakeRelic,Beta111EventResultCatalog.FakeMerchantRelics[0]);
   var color=new EventResultSearchCondition(EventResultConditionKind.ColorfulPhilosophersOfferedColor,Beta111EventResultCatalog.ColorfulCharacterOrder[0]);
   EventResultGpuPacking.ValidateFixedPoolGeometry([trash,fake,color],10,5,9,5);
+  EventResultGpuPacking.ValidateFixedPoolGeometry([color],10,5,9,6);
   foreach(var (condition,grab,dive,merchant,colors,issue) in new[]{
    (trash,12,6,9,5,"TrashHeap"),(trash,10,6,9,5,"TrashHeap"),
-   (fake,10,5,10,5,"FakeMerchant"),(color,10,5,9,6,"ColorfulPhilosophers")})
+   (fake,10,5,10,5,"FakeMerchant"),(color,10,5,9,7,"ColorfulPhilosophers")})
   {
    try { EventResultGpuPacking.ValidateFixedPoolGeometry([condition],grab,dive,merchant,colors);throw new Exception("E changed shader geometry admitted"); }
    catch(NotSupportedException ex) when(ex.Message.StartsWith("E.GpuFixedPoolGeometryUnsupported:"+issue,StringComparison.Ordinal)) { }
@@ -608,6 +609,12 @@ internal static class FamilyAEChecks
   authorities.Add(basis.Authority.WithEffectAuthority(effects with {EventResultStaticCatalogExact=false}));
   Check(!Beta111EventResultAuthority.From(authorities[^2]).ColorfulPoolAuthorityExact,"missing Colorful authority fixture");
   Check(!Beta111EventResultAuthority.From(authorities[^1]).StaticCatalogAuthorityExact,"missing static authority fixture");
+  authorities.Add(basis.Authority.WithEffectAuthority(effects with {EventResultStaticCatalogExact=false,
+      EventCatalogParts=EventResultCatalogParts.TrashGrab | EventResultCatalogParts.FakeMerchant}));
+  var partialProjection = Beta111EventResultProjector.Project(0, 0, Beta111EventResultAuthority.From(authorities[^1]));
+  Check(partialProjection.TrashGrabPrecision == PredictionPrecision.Exact &&
+      partialProjection.TrashDivePrecision == PredictionPrecision.Unsupported &&
+      partialProjection.FakeMerchantPrecision == PredictionPrecision.Exact, "independent event table capture");
   ulong[] roots=Enumerable.Range(0,64).Select(i=>Beta111Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal((ulong)i)))
    .Concat(new[]{0UL,ulong.MaxValue,1UL<<63,(1UL<<63)-1}).ToArray();
   foreach(var authority in authorities)
@@ -622,12 +629,12 @@ internal static class FamilyAEChecks
    foreach(ulong root in roots)
    {
     bool oldReject=OriginalEventNumericPredicate.RejectsEventResultForFamily(root,conditions,plan.Authority,0);
-    Check(EventResultNumericPredicate.RejectsEventResultForFamily(root,metadata,0)==oldReject,"old numerical oracle");
+    if (plan.Authority.StaticCatalogAuthorityExact) Check(EventResultNumericPredicate.RejectsEventResultForFamily(root,metadata,0)==oldReject,"old numerical oracle");
     bool actual=plan.Matches(root),core=plan.Reference(root);
     if(actual!=core)
      throw new InvalidDataException($"E family/reference disagree: root={root}, conditions={string.Join(", ",conditions.Select(c=>c.Kind+"="+c.TargetKey))}, slot={plan.PlayerSlot}, staticExact={plan.Authority.StaticCatalogAuthorityExact}, colorfulExact={plan.Authority.ColorfulPoolAuthorityExact}, family={actual}, reference={core}, exact={Beta111CanonicalEventShopSearchEvaluator.Evaluate(request.Model,root,authority).Disposition}");
     checks++;
-    if(plan.NumericalSupported)Check(actual==!oldReject,"request plan vs original numerical");
+    if(plan.NumericalSupported && plan.Authority.StaticCatalogAuthorityExact)Check(actual==!oldReject,"request plan vs original numerical");
     if(compiledColor is not null)Check(compiledColor.Matches(root)==core,"compiled color remaining");
     var disposition=Beta111CanonicalEventShopSearchEvaluator.Evaluate(request.Model,root,authority).Disposition;
     // An unresolved earlier observable can end Exact before a later independent

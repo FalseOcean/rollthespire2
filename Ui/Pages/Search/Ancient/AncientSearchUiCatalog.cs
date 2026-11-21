@@ -57,9 +57,6 @@ internal sealed record AncientSearchUiCatalog(
     bool CharacterTargetAuthorityExact,
     string EvidenceCode)
 {
-    private static readonly string[] Act2AncientEntries = { "OROBAS", "PAEL", "TEZCATARA" };
-    private static readonly string[] Act3AncientEntries = { "NONUPEIPE", "TANX", "VAKUU" };
-
     public static AncientSearchUiCatalog Empty(
         RuntimeProfileId profileId,
         ModelKey characterKey,
@@ -85,16 +82,11 @@ internal sealed record AncientSearchUiCatalog(
         foreach (int act in new[] { 2, 3 })
         {
             IReadOnlyList<ModelKey> actAncients = ResolveActAncients(profileId, world, act);
-            var rows = new List<AncientRowDefinition>(4);
-            foreach (string entry in act == 2 ? Act2AncientEntries : Act3AncientEntries)
-            {
-                ModelKey key = BindAncient(entry, actAncients, out bool exact);
-                rows.Add(BuildRow(profileId, world, runtimeRelics, act, key, exact));
-            }
-
-            IReadOnlyList<ModelKey> shared = ResolveSharedAncients(profileId, world);
-            ModelKey darv = BindAncient("DARV", shared, out bool darvExact);
-            rows.Add(BuildRow(profileId, world, runtimeRelics, act, darv, darvExact));
+            var rows = actAncients.Concat(ResolveSharedAncients(profileId, world))
+                .Where(key => key.IsValid && key.Category == BaseGameModelKeys.Categories.Event)
+                .Distinct(ModelKeyComparer.Instance)
+                .Select(key => BuildRow(profileId, world, runtimeRelics, act, key, true))
+                .ToArray();
             sections.Add(new AncientActSectionDefinition(act, rows));
         }
 
@@ -183,7 +175,8 @@ internal sealed record AncientSearchUiCatalog(
                 .Distinct(ModelKeyComparer.Instance)
                 .Select(key => Candidate(
                     key,
-                    context.Catalog.CatalogExact,
+                    context.Catalog.CatalogExact || context.Catalog.VariantData.ContainsKey("pael.directPoolBindings") &&
+                        context.Catalog.Pools.Any(p => p.OrderExact && p.OrderedOptions.Contains(key)),
                     profileId switch
                     {
                         RuntimeProfileId.Beta111 => "beta111-event-context-option-catalog-owner-smoke-pending",
@@ -304,11 +297,11 @@ internal sealed record AncientSearchUiCatalog(
     {
         if (RuntimeProfilePolicies.IsModernCore(profileId))
         {
-            return world.Beta109Generation?.OrderedActCatalog
-                .Where(item => item.Act == act)
+            var generation = world.Beta109Generation;
+            var eligible = generation?.ActSelectionGroups.FirstOrDefault(group => group.Act == act && group.EligibilityAndOrderExact);
+            return generation?.OrderedActCatalog
+                .Where(item => item.Act == act && (eligible is null || eligible.EligibleActsInSourceOrder.Contains(item.ActKey)))
                 .SelectMany(item => item.OrderedAncients)
-                .Where(key => !string.Equals(key.Entry, "NEOW", StringComparison.Ordinal) &&
-                              !string.Equals(key.Entry, "DARV", StringComparison.Ordinal))
                 .Distinct(ModelKeyComparer.Instance)
                 .ToArray() ?? Array.Empty<ModelKey>();
         }
@@ -317,8 +310,6 @@ internal sealed record AncientSearchUiCatalog(
             .Where(group => group.Act == act)
             .SelectMany(group => group.Acts)
             .SelectMany(item => item.Ancients)
-            .Where(key => !string.Equals(key.Entry, "NEOW", StringComparison.Ordinal) &&
-                          !string.Equals(key.Entry, "DARV", StringComparison.Ordinal))
             .Distinct(ModelKeyComparer.Instance)
             .ToArray();
     }
@@ -329,21 +320,8 @@ internal sealed record AncientSearchUiCatalog(
         (RuntimeProfilePolicies.IsModernCore(profileId)
                 ? world.Beta109Generation?.SharedAncients
                 : world.SharedAncients)
-            ?.Where(key => !string.Equals(key.Entry, "NEOW", StringComparison.Ordinal))
-            .Distinct(ModelKeyComparer.Instance)
+            ?.Distinct(ModelKeyComparer.Instance)
             .ToArray() ?? Array.Empty<ModelKey>();
-
-    private static ModelKey BindAncient(string entry, IReadOnlyList<ModelKey> candidates, out bool exact)
-    {
-        ModelKey[] matches = candidates
-            .Where(key => key.IsValid &&
-                          key.Category == BaseGameModelKeys.Categories.Event &&
-                          string.Equals(Normalize(key.Entry), Normalize(entry), StringComparison.Ordinal))
-            .Distinct(ModelKeyComparer.Instance)
-            .ToArray();
-        exact = matches.Length == 1;
-        return exact ? matches[0] : new ModelKey(BaseGameModelKeys.Categories.Event, entry);
-    }
 
     private static ModelKey BindRelic(
         string entry,

@@ -4,6 +4,7 @@ using HarmonyLib;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using RolltheSpire2.Ui;
 using RolltheSpire2.Compatibility.ModPrediction;
+using RolltheSpire2.Infrastructure.Diagnostics;
 using RolltheSpire2.Ui.Shell;
 using RolltheSpire2.Ui.Icons;
 
@@ -29,6 +30,8 @@ internal static class MainMenuPatchInstaller
         InstallFeature(harmony, "RunTopBar", () => harmony.Patch(
             RequiredMethod(typeof(MegaCrit.Sts2.Core.Nodes.CommonUi.NTopBar), "Initialize", [typeof(MegaCrit.Sts2.Core.Runs.IRunState)]),
             postfix: new HarmonyMethod(RequiredMethod(typeof(MainMenuPatchInstaller), nameof(RunTopBarPostfix)))));
+        InstallFeature(harmony, "FeedbackPlayRewardObservation", () => FeedbackPlayObservation.InstallRewardObserver(harmony));
+        InstallFeature(harmony, "FeedbackPlayAncientObservation", () => FeedbackPlayObservation.InstallAncientObserver(harmony));
         InstallFeature(harmony, "MainMenu", () => InstallMenu(harmony));
     }
 
@@ -160,5 +163,7 @@ internal static class MainMenuPatchInstaller
         catch (Exception ex) { RuntimeLog.WarnException("runPredictionLauncherAttachFailed=true", ex); }
         try { RolltheSpire2.Ui.InRunConsole.InRunConsoleLauncher.EnsureAttached(__instance, runState, ModRuntime.Snapshot); }
         catch (Exception ex) { RuntimeLog.WarnException("inRunConsoleAttachFailed=true", ex); }
+        try { FeedbackPlayObservation.Bind(__instance, runState); }
+        catch (Exception ex) { RuntimeLog.WarnException("feedbackPlayObservationAttachFailed=true", ex); }
     }
 }

@@ -34,7 +34,12 @@ public static class EventPoolSequenceProjector
         int RawActLocalCount,
         int RawSharedCount,
         int FilteredOutCount,
-        IReadOnlyList<EventEpochFilterEvidence> EpochFilters);
+        IReadOnlyList<EventEpochFilterEvidence> EpochFilters)
+    {
+        internal IReadOnlySet<ModelKey>? RemovedAfterShuffle { get; init; }
+        internal IReadOnlyList<Candidate> GeneratedQueue => RemovedAfterShuffle == null ? Candidates :
+            Candidates.Where(c => !RemovedAfterShuffle.Contains(c.EventKey)).ToArray();
+    }
 
     public static bool TryPrepare(
         int act,
@@ -92,7 +97,7 @@ public static class EventPoolSequenceProjector
                 epoch.IsRevealed,
                 epoch.OrderedMemberKeys.Count,
                 removed,
-                PredictionPrecision.Exact,
+                epoch.MembershipExact ? PredictionPrecision.Exact : PredictionPrecision.Partial,
                 "event-pool-sequence.epoch-filter." + epoch.EpochId.ToLowerInvariant()));
         }
 
@@ -102,6 +107,25 @@ public static class EventPoolSequenceProjector
             return false;
         }
 
+        if (authority.LockedEventsAfterShuffle == null)
+        {
+            issueCode = "UnknownGeneratedRoomEventFilter";
+            return false;
+        }
+
+        // RitsuLib retains the original shuffled queue if its filter would empty
+        // it. Membership is known before shuffle, but positions are only known after.
+        HashSet<ModelKey>? removedAfterShuffle = null;
+        if (authority.LockedEventsAfterShuffle.Count > 0)
+        {
+            var locked = authority.LockedEventsAfterShuffle.ToHashSet(ModelKeyComparer.Instance);
+            int removed = candidates.Count(c => locked.Contains(c.EventKey));
+            if (removed > 0 && removed < candidates.Count)
+            {
+                removedAfterShuffle = locked;
+                removedTotal += removed;
+            }
+        }
         prepared = new PreparedAct(
             act,
             actKey,
@@ -109,7 +133,7 @@ public static class EventPoolSequenceProjector
             orderedActLocalRaw.Count,
             orderedSharedRaw.Count,
             removedTotal,
-            filterEvidence);
+            filterEvidence) { RemovedAfterShuffle = removedAfterShuffle };
         return true;
     }
 
@@ -124,7 +148,8 @@ public static class EventPoolSequenceProjector
         string evidenceCode)
     {
         PredictionPrecision projectionPrecision = EventStaticEligibilityCatalog.ProjectionPrecision(profileId);
-        EventPoolRawSequenceEntryResult[] rawEntries = prepared.Candidates
+        var generated = prepared.GeneratedQueue;
+        EventPoolRawSequenceEntryResult[] rawEntries = generated
             .Select((candidate, index) => new EventPoolRawSequenceEntryResult(
                 index + 1,
                 candidate.SourceOrdinal,
@@ -137,10 +162,13 @@ public static class EventPoolSequenceProjector
 
         if (!candidateContext.OpeningAncientCursorAuthorityExact)
         {
-            throw new InvalidOperationException("MissingOpeningAncientCursorAuthority");
+            return new EventPoolActSequenceResult(prepared.Act, prepared.ActKey, rawEntries, [],
+                prepared.RawActLocalCount, prepared.RawSharedCount, rawEntries.Length, 0, prepared.FilteredOutCount,
+                null, 0, 0, 0, prepared.EpochFilters, [], PredictionPrecision.Unknown, authority,
+                SnapshotCompleteness.Partial, "up_front", rngCallCountBefore, rngCallCountAfter, evidenceCode);
         }
 
-        int cursorOffset = Math.Clamp(candidateContext.OpeningAncientCursorOffset, 0, prepared.Candidates.Count);
+        int cursorOffset = Math.Clamp(candidateContext.OpeningAncientCursorOffset, 0, generated.Count);
         var effectiveEntries = new List<EventPoolSequenceEntryResult>();
         var exclusions = new List<EventStaticExclusionEvidence>();
         int openingSkipped = cursorOffset;
@@ -148,7 +176,7 @@ public static class EventPoolSequenceProjector
 
         for (int rawIndex = 0; rawIndex < cursorOffset; rawIndex++)
         {
-            Candidate skipped = prepared.Candidates[rawIndex];
+            Candidate skipped = generated[rawIndex];
             exclusions.Add(new EventStaticExclusionEvidence(
                 rawIndex + 1,
                 skipped.EventKey,
@@ -161,9 +189,9 @@ public static class EventPoolSequenceProjector
                 EventStaticEligibilityCatalog.ProjectionAuthorityCode(profileId)));
         }
 
-        for (int rawIndex = cursorOffset; rawIndex < prepared.Candidates.Count; rawIndex++)
+        for (int rawIndex = cursorOffset; rawIndex < generated.Count; rawIndex++)
         {
-            Candidate candidate = prepared.Candidates[rawIndex];
+            Candidate candidate = generated[rawIndex];
             EventStaticEligibilityResult rule = EventStaticEligibilityCatalog.Evaluate(
                 candidate.EventKey,
                 prepared.Act,
@@ -295,7 +323,7 @@ public static class EventPoolSequenceProjector
         ModelKey key,
         Beta109EventCatalogAuthoritySnapshot authority) =>
         authority.EpochsInFilterOrder
-            .Where(epoch => epoch.OrderedMemberKeys.Contains(key, ModelKeyComparer.Instance))
+            .Where(epoch => epoch.MembershipExact && epoch.OrderedMemberKeys.Contains(key, ModelKeyComparer.Instance))
             .Select(epoch => epoch.EpochId)
             .ToArray();
 

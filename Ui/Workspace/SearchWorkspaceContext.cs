@@ -1,4 +1,5 @@
 using RolltheSpire2.Search.Contracts;
+using RolltheSpire2.Search.FamilyExecution;
 using RolltheSpire2.Search.Runtime;
 using RolltheSpire2.Ui.Persistence;
 using RolltheSpire2.Ui.Shell;
@@ -10,7 +11,11 @@ namespace RolltheSpire2.Ui.Workspace;
 internal sealed record SearchStartContext(WorkbenchSearchDraft Draft, PreparedSearch Plan,
     SearchEnvironmentSignature Environment, string QueryKey, string EnvironmentFingerprint,
     string HistoryId, string BatchId, DateTimeOffset StartedAtUtc, SeedLibraryContext? Context,
-    SearchWorkspace.SearchStartResolution Resolution);
+    SearchWorkspace.SearchStartResolution Resolution)
+{
+    internal ulong? ScanStartOrdinal { get; } =
+        Beta110SeedCodec.TryParseOrdinal(Plan.CanonicalStartSeed, out ulong start, out _, out _) ? start : null;
+}
 
 internal sealed record SearchLiveResult(SearchCandidate Candidate, SearchStartContext Start, PersistedSearchResult Observation);
 

@@ -126,6 +126,8 @@ internal sealed partial class NeowOperationOverlay : Control
         ReleaseCardDisplays();
         foreach (Node child in GetChildren()) { RemoveChild(child); child.QueueFree(); }
         _nativeTiles.Clear();
+        _pendingFaces.Clear();
+        _faceSetupReady = false;
         _mapSummaryNames.Clear();
         _huntTrees.Clear();
         _stacks.Clear(); _iconGroups.Clear(); _visibleCardRegions.Clear(); _summaryPanels.Clear();

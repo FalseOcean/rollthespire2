@@ -77,6 +77,8 @@ internal static partial class ModernCapsuleRelicFamily
             Cost = new()
             {
                 PartyChild = new(AllowsHistoricalEnvelope: false),
+                PrivateOutputRevision = native ? RelicFamilyGpuExecutor.SmallHeaderRevision : "",
+                PrivateOutputPathSuffix = native ? ".PrivateSmallHeader8" : "",
                 Quote = (_, geometry, _) => RelicWorkEstimate.ModernShopFirstCapsule(sequence, gpu, geometry)
             },
             PerformanceProjection = compact => new(RelicFamily.Id, gpu.Revision(compact),

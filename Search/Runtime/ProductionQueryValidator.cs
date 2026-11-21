@@ -101,7 +101,7 @@ public static partial class ProductionQueryValidator
         }
         evidence.AddRange(relics.Evidence);
 
-        SearchQueryEvaluation events = EvaluateEventSequences(plan, document);
+        SearchQueryEvaluation events = EvaluateEventSequences(plan, document, expectedAuthority);
         if (events.Disposition == SearchDisposition.NoMatch)
         {
             return events;
@@ -979,11 +979,10 @@ public static partial class ProductionQueryValidator
             SearchQueryEvaluation status = ValidateDomain(world?.BossStatus, world?.BossIssueCode, "Boss");
             if (status.Disposition != SearchDisposition.Match) return status;
             BossPredictionResult[] bosses = world!.Bosses.Where(item => item.Act == filter.Act).ToArray();
-            if (bosses.Length == 0 || bosses.Any(item => !IsBossIdentityUsableForSearch(item)))
-                return SearchQueryEvaluation.Unknown("BossIdentityNotReplayable:Act" + filter.Act);
-            if (!QueryKeySetPredicate.MatchesKeySet(bosses.Select(item => item.BossKey), filter.Keys))
-                return SearchQueryEvaluation.NoMatch("BossFilterRejected:Act" + filter.Act);
-            evidence.AddRange(bosses.Select(boss => new SearchMatchEvidence(
+            var result = QueryKeySetPredicate.MatchActBosses(bosses, filter.Act, plan.Ascension, filter.Keys);
+            if (result == SearchDisposition.Unknown) return SearchQueryEvaluation.Unknown("BossIdentityNotReplayable:Act" + filter.Act);
+            if (result == SearchDisposition.NoMatch) return SearchQueryEvaluation.NoMatch("BossFilterRejected:Act" + filter.Act);
+            evidence.AddRange(bosses.Where(IsBossIdentityUsableForSearch).Select(boss => new SearchMatchEvidence(
                 boss.IdentityPrecision == PredictionPrecision.Exact
                     ? "BossIdentityMatched"
                     : "BossIdentityMatchedCompatible",
@@ -1034,10 +1033,8 @@ public static partial class ProductionQueryValidator
             {
                 if (row.OptionAny.Count > 0)
                 {
-                    if (!AncientOptionsEvaluated(ancient.OptionsEvaluationStatus) ||
-                        ancient.Options.Any(o => o.OptionPrecision != PredictionPrecision.Exact)) return SearchDisposition.Unknown;
-                    if (!ancient.Options.Any(o => o.IsVisible && row.OptionAny.Contains(o.OptionKey, ModelKeyComparer.Instance)))
-                        return SearchDisposition.NoMatch;
+                    var disposition = QueryKeySetPredicate.MatchVisibleAncientOptions(ancient.OptionsEvaluationStatus, ancient.Options, new(row.OptionAny, [], []));
+                    if (disposition != SearchDisposition.Match) return disposition;
                 }
                 if (row.SeaGlassTargetAny.Count > 0)
                 {
@@ -1067,14 +1064,11 @@ public static partial class ProductionQueryValidator
 
             if (branch.OptionAny.Count > 0)
             {
-                if (!AncientOptionsEvaluated(ancient.OptionsEvaluationStatus) ||
-                    ancient.Options.Any(option => option.OptionPrecision != PredictionPrecision.Exact))
-                {
+                var disposition = QueryKeySetPredicate.MatchVisibleAncientOptions(ancient.OptionsEvaluationStatus, ancient.Options, new(branch.OptionAny, [], []));
+                if (disposition == SearchDisposition.Unknown)
                     return SearchQueryEvaluation.Unknown("AncientBranchOptionsNotExact:Act" + branch.Act);
-                }
-
                 AncientOptionPredictionResult[] visibleOptions = ancient.Options
-                    .Where(option => option.IsVisible)
+                    .Where(option => option.IsVisible && option.OptionPrecision == PredictionPrecision.Exact)
                     .ToArray();
                 AncientOptionPredictionResult? matchedOption = visibleOptions.FirstOrDefault(option =>
                     branch.OptionAny.Contains(option.OptionKey, ModelKeyComparer.Instance));
@@ -1155,12 +1149,15 @@ public static partial class ProductionQueryValidator
             SearchQueryEvaluation status = ValidateDomain(world?.AncientStatus, world?.AncientIssueCode, "Ancient");
             if (status.Disposition != SearchDisposition.Match) return status;
             AncientPredictionResult? ancient = world!.Ancients.FirstOrDefault(item => item.Act == filter.Act);
-            if (ancient is null || !AncientOptionsEvaluated(ancient.OptionsEvaluationStatus) ||
-                ancient.Options.Any(option => option.OptionPrecision != PredictionPrecision.Exact))
+            if (ancient is null || ancient.IdentityPrecision != PredictionPrecision.Exact)
+                return SearchQueryEvaluation.Unknown("AncientIdentityNotExact:Act" + filter.Act);
+            var disposition = QueryKeySetPredicate.MatchVisibleAncientOptions(ancient.OptionsEvaluationStatus, ancient.Options, filter.Keys);
+            if (disposition == SearchDisposition.Unknown)
                 return SearchQueryEvaluation.Unknown("AncientOptionsNotExact:Act" + filter.Act);
-            ModelKey[] options = ancient.Options.Where(option => option.IsVisible).Select(option => option.OptionKey).ToArray();
-            if (!QueryKeySetPredicate.MatchesKeySet(options, filter.Keys))
+            if (disposition == SearchDisposition.NoMatch)
                 return SearchQueryEvaluation.NoMatch("AncientOptionFilterRejected:Act" + filter.Act);
+            ModelKey[] options = ancient.Options.Where(option => option.IsVisible && option.OptionPrecision == PredictionPrecision.Exact)
+                .Select(option => option.OptionKey).ToArray();
             evidence.Add(new SearchMatchEvidence(
                 "AncientOptionsMatched", ancient.AncientKey, $"ancient-options:act{ancient.Act}",
                 EvidenceCode: ancient.OptionEvidenceCode, ProfileId: document.ProfileId, Act: ancient.Act,
@@ -1281,49 +1278,67 @@ public static partial class ProductionQueryValidator
             return SearchQueryEvaluation.Unknown("RelicSequencePredictionMissingOrUnknown");
 
         var evidence = new List<SearchMatchEvidence>();
+        SearchQueryEvaluation? unresolvedRelic = null;
         foreach ((RelicSequenceSearchCondition condition, int index) in plan.Evaluation.RelicSequenceConditions.Select((item, index) => (item, index)))
         {
-            RelicSequenceLaneResult? lane = prediction.Lanes.FirstOrDefault(item => item.Kind == condition.Lane);
-            if (lane is null || lane.Precision != PredictionPrecision.Exact)
-                return SearchQueryEvaluation.Unknown("RelicSequenceLaneNotExact:" + condition.Lane +
-                    (string.IsNullOrWhiteSpace(lane?.IssueCode) ? string.Empty : ":" + lane.IssueCode));
-            RelicSequenceEntryResult[] range = condition.RangeMode == SearchSequenceRangeMode.FirstN
-                ? lane.Entries.Where(item => item.Position <= condition.RangeValue).ToArray()
-                : lane.Entries.Where(item => item.Position == condition.RangeValue).ToArray();
-            if (condition.RangeMode == SearchSequenceRangeMode.ExactSlot && range.Length != 1)
-                return SearchQueryEvaluation.Unknown($"RelicSequenceSlotUnavailable:{condition.Lane}:{condition.RangeValue}");
-            if (range.Any(item => item.Precision != PredictionPrecision.Exact))
-                return SearchQueryEvaluation.Unknown($"RelicSequenceRangeNotExact:{condition.Lane}:{condition.RangeValue}");
+            RelicSequenceLaneResult? lane = prediction.GetPlayerLane(condition.Lane);
+            bool complete = lane?.Precision == PredictionPrecision.Exact;
+            var known = lane?.Entries.TakeWhile(e => e.Precision == PredictionPrecision.Exact).ToArray() ?? [];
+            var range = known.Where(item => condition.RangeMode == SearchSequenceRangeMode.FirstN
+                ? item.Position <= condition.RangeValue : item.Position == condition.RangeValue).ToArray();
+            if (!complete && known.Length < condition.RangeValue)
+            {
+                if (range.Any(entry => condition.Keys.Ban.Contains(entry.RelicKey)))
+                    return SearchQueryEvaluation.NoMatch($"RelicSequenceConditionRejected:{condition.Lane}:{index}");
+                if (range.Length == 0 || condition.Keys.Ban.Count > 0 ||
+                    !QueryKeySetPredicate.MatchesKeySet(range.Select(e => e.RelicKey), condition.Keys))
+                {
+                    unresolvedRelic ??= SearchQueryEvaluation.Unknown($"RelicSequenceRangeNotExact:{condition.Lane}:{condition.RangeValue}:{lane?.IssueCode}");
+                    continue;
+                }
+            }
+            if (complete && condition.RangeMode == SearchSequenceRangeMode.ExactSlot && condition.RangeValue > lane!.TotalCount)
+                return SearchQueryEvaluation.NoMatch($"RelicSequenceSlotAbsent:{condition.Lane}:{condition.RangeValue}");
+            if (complete && known.Length < Math.Min(condition.RangeValue, lane!.TotalCount))
+            {
+                unresolvedRelic ??= SearchQueryEvaluation.Unknown($"RelicSequenceRangeNotExact:{condition.Lane}:{condition.RangeValue}");
+                continue;
+            }
             if (!QueryKeySetPredicate.MatchesKeySet(range.Select(item => item.RelicKey), condition.Keys))
                 return SearchQueryEvaluation.NoMatch($"RelicSequenceConditionRejected:{condition.Lane}:{index}");
             evidence.Add(new SearchMatchEvidence(
                 "RelicSequenceConditionMatched",
                 range.FirstOrDefault()?.RelicKey,
                 $"relic-sequence:{condition.Lane}",
-                EvidenceCode: lane.EvidenceCode,
+                EvidenceCode: lane!.EvidenceCode,
                 Ordinal: condition.RangeMode == SearchSequenceRangeMode.ExactSlot ? condition.RangeValue : null,
                 ConditionId: "relic-sequence-" + index));
         }
         int shopSequenceIndex = 0;
-        RelicSequenceLaneResult? shopLane = prediction.Lanes.FirstOrDefault(item => item.Kind == RelicSequenceKind.Shop);
+        RelicSequenceLaneResult? shopLane = prediction.GetPlayerLane(RelicSequenceKind.Shop);
         foreach (RelicShopSequenceSearchCondition condition in plan.Evaluation.RelicShopSequenceConditions)
         {
-            if (shopLane is null || shopLane.Precision != PredictionPrecision.Exact)
-                return SearchQueryEvaluation.Unknown("RelicShopSequenceLaneNotExact" +
-                    (string.IsNullOrWhiteSpace(shopLane?.IssueCode) ? string.Empty : ":" + shopLane.IssueCode));
-            RelicSequenceEntryResult[] range = shopLane.Entries
+            RelicSequenceEntryResult[] range = (shopLane?.Entries ?? []).TakeWhile(e => e.Precision == PredictionPrecision.Exact)
                 .Where(item => item.Position <= condition.Count)
                 .OrderBy(item => item.Position)
                 .ToArray();
-            if (range.Length < condition.Count || range.Any(item => item.Precision != PredictionPrecision.Exact))
-                return SearchQueryEvaluation.Unknown($"RelicShopSequenceRangeNotExact:{condition.Count}");
+            if (range.Length < condition.Count)
+            {
+                if (shopLane?.Precision == PredictionPrecision.Exact && shopLane.TotalCount < condition.Count ||
+                    condition.OrderMode == CombatRewardSequenceOrderMode.Ordered &&
+                    range.Any(e => condition.Slots[e.Position - 1] is { } key && e.RelicKey != key))
+                    return SearchQueryEvaluation.NoMatch($"RelicShopSequenceRejected:{shopSequenceIndex}");
+                unresolvedRelic ??= SearchQueryEvaluation.Unknown($"RelicShopSequenceRangeNotExact:{condition.Count}:{shopLane?.IssueCode}");
+                shopSequenceIndex++;
+                continue;
+            }
             if (!MatchesShopSequence(condition, range.Select(item => item.RelicKey).ToArray()))
                 return SearchQueryEvaluation.NoMatch($"RelicShopSequenceRejected:{shopSequenceIndex}");
             evidence.Add(new SearchMatchEvidence(
                 "RelicShopSequenceMatched",
                 null,
                 "relic-sequence:shop",
-                EvidenceCode: shopLane.EvidenceCode,
+                EvidenceCode: shopLane!.EvidenceCode,
                 ConditionId: "relic-shop-sequence-" + shopSequenceIndex));
             shopSequenceIndex++;
         }
@@ -1331,38 +1346,40 @@ public static partial class ProductionQueryValidator
             evidence.Add(new SearchMatchEvidence("FixedBonesRelicContinuationMatched",
                 EvidenceCode: new("RelicContinuation.FixedBonesLeafyNewLeaf.UnchangedInitialBags"),
                 StreamDomain: "up_front", ConditionId: "fixed-bones-relic-continuation"));
-        return SearchQueryEvaluation.Match(evidence);
+        return unresolvedRelic ?? SearchQueryEvaluation.Match(evidence);
     }
 
     private static bool MatchesShopSequence(RelicShopSequenceSearchCondition condition, IReadOnlyList<ModelKey> actual) =>
         ShopSequenceSemantics.Matches(actual, condition.Count, condition.OrderMode, condition.Slots);
 
     private static SearchQueryEvaluation EvaluateEventSequences(
-        SearchModel plan,
-        SeedPredictionFacts document)
+        SearchModel plan, SeedPredictionFacts document, RuntimeContextAuthoritySnapshot authority)
     {
         if (!plan.Evaluation.RequiresEventSequenceDomain)
         {
             return SearchQueryEvaluation.Match();
         }
-        EventPoolSequencePredictionResult? prediction = document.World?.EventPoolSequencePrediction;
-        SearchQueryEvaluation status = ValidateDomain(prediction?.Status, prediction?.IssueCode, "EventSequence");
-        if (status.Disposition != SearchDisposition.Match) return status;
-        if (prediction is null || prediction.Status != SeedDomainEvaluationStatus.Evaluated)
-            return SearchQueryEvaluation.Unknown("EventSequencePredictionMissingOrUnknown");
-        if (prediction.RawEventOrderPrecision != PredictionPrecision.Exact ||
-            prediction.StaticActCleaningPrecision != PredictionPrecision.Exact ||
-            prediction.StaticCandidateOrdinalPrecision != PredictionPrecision.Exact)
-        {
-            return SearchQueryEvaluation.Unknown("EventStaticCandidateOrdinalNotExact");
-        }
-
+        var prediction = document.World?.EventPoolSequencePrediction;
+        var generation = authority.WorldAuthority?.Beta109Generation;
+        var excluded = generation is { WorldGenerationHooksExact: true } ? generation.EventAuthority.EpochsInFilterOrder
+            .Where(epoch => epoch.MembershipExact && epoch.RevealFactExact && !epoch.IsRevealed)
+            .SelectMany(epoch => epoch.OrderedMemberKeys).ToHashSet() : null;
+        SearchQueryEvaluation? unresolved = null;
         var evidence = new List<SearchMatchEvidence>();
         foreach ((EventSequenceSearchCondition condition, int index) in plan.Evaluation.EventSequenceConditions.Select((item, index) => (item, index)))
         {
-            EventPoolActSequenceResult? act = prediction.Acts.FirstOrDefault(item => item.Act == condition.Act);
-            if (act is null || act.Precision != PredictionPrecision.Exact)
-                return SearchQueryEvaluation.Unknown("EventSequenceActNotExact:Act" + condition.Act);
+            if (excluded is { Count: > 0 } && (condition.Keys.All.Any(excluded.Contains) ||
+                condition.Keys.Any.Count > 0 && condition.Keys.Any.All(excluded.Contains)))
+                return SearchQueryEvaluation.NoMatch($"EventSequenceEpochExcluded:Act{condition.Act}:{index}");
+
+            var act = prediction?.Acts.FirstOrDefault(item => item.Act == condition.Act);
+            if (act?.Precision != PredictionPrecision.Exact || act.RawEntries.Any(entry => entry.Precision != PredictionPrecision.Exact))
+            {
+                var status = ValidateDomain(prediction?.Status, prediction?.IssueCode, "EventSequence");
+                unresolved ??= status.Disposition == SearchDisposition.Match
+                    ? SearchQueryEvaluation.Unknown("EventSequenceActNotExact:Act" + condition.Act) : status;
+                continue;
+            }
             // Always use the production effective queue. RawEntries is diagnostic only.
             IEnumerable<EventPoolSequenceEntryResult> absoluteRange = condition.RangeMode == SearchSequenceRangeMode.FirstN
                 ? act.Entries.Where(item => item.Ordinal <= condition.RangeValue)
@@ -1377,7 +1394,10 @@ public static partial class ProductionQueryValidator
                 return SearchQueryEvaluation.NoMatch($"EventSequenceSlotRejected:Act{condition.Act}:{condition.RangeValue}");
             }
             if (range.Any(item => item.Precision != PredictionPrecision.Exact))
-                return SearchQueryEvaluation.Unknown($"EventSequenceRangeNotExact:Act{condition.Act}:{condition.RangeValue}");
+            {
+                unresolved ??= SearchQueryEvaluation.Unknown($"EventSequenceRangeNotExact:Act{condition.Act}:{condition.RangeValue}");
+                continue;
+            }
             if (!QueryKeySetPredicate.MatchesKeySet(range.Select(item => item.EventKey), condition.Keys))
                 return SearchQueryEvaluation.NoMatch($"EventSequenceConditionRejected:Act{condition.Act}:{index}");
             evidence.Add(new SearchMatchEvidence(
@@ -1390,7 +1410,7 @@ public static partial class ProductionQueryValidator
                 Ordinal: condition.RangeMode == SearchSequenceRangeMode.ExactSlot ? condition.RangeValue : null,
                 ConditionId: "event-sequence-" + index));
         }
-        return SearchQueryEvaluation.Match(evidence);
+        return unresolved ?? SearchQueryEvaluation.Match(evidence);
     }
 
     private static RewardRouteEvaluation EvaluateRewardConditions(
@@ -1434,13 +1454,17 @@ public static partial class ProductionQueryValidator
         var matchedIds = new List<string>();
         var evidenceCodes = new List<EvidenceCode>();
         int? representativeBattle = null;
+        string? unresolved = null;
         foreach ((NormalCombatRewardSearchCondition condition, int index) in conditions.Select((item, index) => (item, index)))
         {
             NormalCombatRewardBattleResult[] battles = condition.BattleOrdinal == 0
                 ? route.Battles.Where(item => item.BattleOrdinal is >= 1 and <= 3).ToArray()
                 : route.Battles.Where(item => item.BattleOrdinal == condition.BattleOrdinal).ToArray();
             if (battles.Length == 0)
-                return RewardRouteEvaluation.NoMatch("RewardBattleMissing:" + condition.BattleOrdinal);
+            {
+                unresolved ??= "RewardBattleMissing:" + condition.BattleOrdinal;
+                continue;
+            }
 
             NormalCombatRewardBattleResult? matched = null;
             bool unknownSeen = false;
@@ -1457,15 +1481,17 @@ public static partial class ProductionQueryValidator
             }
             if (matched is null)
             {
-                return unknownSeen
-                    ? RewardRouteEvaluation.Unknown("RewardConditionNotReliablyEvaluated:" + index)
-                    : RewardRouteEvaluation.NoMatch("RewardConditionRejected:" + index);
+                if (!unknownSeen && (condition.BattleOrdinal != 0 || battles.Length == 3))
+                    return RewardRouteEvaluation.NoMatch("RewardConditionRejected:" + index);
+                unresolved ??= "RewardConditionNotReliablyEvaluated:" + index;
+                continue;
             }
             representativeBattle ??= matched.BattleOrdinal;
             matchedIds.Add("normal-combat-reward-condition-" + index);
             evidenceCodes.Add(matched.EvidenceCode);
         }
-        return RewardRouteEvaluation.Match(matchedIds, representativeBattle, evidenceCodes);
+        return unresolved is null ? RewardRouteEvaluation.Match(matchedIds, representativeBattle, evidenceCodes)
+            : RewardRouteEvaluation.Unknown(unresolved);
     }
 
     private static RewardRouteEvaluation EvaluateCardRewardSequence(
@@ -1473,9 +1499,6 @@ public static partial class ProductionQueryValidator
         NormalCombatRewardRoutePredictionResult route)
     {
         NormalCombatRewardBattleResult[] battles = FirstBattles(route, sequence.Count);
-        if (battles.Length != sequence.Count)
-            return RewardRouteEvaluation.NoMatch("CombatCardRewardSequenceBattleMissing");
-
         BattleConditionEvaluation Evaluate(ModelKey target, NormalCombatRewardBattleResult battle) =>
             EvaluateBattleCondition(
                 new NormalCombatRewardSearchCondition(
@@ -1490,17 +1513,20 @@ public static partial class ProductionQueryValidator
         if (sequence.OrderMode == CombatRewardSequenceOrderMode.Ordered)
         {
             var evidence = new List<EvidenceCode>();
+            bool unknown = false;
             for (int slot = 0; slot < sequence.Count; slot++)
             {
                 ModelKey? target = sequence.Slots[slot];
                 if (!target.HasValue) continue;
-                BattleConditionEvaluation result = Evaluate(target.Value, battles[slot]);
+                var battle = battles.FirstOrDefault(b => b.BattleOrdinal == slot + 1);
+                if (battle is null) { unknown = true; continue; }
+                BattleConditionEvaluation result = Evaluate(target.Value, battle);
                 if (result.Disposition == SearchDisposition.NoMatch)
                     return RewardRouteEvaluation.NoMatch("CombatCardRewardSequenceRejected");
-                if (result.Disposition == SearchDisposition.Unknown)
-                    return RewardRouteEvaluation.Unknown("CombatCardRewardSequenceNotReliablyEvaluated");
-                evidence.Add(battles[slot].EvidenceCode);
+                unknown |= result.Disposition == SearchDisposition.Unknown;
+                evidence.Add(battle.EvidenceCode);
             }
+            if (unknown) return RewardRouteEvaluation.Unknown("CombatCardRewardSequenceNotReliablyEvaluated");
             return RewardRouteEvaluation.Match(
                 Enumerable.Range(0, sequence.Count)
                     .Where(index => sequence.Slots[index].HasValue)
@@ -1513,8 +1539,9 @@ public static partial class ProductionQueryValidator
         ModelKey[] constraints = sequence.Slots.Where(key => key.HasValue).Select(key => key!.Value).ToArray();
         if (!TryFindUnorderedAssignment(
                 constraints.Length,
-                battles.Length,
-                (constraint, battle) => Evaluate(constraints[constraint], battles[battle]),
+                sequence.Count,
+                (constraint, battle) => battle < battles.Length ? Evaluate(constraints[constraint], battles[battle])
+                    : BattleConditionEvaluation.Unknown("CombatCardRewardSequenceBattleMissing"),
                 out int[]? assignment,
                 out bool unknownPossible) || assignment is null)
         {
@@ -1524,7 +1551,7 @@ public static partial class ProductionQueryValidator
         }
         return RewardRouteEvaluation.Match(
             Enumerable.Range(0, constraints.Length).Select(index => "combat-card-reward-target-" + (index + 1)).ToArray(),
-            constraints.Length > 0 ? battles[assignment[0]].BattleOrdinal : battles[0].BattleOrdinal,
+            constraints.Length > 0 ? battles[assignment[0]].BattleOrdinal : battles.FirstOrDefault()?.BattleOrdinal,
             assignment.Select(index => battles[index].EvidenceCode).ToArray());
     }
 
@@ -1533,9 +1560,6 @@ public static partial class ProductionQueryValidator
         NormalCombatRewardRoutePredictionResult route)
     {
         NormalCombatRewardBattleResult[] battles = FirstBattles(route, sequence.Count);
-        if (battles.Length != sequence.Count)
-            return RewardRouteEvaluation.NoMatch("CombatPotionRewardSequenceBattleMissing");
-
         BattleConditionEvaluation Evaluate(CombatPotionRewardSlotSearchCondition slot, NormalCombatRewardBattleResult battle)
         {
             if (slot.IsNeutral)
@@ -1560,17 +1584,20 @@ public static partial class ProductionQueryValidator
         if (sequence.OrderMode == CombatRewardSequenceOrderMode.Ordered)
         {
             var evidence = new List<EvidenceCode>();
+            bool unknown = false;
             for (int slotIndex = 0; slotIndex < sequence.Count; slotIndex++)
             {
                 CombatPotionRewardSlotSearchCondition slot = sequence.Slots[slotIndex];
                 if (slot.IsNeutral) continue;
-                BattleConditionEvaluation result = Evaluate(slot, battles[slotIndex]);
+                var battle = battles.FirstOrDefault(b => b.BattleOrdinal == slotIndex + 1);
+                if (battle is null) { unknown = true; continue; }
+                BattleConditionEvaluation result = Evaluate(slot, battle);
                 if (result.Disposition == SearchDisposition.NoMatch)
                     return RewardRouteEvaluation.NoMatch("CombatPotionRewardSequenceRejected");
-                if (result.Disposition == SearchDisposition.Unknown)
-                    return RewardRouteEvaluation.Unknown("CombatPotionRewardSequenceNotReliablyEvaluated");
-                evidence.Add(battles[slotIndex].EvidenceCode);
+                unknown |= result.Disposition == SearchDisposition.Unknown;
+                evidence.Add(battle.EvidenceCode);
             }
+            if (unknown) return RewardRouteEvaluation.Unknown("CombatPotionRewardSequenceNotReliablyEvaluated");
             return RewardRouteEvaluation.Match(
                 Enumerable.Range(0, sequence.Count)
                     .Where(index => !sequence.Slots[index].IsNeutral)
@@ -1583,8 +1610,9 @@ public static partial class ProductionQueryValidator
         CombatPotionRewardSlotSearchCondition[] constraints = sequence.Slots.Where(slot => !slot.IsNeutral).ToArray();
         if (!TryFindUnorderedAssignment(
                 constraints.Length,
-                battles.Length,
-                (constraint, battle) => Evaluate(constraints[constraint], battles[battle]),
+                sequence.Count,
+                (constraint, battle) => battle < battles.Length ? Evaluate(constraints[constraint], battles[battle])
+                    : BattleConditionEvaluation.Unknown("CombatPotionRewardSequenceBattleMissing"),
                 out int[]? assignment,
                 out bool unknownPossible) || assignment is null)
         {
@@ -1594,7 +1622,7 @@ public static partial class ProductionQueryValidator
         }
         return RewardRouteEvaluation.Match(
             Enumerable.Range(0, constraints.Length).Select(index => "combat-potion-reward-target-" + (index + 1)).ToArray(),
-            constraints.Length > 0 ? battles[assignment[0]].BattleOrdinal : battles[0].BattleOrdinal,
+            constraints.Length > 0 ? battles[assignment[0]].BattleOrdinal : battles.FirstOrDefault()?.BattleOrdinal,
             assignment.Select(index => battles[index].EvidenceCode).ToArray());
     }
 
@@ -1618,7 +1646,7 @@ public static partial class ProductionQueryValidator
         var used = new bool[battleCount];
         int[]? foundAssignment = null;
         bool unknown = false;
-        bool Search(int constraint)
+        bool Search(int constraint, bool allowUnknown)
         {
             if (constraint == constraintCount)
             {
@@ -1633,18 +1661,18 @@ public static partial class ProductionQueryValidator
                 if (result.Disposition == SearchDisposition.Unknown)
                 {
                     unknown = true;
-                    continue;
+                    if (!allowUnknown) continue;
                 }
                 used[battle] = true;
                 chosen[constraint] = battle;
-                if (Search(constraint + 1)) return true;
+                if (Search(constraint + 1, allowUnknown)) return true;
                 used[battle] = false;
             }
             return false;
         }
-        bool matched = Search(0);
-        assignment = foundAssignment;
-        unknownPossible = unknown;
+        bool matched = Search(0, false);
+        if (matched) assignment = foundAssignment;
+        else if (unknown) unknownPossible = Search(0, true);
         return matched;
     }
 

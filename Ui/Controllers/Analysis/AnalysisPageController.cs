@@ -185,40 +185,91 @@ internal sealed partial class AnalysisPageController
             SeedPredictionFacts facts = RuntimeProfileRegistry.Observe(_runtime.Detection, request!);
             SeedPredictionDocument document = SeedPredictionDocument.FromFacts(facts);
             ApplySearchOpening(request, facts);
-            if (_strictLibrarySeed == document.CanonicalSeed && _librarySoloSelection is { Explicit: true } savedSelection)
+            if (_strictLibrarySeed == document.CanonicalSeed && _librarySoloSelection is { Explicit: true } savedSelection &&
+                !facts.ModelAssumptions.ContainsKey(SeedPredictionDomainSelection.Neow))
                 ValidateLibrarySelection(facts.Neow?.Choices ?? [], savedSelection.ChoiceSlot, savedSelection.Route);
-            var predictionFailures = document.Diagnostics.Where(d => d.Code == PredictionDiagnosticCodes.Exception).Select(d => d.Value).ToArray();
-            if (predictionFailures.Length > 0)
-                RolltheSpire2.Infrastructure.Diagnostics.RuntimeIssueLedger.Current.RecordEvidence(
-                    "PredictionModelFailure", nameof(AnalysisPageController), "Predict", "issues.prediction_failed",
-                    string.Join("\n", predictionFailures),
-                    correlationId: $"request={document.Context.RequestId.Serialized};seed={document.CanonicalSeed};profile={document.ProfileId}");
-            RuntimePredictionDiagnosticReporter.EmitAnalysis(
-                _diagnosticSink,
-                request!,
-                document,
-                _runtime.Detection.DisplayVersion,
-                false,
-                "SingleSeedAnalysis");
             _page.ShowFacts(request!, facts, _lastPredictionUnlocks);
             RefreshResultOrigin();
-            _setGlobalStatus(
-                document.OverallStatus is SeedPredictionOverallStatus.Completed or SeedPredictionOverallStatus.CompletedWithWarnings
-                    ? GlobalStatusKind.Idle
-                    : document.OverallStatus == SeedPredictionOverallStatus.Unsupported
-                        ? GlobalStatusKind.Warning
-                        : GlobalStatusKind.Error,
-                document.OverallStatus is SeedPredictionOverallStatus.Completed or SeedPredictionOverallStatus.CompletedWithWarnings
-                    ? _page.Text(Ui1TextKey.AnalysisComplete)
-                    : _page.Text(Ui1TextKey.AnalysisFailed),
-                document.CanonicalSeed);
+            SetAnalysisResultStatus(facts);
+            try
+            {
+                var predictionFailures = document.Diagnostics.Where(d => d.Code == PredictionDiagnosticCodes.Exception).Select(d => d.Value).ToArray();
+                if (predictionFailures.Length > 0)
+                    RolltheSpire2.Infrastructure.Diagnostics.RuntimeIssueLedger.Current.RecordEvidence(
+                        "PredictionModelFailure", nameof(AnalysisPageController), "Predict", "issues.prediction_failed",
+                        string.Join("\n", predictionFailures),
+                        correlationId: $"request={document.Context.RequestId.Serialized};seed={document.CanonicalSeed};profile={document.ProfileId}");
+                RuntimePredictionDiagnosticReporter.EmitAnalysis(
+                    _diagnosticSink,
+                    request!,
+                    document,
+                    _runtime.Detection.DisplayVersion,
+                    false,
+                    "SingleSeedAnalysis");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                ReportAuxiliaryFailure(ex, "AnalysisDiagnostics", facts.CanonicalSeed);
+            }
 
+            LogAnalysisDetails(request, facts, document);
+        }
+        catch (Exception ex)
+        {
+            _libraryPredictionIssue = ex.Message;
+            _page.ShowUnhandledError();
+            _setGlobalStatus(GlobalStatusKind.Error, _page.Text(Ui1TextKey.AnalysisFailed), draft.RawSeed.Trim());
+            RolltheSpire2.Infrastructure.Diagnostics.RuntimeIssueLedger.Current.Record(ex,
+                "AnalysisUnhandledFailure", nameof(AnalysisPageController), "Predict", "issues.prediction_failed",
+                correlationId: draft.RawSeed.Trim());
+            _diagnosticSink.TryWrite(RuntimePredictionDiagnosticEvent.Create(
+                Guid.NewGuid().ToString("N"),
+                _runtime.Profile.ProfileId.ToString(),
+                draft.RawSeed.Trim(),
+                RuntimePredictionDiagnosticLevel.Error,
+                "Request",
+                "SingleSeedAnalysis",
+                RuntimePredictionDiagnosticStatus.Failed,
+                "AnalysisUnhandledFailure:" + ex.GetType().Name,
+                new Dictionary<string, object?>
+                {
+                    ["message"] = ex.Message
+                }),
+                false);
+        }
+    }
+    private void SetAnalysisResultStatus(SeedPredictionFacts facts)
+    {
+        bool modeled = facts.ModelAssumptions.Count > 0 || facts.World?.EventSequenceReplayAssumption is { Length: > 0 } ||
+            facts.World?.Ancients.Any(a => a.OptionReplayAssumption is { Length: > 0 }) == true;
+        bool failedDomain = facts.Warnings.Any(w => w.Code == PredictionWarningCode.AnalysisFailed);
+        var (kind, key) = facts.InputStatus switch
+        {
+            SeedPredictionInputStatus.Ready when modeled || failedDomain =>
+                (GlobalStatusKind.Warning, "predictor.analysis.partial"),
+            SeedPredictionInputStatus.Ready => (GlobalStatusKind.Idle, Ui1TextKey.AnalysisComplete),
+            SeedPredictionInputStatus.Unsupported => (GlobalStatusKind.Warning, Ui1TextKey.AnalysisFailed),
+            _ => (GlobalStatusKind.Error, Ui1TextKey.AnalysisFailed)
+        };
+        _setGlobalStatus(kind, _page.Text(key), facts.CanonicalSeed);
+    }
+
+    private static void ReportAuxiliaryFailure(Exception ex, string stage, string seed) =>
+        RolltheSpire2.Infrastructure.Diagnostics.RuntimeIssueLedger.Current.Record(ex,
+            "AnalysisAuxiliaryFailure", nameof(AnalysisPageController), stage, "issues.prediction_failed",
+            correlationId: seed);
+
+    private void LogAnalysisDetails(SeedPredictionRequest request, SeedPredictionFacts facts, SeedPredictionDocument document)
+    {
+        try
+        {
             IReadOnlyList<NeowChoiceResult> choices = facts.Neow?.Choices ?? [];
             if (_runtime.IsCompatibilityFallback)
             {
                 RuntimeLog.Warn(
                     $"Analysis compatibility fallback: detected={_runtime.Detection.DisplayVersion}; " +
-                    $"using={_runtime.Compatibility.ReferenceVersion}; profile={document.ProfileId}; " +
+                    $"rulesThrough={_runtime.Compatibility.RulesAdaptedThroughVersion}; " +
+                    $"reference={_runtime.Compatibility.ReferenceVersion}; profile={document.ProfileId}; " +
                     $"request={document.Context.RequestId.Serialized}");
             }
             else if (_runtime.IsPendingRuntimeValidation)
@@ -352,30 +403,12 @@ internal sealed partial class AnalysisPageController
                 }
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _libraryPredictionIssue = ex.Message;
-            _page.ShowUnhandledError();
-            _setGlobalStatus(GlobalStatusKind.Error, _page.Text(Ui1TextKey.AnalysisFailed), draft.RawSeed.Trim());
-            RolltheSpire2.Infrastructure.Diagnostics.RuntimeIssueLedger.Current.Record(ex,
-                "AnalysisUnhandledFailure", nameof(AnalysisPageController), "Predict", "issues.prediction_failed",
-                correlationId: draft.RawSeed.Trim());
-            _diagnosticSink.TryWrite(RuntimePredictionDiagnosticEvent.Create(
-                Guid.NewGuid().ToString("N"),
-                _runtime.Profile.ProfileId.ToString(),
-                draft.RawSeed.Trim(),
-                RuntimePredictionDiagnosticLevel.Error,
-                "Request",
-                "SingleSeedAnalysis",
-                RuntimePredictionDiagnosticStatus.Failed,
-                "AnalysisUnhandledFailure:" + ex.GetType().Name,
-                new Dictionary<string, object?>
-                {
-                    ["message"] = ex.Message
-                }),
-                false);
+            ReportAuxiliaryFailure(ex, "AnalysisDetailLog", facts.CanonicalSeed);
         }
     }
+
     private static bool IsSnapshotWarningSuppressedFromOrdinaryUi(
         PredictionWarning warning)
     {

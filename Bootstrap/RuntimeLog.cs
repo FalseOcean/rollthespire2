@@ -88,6 +88,8 @@ internal static class RuntimeLog
             if (SessionId.Length > 0)
             {
                 int jsonAt = normalized.IndexOf(";workloadJson=", StringComparison.Ordinal);
+                if (jsonAt < 0 && normalized.StartsWith("gpuPowerSample=true;", StringComparison.Ordinal))
+                    jsonAt = normalized.IndexOf(";gpuPowerJson=", StringComparison.Ordinal);
                 normalized = jsonAt < 0 ? normalized + ";logSession=" + SessionId : normalized.Insert(jsonAt, ";logSession=" + SessionId);
             }
             if (Preview.Value) normalized += ";logScope=Preview";

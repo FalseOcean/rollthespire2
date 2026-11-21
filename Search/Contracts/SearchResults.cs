@@ -52,6 +52,9 @@ public sealed record SearchMatchWitness(
     public string OutcomeId { get; init; } = string.Empty;
 }
 
+public sealed record SearchReplayEstimate(SearchDisposition Disposition, string Assumptions, string Issue,
+    IReadOnlyList<string> Routes, IReadOnlyList<SearchMatchEvidence> Evidence);
+
 /// <summary>
 /// Search/Exact disposition plus evidence and route witness. FailureCode is a
 /// developer-facing technical reason for this Search evaluation; it is not an
@@ -65,6 +68,7 @@ public sealed record SearchQueryEvaluation(
     IReadOnlyList<SearchMatchWitness> Witnesses,
     string FailureCode = "")
 {
+    public SearchReplayEstimate? ReplayEstimate { get; init; }
     // Diagnostic only: preserve the first failed predicate for each attempted opening.
     public IReadOnlyList<SearchRouteRejection> RouteRejections { get; init; } = Array.Empty<SearchRouteRejection>();
     public static SearchQueryEvaluation Match(

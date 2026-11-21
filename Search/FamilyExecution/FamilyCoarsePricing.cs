@@ -19,13 +19,13 @@ internal static class FamilyCoarsePricing
 
     internal static FamilyPhysicalQuote? Cpu(string familyId, string workClass,
         double singleWorkerNanoseconds, int workers, FamilyPhysicalQuoteRequest geometry, string basis,
-        int capacity = 65536)
+        int capacity = 65536, (double Ratio, string Evidence)? measuredWorkerScale = null)
     {
         if (!Valid(geometry, singleWorkerNanoseconds, capacity) || geometry.PrivateInput || geometry.PrivateOutput ||
             workers is < 1 or > 32) return null;
         var scale = geometry.MeanInputPopulation < 4096
             ? (Ratio: 1d, Evidence: "WorkerScale=SmallPopulationP1Envelope")
-            : FamilyCanonicalMeasuredCost.CpuWorkerRatio(familyId, workers, geometry.CompactInput);
+            : measuredWorkerScale ?? FamilyCanonicalMeasuredCost.CpuWorkerRatio(familyId, workers, geometry.CompactInput);
         return new(familyId, Revision + "." + workClass + ".P" + workers,
             singleWorkerNanoseconds * scale.Ratio, capacity, null,
             Evidence(basis) + ";ExecutionClass=CPU;ReferenceDevice=i9-13900HX;" +

@@ -11,7 +11,7 @@ internal static partial class MainPanelTheme
     private static void EnsureFonts()
     {
         if (_regular is not null) return;
-        SelectFont(SearchWorkspace.Open(OS.GetUserDataDir()).Preferences.FontChoice);
+        SelectFont(RolltheSpire2.Ui.Settings.InRunFeaturePreferences.FontChoice);
     }
 
     internal static void SelectFont(string choice)

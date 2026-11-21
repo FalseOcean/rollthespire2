@@ -438,6 +438,7 @@ public static class SeedAnalysisPresentationBuilder
                 prediction.RngCallCount,
                 lane.EvidenceCode.ToString())
             {
+                IssueCode = lane.IssueCode,
                 FullEntries = lane.FullEntries.Select(entry => BuildRelicSequenceEntry(entry, lane.Kind,
                     lane.PullDirection, contentNames, uiText, showInternalIds)).ToArray()
             })

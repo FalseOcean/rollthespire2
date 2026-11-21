@@ -104,6 +104,18 @@ internal static partial class UiSurfaceChecks
                 Call(shell, "RefreshLanguage");
                 window.Size = size; host.Size = size; await Frames();
                 string suffix = $"{locale}-{size.X}x{size.Y}";
+                await Restore(basis, "ideas", locale);
+                var ideasText = JsonUiTextProvider.CreateUi13(locale);
+                foreach (var (node, key) in new[] { ("AddFishingRodDraw", "add"), ("RemoveFishingRodDraw0", "remove") })
+                {
+                    var button = Find<Button>(frame, node);
+                    var style = button.GetThemeStylebox(button.Disabled ? "disabled" : "normal");
+                    float available = button.Size.X - style.GetContentMargin(Side.Left) - style.GetContentMargin(Side.Right);
+                    float required = button.GetThemeFont("font").GetStringSize(button.Text, HorizontalAlignment.Left, -1,
+                        button.GetThemeFontSize("font_size")).X;
+                    Check(button.IsVisibleInTree() && button.Text == ideasText.Get("query.ideas.fishing_rod." + key) &&
+                        available + 1 >= required, $"{suffix}: {node} caption needs {required}px, has {available}px");
+                }
                 for (int mode = -1; mode <= 3; mode++)
                 {
                     var keys = new ModelKey[] { pearl, arcane, curse };

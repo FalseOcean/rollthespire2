@@ -22,6 +22,7 @@ internal sealed partial class WorkspaceShell
     private string _originReceiptKey = "", _logReceiptKey = "";
     private bool _bindingSettings;
     private CheckButton _skipExact = null!;
+    private CheckButton _gpuPowerDiagnostics = null!;
     private SpinBox _queryHistoryLimit = null!;
     private bool SettingsSearchBusy => _references?.HasActiveSearch == true || _persistence?.Runtime.HasSearchInFlight == true;
     private CheckButton _consoleEnabled = null!;
@@ -154,7 +155,7 @@ internal sealed partial class WorkspaceShell
     private IEnumerable<object?> BuildSettingsGeneral(VBoxContainer general)
     {
         _language = new() { Name = "SettingsLanguage", CustomMinimumSize = new(360, 44), FitToLongestItem = false };
-        _queryHistoryLimit = new() { Name = "SettingsQueryHistoryLimit", MinValue = 1, MaxValue = 300, Step = 1, CustomMinimumSize = new(180, 42) };
+        _queryHistoryLimit = new() { Name = "SettingsQueryHistoryLimit", MinValue = 1, MaxValue = SearchWorkspace.MaximumQueryHistoryLimit, Step = 1, CustomMinimumSize = new(180, 42) };
         var language = SettingsSection(general, "settings.language", "settings.language.help");
         for (int i = 0; i < 3; i++) _language.AddItem("");
         _language.SizeFlagsHorizontal = SizeFlags.ShrinkBegin;
@@ -243,6 +244,17 @@ internal sealed partial class WorkspaceShell
             DisplayServer.ClipboardSet(path); _logReceiptKey = "settings.logs.copied"; RefreshSettings();
         }));
         _logFeedback = _palette.Label("", 17, true); _logFeedback.AutowrapMode = TextServer.AutowrapMode.WordSmart; logs.AddChild(_logFeedback);
+        yield return null;
+        var gpuPower = SettingsSection(diagnostics, "settings.gpu_power.title", "settings.gpu_power.help");
+        _gpuPowerDiagnostics = new() { Name = "SettingsGpuPowerDiagnostics", CustomMinimumSize = new(360, 44),
+            SizeFlagsHorizontal = SizeFlags.ShrinkBegin };
+        _gpuPowerDiagnostics.AddThemeFontSizeOverride("font_size", 20);
+        gpuPower.AddChild(_gpuPowerDiagnostics);
+        _settingsButtons.Add((_gpuPowerDiagnostics, "settings.gpu_power.enable"));
+        _gpuPowerDiagnostics.Toggled += enabled =>
+        {
+            if (!_bindingSettings) _persistence!.SetGpuPowerDiagnosticsEnabled(enabled);
+        };
         if (_liveRun is null)
             diagnostics.AddChild(SettingsButton("settings.diagnostics.status", () => SelectTask(Workspace.Status)));
         yield return null;
@@ -410,6 +422,7 @@ internal sealed partial class WorkspaceShell
             _originFeedback.AddThemeColorOverride("font_color", _palette.Color(!busy && valid ? _palette.Secondary : _palette.Active));
         }
         if (!_builtPageViews.Contains(3)) return;
+        _gpuPowerDiagnostics.SetPressedNoSignal(persistence.Preferences.EnableGpuPowerDiagnostics);
         string path = RuntimeLog.CurrentLogPath;
         if (string.IsNullOrWhiteSpace(path)) path = RuntimeLog.LogDirectory;
         if (_logPath.Text != path) _logPath.Text = path;

@@ -24,8 +24,9 @@ internal sealed record FamilyCanonicalCostKey(int SchemaVersion, string FamilyId
     [JsonIgnore] internal bool HasBudgetIndependentGpuWork => FamilyId == "N.Neow" &&
         ExecutionClass == "GPU" && Players == 1 && ConfiguredWorkers is >= 1 and <= 64 && OrderedChildBodies == "" &&
         PhysicalRevision.StartsWith("N.Neow.Gpu.LocalDonor.", StringComparison.Ordinal);
-    [JsonIgnore] internal string PriceKey => HasBudgetIndependentGpuWork
-        ? (this with { ConfiguredWorkers = 1 }).StableKey : StableKey;
+    [JsonIgnore] internal FamilyCanonicalCostKey PriceIdentity => HasBudgetIndependentGpuWork && ConfiguredWorkers != 1
+        ? this with { ConfiguredWorkers = 1 } : this;
+    [JsonIgnore] internal string PriceKey => PriceIdentity.StableKey;
 }
 
 internal static partial class FamilyCanonicalCostShape

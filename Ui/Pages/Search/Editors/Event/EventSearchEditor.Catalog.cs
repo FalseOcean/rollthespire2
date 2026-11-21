@@ -15,24 +15,30 @@ namespace RolltheSpire2.Ui.Pages.Search.Editors;
 
 internal sealed partial class EventSearchEditor
 {
-    private void CaptureResultPools(ModelKey character, int ascension, int players,
+    private void CaptureResultPools(ModelKey character, int ascension, int players, int seat,
         Core.Authority.RuntimeContextAuthoritySnapshot? partyAuthority = null,
         MegaCrit.Sts2.Core.Unlocks.UnlockState? unlocks = null)
     {
-        _draft.TransformCards = [];
+        var single = new Lazy<IReadOnlyList<ModelKey>>(() => Candidates(1));
+        var pair = new Lazy<IReadOnlyList<ModelKey>>(() => Candidates(2));
+        _draft.TransformCandidates = count => count switch
+        {
+            1 => single.Value,
+            2 => pair.Value,
+            _ => throw new ArgumentOutOfRangeException(nameof(count))
+        };
         _draft.CrystalEffects = null;
         _draft.CrystalCharacter = character;
         _draft.CardPickerMetadata = new Dictionary<ModelKey, CardPickerCandidateMetadata>(ModelKeyComparer.Instance);
         _draft.MultiplayerOnlyCards = new HashSet<ModelKey>(ModelKeyComparer.Instance);
-        var authority = partyAuthority;
-        if (authority is null)
+        var effects = partyAuthority?.EffectAuthority;
+        if (partyAuthority is null && (players == 1 || unlocks is not null))
         {
-            if (players != 1) return;
-            WorkbenchQueryCompiler.CompileAuthoredQuery(SearchQuery.Empty, AncientOptionConditionProfile.BroadDefault,
-                _runtime, character, ascension, out authority);
+            effects = ReflectionNeowEffectSnapshotAdapter.Capture(_runtime.Profile, ProfileSeedGenerator.CreateProbeSeed(_runtime.Profile),
+                CharacterIdentity.FromKey(character), ascension, players, seat, _runtime.Profile.ProfileId, _runtime.Detection.DisplayVersion,
+                RuntimeProfilePolicies.EffectCatalogRules(_runtime.Profile.ProfileId), unlocks).EffectAuthority;
         }
-        var scenario = Beta111MorphicGroveAuthorityCapture.CaptureAuthoredBasics(authority, 2, unlocks);
-        if (authority.EffectAuthority is { } effects)
+        if (effects is not null)
         {
             _draft.CrystalEffects = effects;
             _draft.CardPickerMetadata = CardPickerMetadataCapture.FromAuthority(effects, character);
@@ -40,8 +46,21 @@ internal sealed partial class EventSearchEditor
                 .Concat(effects.TransformPool ?? []).Concat((effects.OtherCharacterPools ?? []).SelectMany(pool => pool.Cards))
                 .Where(card => card.IsMultiplayerOnly).Select(card => card.CardKey).ToHashSet(ModelKeyComparer.Instance);
         }
-        _draft.TransformCards = scenario.Targets.SelectMany(t => t.OrderedSourceCandidates ?? [])
-            .Select(c => c.CardKey).Distinct().ToArray();
+        IReadOnlyList<ModelKey> Candidates(int count)
+        {
+            try
+            {
+                if (players > 1 && unlocks is null) return [];
+                var targets = Beta111MorphicGroveAuthorityCapture.CaptureAuthoredTargets(_runtime.Profile.ProfileId, character, players, count, unlocks);
+                return targets[0].OrderedSourceCandidates!.Select(c => c.CardKey).Distinct().ToArray();
+            }
+            catch (Exception exception)
+            {
+                Infrastructure.Diagnostics.RuntimeIssueLedger.Current.Record(exception, "EditorCatalogCaptureFailed", "EventEditorPrototype",
+                    "InitialBasicTransformPool:" + count, "issues.capture_failed", Infrastructure.Diagnostics.RuntimeIssueSeverity.Warning);
+                return [];
+            }
+        }
     }
 
     private IReadOnlyList<ModelKey> ResultPool(EventResultConditionKind kind) => kind switch
@@ -49,7 +68,7 @@ internal sealed partial class EventSearchEditor
         EventResultConditionKind.FakeMerchantOfferedFakeRelic => Beta111EventResultCatalog.FakeMerchantRelics,
         EventResultConditionKind.TrashHeapGrabCard => Beta111EventResultCatalog.TrashHeapGrabCards,
         EventResultConditionKind.TrashHeapDiveRelic => Beta111EventResultCatalog.TrashHeapDiveRelics,
-        _ when EventResultTransformSemantics.IsTransform(kind) => _draft.TransformCards,
+        _ when EventResultTransformSemantics.IsTransform(kind) => _draft.TransformCandidates(EventResultTransformSemantics.DrawCount(kind)),
         _ => throw new InvalidOperationException("EventResult.ObjectPickerOutsideWhitelist:" + kind)
     };
 

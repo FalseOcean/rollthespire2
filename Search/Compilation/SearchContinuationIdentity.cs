@@ -1,5 +1,6 @@
+using System.Buffers;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using RolltheSpire2.Core.Authority.Runtime;
@@ -12,9 +13,27 @@ namespace RolltheSpire2.Search.Compilation;
 // execution SnapshotFingerprint remains the identity of each actual attempt.
 internal static class SearchContinuationIdentity
 {
+    private static readonly ConditionalWeakTable<SearchModel, Lazy<string>> ModelIdentities = new();
+
+    private static Lazy<string> IdentityFor(SearchModel model) => ModelIdentities.GetValue(model, static source =>
+        new(() => For(source.CompiledSearch, source.CombatRewardRoutePolicy)));
+
+    // The captured authority is immutable. Build the model identity alongside
+    // allocation, then use the same validated value (or failure) in recovery.
+    internal static void BeginPreparation(PreparedSearch plan)
+    {
+        var identity = IdentityFor(plan.Model);
+        if (identity.IsValueCreated) return;
+        _ = Task.Run(() =>
+        {
+            try { _ = identity.Value; }
+            catch (Exception error) { Bootstrap.RuntimeLog.WarnException("continuationIdentityPreparationFailed=true", error); }
+        });
+    }
+
     internal static string For(PreparedSearch plan)
     {
-        string model = For(plan.Model.CompiledSearch, plan.Model.CombatRewardRoutePolicy);
+        string model = IdentityFor(plan.Model).Value;
         // Preserve legacy full-search identities; an opt-in lossy frontier must
         // never be resumed as an exhaustively checked full-search frontier.
         return plan.MapLossy.Enabled ? model + ":MapLossy:" + plan.MapLossy.Identity : model;
@@ -26,23 +45,31 @@ internal static class SearchContinuationIdentity
     internal static string For(CompiledSearch compiled, CombatRewardRoutePolicyContract policy)
     {
         var context = compiled.Context;
-        var payload = JsonSerializer.SerializeToNode(new
+        var payload = new JsonObject
         {
-            Query = QueryPayload(compiled.NormalizedQuery),
-            context.ProfileId, context.CharacterKey, context.Ascension,
-            Authority = RuntimePredictionInputIdentity.AuthorityPayload(context.Authority),
-            context.EvaluationAssumptions,
-            Party = context.Party is { } party ? new
+            ["Query"] = QueryPayload(compiled.NormalizedQuery),
+            [nameof(context.ProfileId)] = JsonSerializer.SerializeToNode(context.ProfileId),
+            [nameof(context.CharacterKey)] = JsonSerializer.SerializeToNode(context.CharacterKey),
+            [nameof(context.Ascension)] = context.Ascension,
+            ["Authority"] = RuntimePredictionInputIdentity.AuthorityPayload(context.Authority),
+            [nameof(context.EvaluationAssumptions)] = JsonSerializer.SerializeToNode(context.EvaluationAssumptions),
+            ["Party"] = context.Party is { } party ? new JsonObject
             {
-                Players = party.Players.Select(RuntimePredictionInputIdentity.AuthorityPayload).ToArray(),
-                party.UnlockProvenance, party.UnlockSources,
-                World = RuntimePredictionInputIdentity.AuthorityPayload(
+                ["Players"] = new JsonArray(party.Players.Select(RuntimePredictionInputIdentity.AuthorityPayload).ToArray()),
+                [nameof(party.UnlockProvenance)] = JsonSerializer.SerializeToNode(party.UnlockProvenance),
+                [nameof(party.UnlockSources)] = JsonSerializer.SerializeToNode(party.UnlockSources),
+                ["World"] = RuntimePredictionInputIdentity.AuthorityPayload(
                     context.Authority.WithWorldAuthority(party.World))?["WorldAuthority"]?.DeepClone()
             } : null,
-            compiled.ResolvedRouteSemantics, compiled.RequiresComplexBonesDeckInteractionEvaluation,
-            Policy = policy
-        });
-        string identity = "v1:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Canonical(payload))));
+            [nameof(compiled.ResolvedRouteSemantics)] = JsonSerializer.SerializeToNode(compiled.ResolvedRouteSemantics),
+            [nameof(compiled.RequiresComplexBonesDeckInteractionEvaluation)] = compiled.RequiresComplexBonesDeckInteractionEvaluation,
+            ["Policy"] = JsonSerializer.SerializeToNode(policy)
+        };
+        var bytes = new ArrayBufferWriter<byte>();
+        using var writer = new Utf8JsonWriter(bytes);
+        WriteCanonical(writer, payload);
+        writer.Flush();
+        string identity = "v1:" + Convert.ToHexString(SHA256.HashData(bytes.WrittenSpan));
         return SearchCompiler.UsesRevisedTreasureClaims(context, compiled.NormalizedQuery)
             ? identity + TreasureRelicSearchCondition.ClaimSequenceRevision : identity;
     }
@@ -82,13 +109,28 @@ internal static class SearchContinuationIdentity
         return node;
     }
 
-    private static string Canonical(JsonNode? node) => node switch
+    private static void WriteCanonical(Utf8JsonWriter writer, JsonNode? node)
     {
-        JsonObject obj => "{" + string.Join(",", obj.OrderBy(p => p.Key, StringComparer.Ordinal)
-            .Select(p => JsonSerializer.Serialize(p.Key) + ":" + Canonical(p.Value))) + "}",
-        JsonArray array => "[" + string.Join(",", array.Select(Canonical)) + "]",
-        _ => node?.ToJsonString() ?? "null"
-    };
+        switch (node)
+        {
+            case JsonObject obj:
+                writer.WriteStartObject();
+                foreach (var item in obj.OrderBy(p => p.Key, StringComparer.Ordinal))
+                {
+                    writer.WritePropertyName(item.Key);
+                    WriteCanonical(writer, item.Value);
+                }
+                writer.WriteEndObject();
+                break;
+            case JsonArray array:
+                writer.WriteStartArray();
+                foreach (var item in array) WriteCanonical(writer, item);
+                writer.WriteEndArray();
+                break;
+            case null: writer.WriteNullValue(); break;
+            default: node.WriteTo(writer); break;
+        }
+    }
 
     internal static bool Matches(SearchContinuationSnapshot continuation, PreparedSearch plan,
         string fingerprint) => continuation.ContinuationFingerprint.Length > 0

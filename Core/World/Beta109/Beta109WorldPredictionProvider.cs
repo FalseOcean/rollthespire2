@@ -84,7 +84,7 @@ public static class Beta109WorldPredictionProvider
                 Array.Empty<AncientPredictionResult>(),
                 Diagnostics(snapshot, "ModernWorldRequestSnapshotMismatch"),
                 "WorldRequestSnapshotMismatch",
-                "WorldRequestSnapshotMismatch");
+                "WorldRequestSnapshotMismatch") { RoomGenerationIssueCode = "WorldRequestSnapshotMismatch" };
         }
 
         bool runtimeAuthorityExact =
@@ -124,7 +124,7 @@ public static class Beta109WorldPredictionProvider
                 Array.Empty<AncientPredictionResult>(),
                 Diagnostics(snapshot, unsupported),
                 unsupported,
-                unsupported);
+                unsupported) { RoomGenerationIssueCode = unsupported };
         }
 
         if (snapshot.SelectedActs.Count == 0)
@@ -137,8 +137,9 @@ public static class Beta109WorldPredictionProvider
                 Array.Empty<AncientPredictionResult>(),
                 Diagnostics(snapshot, issue),
                 issue,
-                issue);
+                issue) { RoomGenerationIssueCode = issue };
         }
+        var selectedActs = snapshot.SelectedActsExact ? snapshot.SelectedActs : Array.Empty<ModelKey>();
         if (!snapshot.HasExactReplayInputs)
         {
             string issue = DeterminePrecisionIssue(snapshot, snapshot.UpFrontPrefix.PriorInputsExact);
@@ -149,7 +150,7 @@ public static class Beta109WorldPredictionProvider
                 Array.Empty<AncientPredictionResult>(),
                 Diagnostics(snapshot, issue),
                 issue,
-                issue);
+                issue) { SelectedActs = selectedActs, RoomGenerationIssueCode = issue };
         }
 
         Beta109WorldRng upFront = CreateUpFront(snapshot);
@@ -159,15 +160,17 @@ public static class Beta109WorldPredictionProvider
             snapshot.SelectedActs,
             snapshot.OrderedActCatalog,
             snapshot.SharedAncients,
-            upFront);
+            upFront, snapshot.SharedAncientReferenceIds);
         var bosses = new List<BossPredictionResult>();
         var ancients = new List<AncientPredictionResult>();
         var eventSequences = new List<EventPoolActSequenceResult>();
+        Dictionary<int, string>? eventIssues = null;
         var encounterSequences = new List<ActEncounterSequenceResult>();
         string eventSequenceIssue = runtimeAuthorityExact
             ? string.Empty
             : "MissingModernEventSourceAuthority";
 
+        string? interrupted = null;
         for (int index = 0; index < snapshot.SelectedActs.Count; index++)
         {
             ModelKey selectedActKey = snapshot.SelectedActs[index];
@@ -175,14 +178,8 @@ public static class Beta109WorldPredictionProvider
                 .FirstOrDefault(candidate => candidate.ActKey == selectedActKey);
             if (act is null)
             {
-                return new WorldPredictionResult(
-                    SeedDomainEvaluationStatus.Unknown,
-                    SeedDomainEvaluationStatus.Unknown,
-                    bosses,
-                    ancients,
-                    Diagnostics(snapshot, "MissingRuntimeCatalog:" + selectedActKey.Serialized),
-                    "MissingCatalog",
-                    "MissingCatalog");
+                interrupted = "MissingRuntimeCatalog:" + selectedActKey.Serialized;
+                break;
             }
 
             var ancientPool = act.OrderedAncients.ToList();
@@ -190,44 +187,45 @@ public static class Beta109WorldPredictionProvider
             {
                 ancientPool.AddRange(assignedSharedAncients);
             }
-            bool openingAncientCursorAuthorityExact = ancientPool.Count > 0;
+            bool ancientOrderExact = act.UnlockedAncientOrderExact ?? act.UnlockFilteringExact;
+            bool openingAncientCursorAuthorityExact = ancientOrderExact && act.EncounterCatalogOfficialVanilla && ancientPool.Count > 0;
             int eventCallsBefore = upFront.CallCount;
-            EventPoolSequenceProjector.PreparedAct? preparedEvents = null;
-            string eventIssue = string.Empty;
-            if (openingAncientCursorAuthorityExact && EventPoolSequenceProjector.TryPrepare(
-                    act.Act,
-                    act.ActKey,
-                    act.EventRngConsumptionExact,
-                    act.OrderedRawEvents,
-                    snapshot.EventAuthority.OrderedSharedEventsRaw,
-                    snapshot.EventAuthority,
-                    act.OrderedEligibleEvents,
-                    out preparedEvents,
-                    out eventIssue) && preparedEvents is not null)
+            if (EventPoolSequenceProjector.TryPrepare(act.Act, act.ActKey, act.EventRngConsumptionExact,
+                    act.OrderedRawEvents, snapshot.EventAuthority.OrderedSharedEventsRaw, snapshot.EventAuthority,
+                    act.OrderedEligibleEvents, out var preparedEvents, out string eventIssue) && preparedEvents is not null)
             {
                 upFront.UnstableShuffle(preparedEvents.Candidates, $"act{act.Act}:event-shuffle");
-                var immutableEventContext = EventImmutableEligibilityContext.From(snapshot);
+                var context = new EventEffectiveCandidateContext(1, openingAncientCursorAuthorityExact,
+                    "NormalNeowStandardOpeningAncient", EventImmutableEligibilityContext.From(snapshot));
                 eventSequences.Add(EventPoolSequenceProjector.Complete(
-                    snapshot.Profile,
-                    preparedEvents,
-                    EventEffectiveCandidateContext.AuthoritativeOpeningAncient(
-                        immutableEventContext,
-                        "NormalNeowStandardOpeningAncient"),
-                    world.SourceAuthority,
-                    SnapshotCompleteness.Complete,
-                    eventCallsBefore,
-                    upFront.CallCount,
-                    Evidence(snapshot, "event-pool.direct-source-shuffle")));
+                    snapshot.Profile, preparedEvents, context, world.SourceAuthority, SnapshotCompleteness.Complete,
+                    eventCallsBefore, upFront.CallCount, Evidence(snapshot, "event-pool.direct-source-shuffle")));
+                if (!openingAncientCursorAuthorityExact) eventIssue = "MissingOpeningAncientCursorAuthority";
+            }
+            else if (snapshot.RngSemantics == RngSemanticProfileId.Modern113)
+            {
+                // The native shuffle always draws one child seed, even for an empty or singleton list.
+                upFront.UnstableShuffle(Array.Empty<ModelKey>(), $"act{act.Act}:event-shuffle");
+            }
+            else if (eventIssue == "UnknownGeneratedRoomEventFilter" && snapshot.CanAdvanceEventShuffle(act))
+            {
+                // The filter runs after the legacy shuffle. Advance using the
+                // pre-filter queue while leaving this act's event result unknown.
+                upFront.UnstableShuffle(act.OrderedEligibleEvents.ToList(), $"act{act.Act}:event-shuffle");
             }
             else
             {
-                if (!openingAncientCursorAuthorityExact)
-                {
-                    eventIssue = "MissingOpeningAncientCursorAuthority";
-                }
-                eventSequenceIssue = string.IsNullOrWhiteSpace(eventSequenceIssue) ? eventIssue : eventSequenceIssue;
-                List<ModelKey> events = act.OrderedEligibleEvents.ToList();
-                upFront.UnstableShuffle(events, $"act{act.Act}:event-shuffle");
+                interrupted = snapshot.CanAdvanceEventShuffle(act) ? eventIssue : DeterminePrecisionIssue(snapshot, prefixExact);
+                eventSequenceIssue = eventIssue;
+                break;
+            }
+            if (string.IsNullOrEmpty(eventSequenceIssue)) eventSequenceIssue = eventIssue;
+            if (!string.IsNullOrEmpty(eventIssue)) (eventIssues ??= [])[act.Act] = eventIssue;
+
+            if (!act.HasExactEncounterInputs)
+            {
+                interrupted = DeterminePrecisionIssue(snapshot, prefixExact);
+                break;
             }
 
             int regularSlots = Math.Max(0, act.TotalNormalRooms - act.WeakEncounterSlots);
@@ -254,13 +252,17 @@ public static class Beta109WorldPredictionProvider
 
             encounterSequences.Add(Beta109EncounterSequenceProjection.Build(act, normalHistory, eliteHistory, snapshot, world));
 
+            if (act.Bosses.Count == 0)
+            {
+                interrupted = "EmptyBossPool:" + act.ActKey.Serialized;
+                break;
+            }
             ModelKey boss = upFront.NextModelKey(act.Bosses, $"act{act.Act}:boss:first");
             if (snapshot.IsMultiplayer && snapshot.PartyBossDiscoveryOverrides.TryGetValue(act.ActKey.Serialized, out var discoveryBoss))
                 boss = discoveryBoss;
             bool bossIdentityReplayable =
                 bossSearchReplayable &&
-                prefixExact &&
-                act.HasExactGenerationInputs;
+                prefixExact;
             bosses.Add(new BossPredictionResult(
                 act.Act,
                 1,
@@ -281,6 +283,11 @@ public static class Beta109WorldPredictionProvider
                 SearchCompatibilityIssueCode = BossSearchCompatibilityIssue(snapshot, bossExact, bossIdentityReplayable)
             });
 
+            if (!ancientOrderExact)
+            {
+                interrupted = "MissingUnlockedAncientPool:" + act.ActKey.Serialized;
+                break;
+            }
             if (ancientPool.Count == 0)
             {
                 ancients.Add(new AncientPredictionResult(
@@ -339,11 +346,12 @@ public static class Beta109WorldPredictionProvider
                 AuthorityFingerprint = snapshot.SnapshotFingerprint,
                 GenerationRuleFingerprint = snapshot.GenerationRuleFingerprint,
                 OptionsEvaluationStatus = optionPrediction.EvaluationStatus,
+                OptionReplayAssumption = optionPrediction.OptionReplayAssumption,
                 OptionIssueCode = optionPrediction.IssueCode
             });
         }
 
-        if (snapshot.SelectedActs.Count > 0 && ascension >= 10)
+        if (interrupted is null && snapshot.SelectedActs.Count > 0 && ascension >= 10)
         {
             ModelKey finalActKey = snapshot.SelectedActs[^1];
             Beta109ActGenerationSnapshot? finalAct = snapshot.OrderedActCatalog
@@ -383,19 +391,18 @@ public static class Beta109WorldPredictionProvider
         }
 
         string commonIssue = DeterminePrecisionIssue(snapshot, prefixExact);
-        string bossIssue = bossExact ? string.Empty :
+        string bossIssue = interrupted ?? (bossExact ? string.Empty :
             bossSearchReplayable
                 ? BossSearchCompatibilityIssue(snapshot, bossExact: false, replayable: true)
                 : snapshot.HasExactReplayInputs && snapshot.TutorialBossOverrideWillApply
                     ? "UnsupportedTutorialBossOverride"
-                    : commonIssue;
-        string ancientIssue = ancientIdentityExact ? string.Empty :
+                    : commonIssue);
+        string ancientIssue = interrupted ?? (ancientIdentityExact ? string.Empty :
             snapshot.HasExactReplayInputs && !snapshot.AllowsAncientIdentityProductionExact
                 ? "PendingRealGameAncientIdentityFixture"
-                : commonIssue;
+                : commonIssue);
         EventPoolSequencePredictionResult eventPrediction = runtimeAuthorityExact &&
-                                                                    string.IsNullOrWhiteSpace(eventSequenceIssue) &&
-                                                                    eventSequences.Count == snapshot.SelectedActs.Count
+            eventSequences.Count > 0
             ? EventPoolSequenceProjector.Build(
                 snapshot.Profile,
                 eventSequences,
@@ -417,9 +424,14 @@ public static class Beta109WorldPredictionProvider
             Diagnostics(snapshot, string.Join("|", new[] { bossIssue, ancientIssue }
                 .Where(issue => !string.IsNullOrWhiteSpace(issue))
                 .Distinct(StringComparer.Ordinal))),
-            bosses.Count > 0 ? bossIssue : "ModernBossPredictionUnavailable",
-            ancients.Count > 0 ? ancientIssue : "ModernAncientPredictionUnavailable")
+            bossIssue,
+            ancientIssue)
         {
+            SelectedActs = selectedActs,
+            RoomGenerationIssueCode = interrupted ?? string.Empty,
+            EventSequenceReplayAssumption = snapshot.EventSequenceReplayAssumption,
+            EventSequenceIssues = eventIssues is null
+                ? System.Collections.Immutable.ImmutableDictionary<int, string>.Empty : eventIssues,
             EventPoolSequencePrediction = eventPrediction,
             EncounterSequences = encounterSequences
         };
@@ -462,6 +474,12 @@ public static class Beta109WorldPredictionProvider
         }
 
         Beta109WorldRng rng = Beta109WorldRng.CreateNamed(snapshot.RunSeedRoot, "up_front", snapshot.RngSemantics);
+        if (snapshot.HasCountedChildRelicShuffles)
+        {
+            for (int i = 0; i < snapshot.InitialRelicShuffleCount; i++)
+                rng.UnstableShuffle(Array.Empty<ModelKey>(), "initialize:relic-bag-shuffle:" + i);
+            return rng;
+        }
         foreach (Beta109RelicBucketSnapshot bucket in snapshot.SharedRelicBuckets)
         {
             List<ModelKey> items = bucket.OrderedRelics.ToList();
@@ -481,19 +499,20 @@ public static class Beta109WorldPredictionProvider
         IReadOnlyList<ModelKey> selectedActKeys,
         IReadOnlyList<Beta109ActGenerationSnapshot> catalog,
         IReadOnlyList<ModelKey> source,
-        Beta109WorldRng rng)
+        Beta109WorldRng rng,
+        IReadOnlyList<int>? referenceIds = null)
     {
         var output = new Dictionary<int, List<ModelKey>>();
-        var remaining = source.ToList();
+        var remaining = source.Select((key, i) => (Key: key, Reference: referenceIds?[i] ?? i)).ToList();
         rng.UnstableShuffle(remaining, "shared-ancient:shuffle");
         for (int index = 1; index < selectedActKeys.Count; index++)
         {
-            Beta109ActGenerationSnapshot? act = catalog.FirstOrDefault(item => item.ActKey == selectedActKeys[index]);
-            if (act is null) continue;
-            int count = rng.NextInt(remaining.Count + 1, $"shared-ancient:act{act.Act}:prefix-count");
-            List<ModelKey> selected = remaining.Take(count).ToList();
-            if (count > 0) remaining.RemoveRange(0, count);
-            output[act.Act] = selected;
+            int actNumber = catalog.FirstOrDefault(item => item.ActKey == selectedActKeys[index])?.Act ?? index + 1;
+            int count = rng.NextInt(remaining.Count + 1, $"shared-ancient:act{actNumber}:prefix-count");
+            var selected = remaining.Take(count).ToList();
+            output[actNumber] = selected.Select(item => item.Key).ToList();
+            // RunManager uses Except, so repeated references also collapse when the selected prefix is empty.
+            remaining = remaining.ExceptBy(selected.Select(item => item.Reference), item => item.Reference).ToList();
         }
         return output;
     }
@@ -637,22 +656,23 @@ public static class Beta109WorldPredictionProvider
             return "MissingLobbyPlayerAuthority";
         if (snapshot.LobbyPlayers.Any(player => player.IsRandomCharacter))
             return "UnsupportedRandomCharacterWorldReplay";
-        if (!snapshot.EventAuthority.SharedRawOrderExact) return "MissingSharedEventCatalog";
-        if (!snapshot.EventAuthority.EpochMembershipExact) return "MissingEventEpochMembership";
-        if (!snapshot.EventAuthority.EpochRevealFactsExact) return "MissingEventEpochAuthority";
-        if (!snapshot.SharedEventCatalogExact) return "MissingEventCatalog";
-        if (!snapshot.AllSharedAncientCatalogExact) return "MissingAllSharedAncientCatalog";
+        if (!snapshot.WorldGenerationHooksExact) return "UnknownWorldGenerationHookOrModifier";
         if (!snapshot.SharedAncientCatalogExact) return "MissingUnlockedSharedAncientCatalog";
+        if (!snapshot.HasUnambiguousSharedAncientAllocation) return "MissingSharedAncientReferenceIdentity";
         if (snapshot.OrderedActCatalog.Count == 0) return "MissingActCatalog";
         foreach (ModelKey selectedAct in snapshot.SelectedActs)
         {
             Beta109ActGenerationSnapshot? act = snapshot.OrderedActCatalog
                 .FirstOrDefault(candidate => candidate.ActKey == selectedAct);
             if (act is null) return "MissingActCatalog";
-            if (!act.RawEventCatalogOrderExact) return "MissingActEventCatalogOrder";
-            if (!act.EventEpochMembershipExact) return "MissingEventEpochMembership";
-            if (!act.EventEpochRevealFactsExact) return "MissingEventEpochAuthority";
-            if (!act.EligibleEventOrderExact) return "MissingEventEligibleOrder";
+            if (!snapshot.CanAdvanceEventShuffle(act))
+            {
+                if (!snapshot.EventAuthority.SharedRawOrderExact) return "MissingSharedEventCatalog";
+                if (!act.RawEventCatalogOrderExact) return "MissingActEventCatalogOrder";
+                if (!snapshot.EventAuthority.RequiredEpochMembershipExact || !act.EventEpochMembershipExact) return "MissingEventEpochMembership";
+                if (!snapshot.EventAuthority.EpochRevealFactsExact || !act.EventEpochRevealFactsExact) return "MissingEventEpochAuthority";
+                return "MissingEventEligibleOrder";
+            }
             if (!act.EncounterCatalogOfficialVanilla) return "UnsupportedModEncounter";
             if (act.OrderedGenerateAllEncounters is null) return "MissingEncounterCatalog";
             if (string.Equals(
@@ -681,7 +701,6 @@ public static class Beta109WorldPredictionProvider
             return snapshot.UpFrontPrefix.EvidenceCode is { Length: > 0 }
                 ? snapshot.UpFrontPrefix.EvidenceCode
                 : "MissingPriorUpFront";
-        if (!snapshot.WorldGenerationHooksExact) return "UnknownWorldGenerationHookOrModifier";
         if (snapshot.FixtureValidationStatus is not (
                 Beta109FixtureValidationStatus.VerifiedRealGame or
                 Beta109FixtureValidationStatus.AssumedCompatibleLatestKnown) ||

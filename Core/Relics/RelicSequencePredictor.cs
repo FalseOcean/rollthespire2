@@ -125,9 +125,15 @@ public static class RelicSequencePredictor
             source,
             rootHash,
             seedIdentity);
+        if (!modern.AppliedReplayAssumptions && modern.InitialRelicReplayAssumption.Length != 0)
+            return Unknown(world, profile.ProfileId, modern.InitialRelicReplayAssumption);
         bool bestEffort = profile.ProfileId == RuntimeProfileId.Beta111 &&
             (world.SourceAuthority == SourceAuthority.ModdedRuntimeBestEffort || !modern.NoUnknownHooksOrModifiers);
-        if (!bestEffort && (!SourceAuthorityRules.SupportsExactIdentity(world.SourceAuthority) ||
+        // The enclosing world catalog may be partial solely because encounter
+        // or event data is unavailable. Relics have their own captured sources.
+        bool scopedRuntime = modern.RngSemantics == RngSemanticProfileId.Modern113 && modern.DirectSourceAudited &&
+            world.SourceAuthority == SourceAuthority.Incomplete && modern.NoUnknownHooksOrModifiers;
+        if (!bestEffort && !scopedRuntime && (!SourceAuthorityRules.SupportsExactIdentity(world.SourceAuthority) ||
             world.Completeness != SnapshotCompleteness.Complete))
             return Unknown(world, profile.ProfileId, "MissingModernRelicSequenceSourceAuthority");
         if (!(modern.GameMode == WorldGameMode.Singleplayer && !modern.IsMultiplayer && modern.PlayerCount == 1) &&
@@ -146,9 +152,6 @@ public static class RelicSequencePredictor
             return Unknown(world, profile.ProfileId, "MissingModernRelicInitializationAuthority");
         if (!modern.NoUnknownHooksOrModifiers && !bestEffort)
             return Unknown(world, profile.ProfileId, "UnknownModernRelicSequenceHooksOrModifiers");
-        if (modern.SharedRelicBuckets.Count == 0 || modern.PlayerRelicBuckets.Count == 0)
-            return Unknown(world, profile.ProfileId, "MissingModernRelicBuckets");
-
         IReadOnlyList<RelicBucket>? shared = ConvertModernBuckets(modern.SharedRelicBuckets, out string sharedIssue);
         if (shared is null) return Unknown(world, profile.ProfileId, sharedIssue);
         IReadOnlyList<RelicBucket>? player = ConvertModernBuckets(modern.PlayerRelicBuckets, out string playerIssue);
@@ -168,14 +171,12 @@ public static class RelicSequencePredictor
             RuntimeProfileId.Beta110 => "beta110.relic-grab-bag.shared-modern-source-audit",
             _ => "beta109.relic-grab-bag.direct-source-delta-audit"
         };
-        return Replay(profile, seedIdentity, world, shared, player, previewCount,
+        return Replay(profile, seedIdentity, scopedRuntime ? world with { SourceAuthority = SourceAuthority.OfficialRuntimeExact } : world,
+            shared, player, previewCount,
             evidenceCode,
             rootOverride: modern.RunSeedRoot,
             authorityFingerprintOverride: modern.SnapshotFingerprint,
-            productionValidated: validationAccepted,
-            shopEligibilityExact: modern.RelicShopEligibilityAuthorityExact &&
-                modern.PlayerRelicBuckets.Where(b => RarityEquals(RarityFromBucketId(b.BucketId), "Shop"))
-                    .All(b => b.HasExactShopEligibility));
+            productionValidated: validationAccepted);
     }
 
     private static RelicSequencePredictionResult Replay(
@@ -188,8 +189,7 @@ public static class RelicSequencePredictor
         string evidenceCode,
         ulong? rootOverride = null,
         string? authorityFingerprintOverride = null,
-        bool productionValidated = true,
-        bool shopEligibilityExact = true)
+        bool productionValidated = true)
     {
         ulong root = rootOverride ?? profile.ComputeRootSeed(canonicalSeed);
         var rng = new Xoshiro256StarStar(profile.DeriveNamedStreamSeed(root, UpFrontStream));
@@ -224,31 +224,25 @@ public static class RelicSequencePredictor
             ? SnapshotCompleteness.Complete
             : SnapshotCompleteness.Partial;
 
+        (int Certain, int Possible)? shopStockCount = null;
         var lanes = new List<RelicSequenceLaneResult>(LaneRarities.Length);
         foreach (string rarity in LaneRarities)
         {
             RelicBucket? bucket = playerBuckets.FirstOrDefault(item => RarityEquals(item.RarityCode, rarity));
-            if (bucket is null)
-                return Unknown(world, profile.ProfileId, "MissingRelicSequenceBucket:" + rarity);
-
             bool isShop = RarityEquals(rarity, "Shop");
-            if (isShop && !shopEligibilityExact)
-            {
-                // Eligibility filters the already shuffled Shop lane only.
-                // Every genuine bucket shuffle above remains part of UpFront.
-                lanes.Add(new RelicSequenceLaneResult(RelicSequenceKind.Shop, rarity,
-                    RelicSequencePullDirection.Back, [], PredictionPrecision.Unknown,
-                    SourceAuthority.Unknown, SnapshotCompleteness.Partial, evidenceCode + ".shop.unknown")
-                { IssueCode = "MissingModernRelicShopEligibilityAuthority" });
-                continue;
-            }
+            // Missing rarity in a completely observed source means no allocated
+            // deque. Only the allocated buckets above consumed shuffle calls.
+            List<RelicCatalogEntry> physical = bucket?.Entries ?? [];
+            if (isShop)
+                shopStockCount = (
+                    physical.Count(entry => entry.ShopEligibilityExact && entry.IsAllowedInShops && !entry.UnmodeledRunEligibility),
+                    physical.Count(entry => !entry.ShopEligibilityExact || entry.IsAllowedInShops));
+            bool incomplete = isShop && physical.Any(entry => !entry.ShopEligibilityExact);
             RelicCatalogEntry[] effectiveEntries = isShop
-                ? bucket.Entries.Where(entry => entry.IsAllowedInShops).ToArray()
-                : bucket.Entries.ToArray();
-
-            IEnumerable<RelicCatalogEntry> primaryPullOrder = isShop
-                ? effectiveEntries.AsEnumerable().Reverse()
-                : effectiveEntries;
+                ? physical.AsEnumerable().Reverse().TakeWhile(entry => entry.ShopEligibilityExact)
+                    .Where(entry => entry.IsAllowedInShops).ToArray()
+                : physical.ToArray();
+            var primaryPullOrder = effectiveEntries;
             RelicSequenceEntryResult[] entries = primaryPullOrder
                 .Take(previewCount)
                 .Select((entry, index) => new RelicSequenceEntryResult(
@@ -283,14 +277,17 @@ public static class RelicSequencePredictor
                 rarity,
                 isShop ? RelicSequencePullDirection.Back : RelicSequencePullDirection.Front,
                 entries,
-                precision,
+                incomplete ? (entries.Length > 0 ? PredictionPrecision.Partial : PredictionPrecision.Unknown) : precision,
                 resultAuthority,
-                resultCompleteness,
+                incomplete ? SnapshotCompleteness.Partial : resultCompleteness,
                 evidenceCode + "." + rarity.ToLowerInvariant())
             {
                 TotalCount = effectiveEntries.Length,
+                IssueCode = incomplete ? "MissingModernRelicShopEligibilityAuthority" : string.Empty,
                 FullEntries = primaryPullOrder.Select((entry, index) => new RelicSequenceEntryResult(
-                    index + 1, entry.RelicKey, precision, evidenceCode + "." + rarity.ToLowerInvariant())).ToArray(),
+                    index + 1, entry.RelicKey, precision, evidenceCode + "." + rarity.ToLowerInvariant())
+                    { ShopEligible = entry.ShopEligibilityExact && !entry.IsAllowedInShops ? false :
+                        entry.ShopEligibilityExact && !entry.UnmodeledRunEligibility ? true : null }).ToArray(),
                 TailEntries = tailEntries
             });
         }
@@ -299,9 +296,7 @@ public static class RelicSequencePredictor
         foreach (string rarity in LaneRarities.Take(3))
         {
             RelicBucket? bucket = sharedBuckets.FirstOrDefault(item => RarityEquals(item.RarityCode, rarity));
-            if (bucket is null) continue;
-
-            RelicSequenceEntryResult[] fullEntries = bucket.Entries
+            RelicSequenceEntryResult[] fullEntries = (bucket?.Entries ?? [])
                 .Select((entry, index) => new RelicSequenceEntryResult(index + 1, entry.RelicKey,
                     precision, evidenceCode + ".treasure." + rarity.ToLowerInvariant()))
                 .ToArray();
@@ -326,7 +321,7 @@ public static class RelicSequencePredictor
             profile.ProfileId,
             SeedDomainEvaluationStatus.Evaluated,
             lanes,
-            shopEligibilityExact ? precision : PredictionPrecision.Partial,
+            lanes.All(lane => lane.IssueCode.Length == 0) ? precision : PredictionPrecision.Partial,
             resultAuthority,
             resultCompleteness,
             string.Empty,
@@ -351,6 +346,7 @@ public static class RelicSequencePredictor
             })
         {
             TreasureRoomLanes = treasureRoomLanes,
+            ShopStockCount = shopStockCount,
             RngSemantics = semantics,
             EarlyLastingCandyEligible = RuntimeProfilePolicies.UsesChildStreamShuffle(semantics)
                 ? StandardOpeningRelicEligibility.AllowsLastingCandy(world)
@@ -409,7 +405,8 @@ public static class RelicSequencePredictor
                     issue = "ModernRelicBucketEntryAlignmentMismatch:" + bucket.BucketId;
                     return null;
                 }
-                entries.Add(new RelicCatalogEntry(entry.RelicKey, rarity, entry.IsAllowedInShops));
+                entries.Add(new RelicCatalogEntry(entry.RelicKey, rarity, entry.IsAllowedInShops,
+                    entry.ShopEligibilityExact, entry.UnmodeledRunEligibility));
             }
             output.Add(new RelicBucket(rarity, entries));
         }
@@ -443,7 +440,7 @@ public static class RelicSequencePredictor
         for (int index = 0; index < bucket.Entries.Count; index++)
         {
             RelicCatalogEntry entry = bucket.Entries[index];
-            yield return $"{index}:{entry.RelicKey.Serialized}:{entry.IsAllowedInShops}";
+            yield return $"{index}:{entry.RelicKey.Serialized}:{entry.IsAllowedInShops}:{entry.ShopEligibilityExact}:{entry.UnmodeledRunEligibility}";
         }
     }
 
@@ -482,6 +479,7 @@ public static class RelicSequencePredictor
             : string.Empty;
     }
 
-    private sealed record RelicCatalogEntry(ModelKey RelicKey, string RarityCode, bool IsAllowedInShops);
+    private sealed record RelicCatalogEntry(ModelKey RelicKey, string RarityCode, bool IsAllowedInShops,
+        bool ShopEligibilityExact = true, bool UnmodeledRunEligibility = false);
     private sealed record RelicBucket(string RarityCode, List<RelicCatalogEntry> Entries);
 }

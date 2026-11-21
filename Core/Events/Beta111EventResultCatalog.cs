@@ -69,6 +69,8 @@ public static class Beta111EventResultCatalog
     internal static IReadOnlyList<ModelKey> ColorfulOrder(RngSemanticProfileId semantics) =>
         semantics == RngSemanticProfileId.Modern113 ? Modern113ColorfulCharacterOrder : ColorfulCharacterOrder;
 
+    internal static ModelKey PoolForColor(ModelKey color) => new("CARD_POOL", color.Entry + "_CARD_POOL");
+
     private static ModelKey Card(string entry) => new(BaseGameModelKeys.Categories.Card, entry);
     private static ModelKey Relic(string entry) => new(BaseGameModelKeys.Categories.Relic, entry);
 }

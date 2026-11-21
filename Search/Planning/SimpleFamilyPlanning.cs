@@ -27,7 +27,8 @@ public static partial class FamilyExecutionCoordinator
         // Reuse the existing whole numerical bodies. Their complete logical
         // Coverage competes in the same greedy walk as the independent units.
         // Restricted/integer registration must never reconstruct a native body.
-        if (denseEntry is null && gpuAvailable && bodies.Any(body => body.FamilyId == "N.Neow" && body.UsesGpu))
+        if (denseEntry is null && gpuAvailable && bodies.Any(body => body.FamilyId == "N.Neow" && body.UsesGpu) &&
+            bodies.Any(body => body.FamilyId is TransformationAggregateFamily.Id or RelicFamily.Id))
         {
             var replay = FamilyAuxiliaryEvidence.Read<NeowReplayPlan?>(nameof(FamilyExecutionCoordinator),
                 "SimpleNeowReplayPreparation", () => NeowReplayPlan.Compile(model, false), null, request.SnapshotFingerprint);

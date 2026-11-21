@@ -27,6 +27,7 @@ internal sealed record CombatRewardGpuPlan(uint[] Meta, uint[] Pools, uint[] Ids
     internal uint[] ObservedOpeningData { get; init; } = [];
     internal uint[] ObservedBonesIds { get; init; } = [];
     internal bool UsesObservedOpening => ObservedOpeningData.Length > 0;
+    private bool SharesObservedBonesPair => UsesChildShuffle && Routes == 2 && UsesObservedOpening && ObservedOpeningData[1] != 0;
     internal bool UsesObservedOpeningHotLoop => UsesObservedOpening && UsesHotLoop;
     internal bool UsesLazyObservedBag => ObservedOpeningData.Length > 10 && ObservedOpeningData[10] != 0;
     private OpeningReplay? OpeningReplayMask { get; init; }
@@ -41,6 +42,7 @@ internal sealed record CombatRewardGpuPlan(uint[] Meta, uint[] Pools, uint[] Ids
     internal string Revision(bool compact) => "C.CombatReward.Gpu." + (UsesHotLoop ? "NeutralHotLoop" : "GenericStreaming.EmptyExclusionDirect.20261013.v1") +
         (UsesNeutralWitness ? CombatRewardNeutralWitness.Revision : "") +
         (UsesObservedOpening ? CombatRewardObservedOpening.Revision + ".BucketCapacity" + ObservedOpeningData[8] : "") +
+        (SharesObservedBonesPair ? ".SharedDynamicBonesPair.20261121.v1" : "") +
         (UsesObservedOpeningHotLoop ? ".ActualHotOrExact.20261102.v1" : "") +
         (UsesLazyObservedBag ? ".LazyObservedCapsuleLanes.20261115.v1" : "") +
         (OpeningReplayMask is { } opening ? ".OpeningReplayCrop.20261115.v1.Group" + (int)opening : "") +
@@ -266,6 +268,7 @@ internal sealed record CombatRewardGpuPlan(uint[] Meta, uint[] Pools, uint[] Ids
         string source = FamilyGpuComputeUtility.LoadEmbeddedShader("CombatRewardFamily.comp.glsl")
         .Replace("/*__C_OBSERVED_OPENING__*/", UsesObservedOpening
             ? "#define RT2_C_OBSERVED_OPENING 1\n#define RT2_C_OBSERVED_HOT " + (UsesObservedOpeningHotLoop ? "1\n" : "0\n") +
+              "#define RT2_C_SHARED_BONES_PAIR " + (SharesObservedBonesPair && !forceGeneric ? "1\n" : "0\n") +
               "#define RT2_C_LAZY_OBSERVED_BAG " + (UsesLazyObservedBag ? "1\n" : "0\n") +
               "#define RT2_C_BAG_CAPACITY " + Math.Max(1, ObservedOpeningData[8]) + "\n" +
               FamilyGpuComputeUtility.LoadEmbeddedShader("CombatRewardOpening.glsl")

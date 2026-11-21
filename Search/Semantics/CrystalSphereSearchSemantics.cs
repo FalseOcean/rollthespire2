@@ -16,7 +16,7 @@ internal static class CrystalSphereSearchSemantics
         IEnumerable<NeowEffectCardSnapshot> pool = effects.CharacterRewardPool!;
         if (relics.HasFlag(CrystalSphereSearchRelics.PrismaticGem))
         {
-            if (!effects.OtherCharacterPoolsExact || effects.OtherCharacterPools is null ||
+            if (!(effects.OtherCharacterIdentityPoolsExact || effects.OtherCharacterPoolsExact) || effects.OtherCharacterPools is null ||
                 effects.NativeCharacterPoolOrder is not { } order) return null;
             var pools = effects.OtherCharacterPools.ToDictionary(p => p.CharacterKey, p => p.Cards);
             pools[ownerCharacter] = effects.CharacterRewardPool!;
@@ -25,7 +25,7 @@ internal static class CrystalSphereSearchSemantics
         }
         if (relics.HasFlag(CrystalSphereSearchRelics.DingyRug))
         {
-            if (!effects.ColorlessRewardPoolExact || effects.ColorlessRewardPool is null) return null;
+            if (!(effects.ColorlessRewardIdentityPoolExact || effects.ColorlessRewardPoolExact) || effects.ColorlessRewardPool is null) return null;
             pool = pool.Concat(effects.ColorlessRewardPool!);
         }
         return pool.Where(card => players > 1 || !card.IsMultiplayerOnly)

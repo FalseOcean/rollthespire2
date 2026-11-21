@@ -45,6 +45,9 @@ public static class PartyRuntimeAuthorityCapture
         generation = generation with
         {
             PartyRelicBuckets = Array.AsReadOnly(bags),
+            CapturedPartyRelicBagSourcesExact = generation.SharedRelicPoolOrderExact &&
+                players.All(p => p.WorldAuthority?.Beta109Generation?.RelicInitializationExact == true),
+            InitialRelicShuffleCount = null,
             PlayerRelicBuckets = bags[0],
             PartyBossDiscoveryOverrides = new System.Collections.ObjectModel.ReadOnlyDictionary<string, ModelKey>(discovery),
             PartyBossDiscoveryExact = true,
@@ -72,7 +75,7 @@ public static class PartyRuntimeAuthorityCapture
                 profile.ProfileId, generation.OrderedActCatalog, generation.SharedAncients, generation.IsVanilla,
                 players[slot].EffectAuthority, personalWorld.AncientOptionRelicCatalog ?? [],
                 personalWorld.AncientOptionRelicCatalogExact, generation.RunSeedRoot, generation.RunSeedRootExact,
-                players[slot].Character, slot, true, personal.UnlockedCharacters, personal.UnlockedCharactersExact);
+                players[slot].Character, slot, true, personal.UnlockedCharacters, personal.UnlockedCharactersExact, generation.AncientRules);
             var bound = generation with
             {
                 PersonalPlayerSlot = slot,

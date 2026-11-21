@@ -402,10 +402,14 @@ internal sealed partial class AnalysisActPredictionCard : PanelContainer
         string conditional = _getConditionalEventResultText?.Invoke(eventKey) ?? string.Empty;
         if (!string.IsNullOrWhiteSpace(conditional)) return conditional;
         if (_eventResults is null || _uiText is null) return string.Empty;
-        if (eventKey.Entry == Beta111EventResultCatalog.TrashHeapEventEntry && _eventResults.TrashHeapPrecision == PredictionPrecision.Exact)
+        if (eventKey.Entry == Beta111EventResultCatalog.TrashHeapEventEntry)
         {
-            return _uiText.Format("predictor.event.tooltip.grab", _contentName(_eventResults.TrashHeapGrabCard, GameContentKind.Card)) + "\n" +
-                _uiText.Format("predictor.event.tooltip.dive", _contentName(_eventResults.TrashHeapDiveRelic, GameContentKind.Relic));
+            var lines = new List<string>();
+            if (_eventResults.TrashGrabPrecision == PredictionPrecision.Exact)
+                lines.Add(_uiText.Format("predictor.event.tooltip.grab", _contentName(_eventResults.TrashHeapGrabCard, GameContentKind.Card)));
+            if (_eventResults.TrashDivePrecision == PredictionPrecision.Exact)
+                lines.Add(_uiText.Format("predictor.event.tooltip.dive", _contentName(_eventResults.TrashHeapDiveRelic, GameContentKind.Relic)));
+            return string.Join("\n", lines);
         }
         if (eventKey.Entry == Beta111EventResultCatalog.FakeMerchantEventEntry &&
             _eventResults.FakeMerchantPrecision == PredictionPrecision.Exact && _eventResults.FakeMerchantInventory.Count > 0)

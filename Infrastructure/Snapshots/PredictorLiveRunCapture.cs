@@ -53,6 +53,7 @@ internal static partial class PredictorLiveRunCapture
     private static readonly JsonSerializerOptions Json = new() { IncludeFields = true };
     private sealed record InstanceIdentity(long Id);
     private static readonly ConditionalWeakTable<object, InstanceIdentity> InstanceIds = new();
+    private static readonly ConditionalWeakTable<PredictorCatalog, Dictionary<ModelKey, PredictorCardDefinition>> CardDefinitionsByKey = new();
     private static long _lastInstanceId;
     internal static long Id(object model) => InstanceIds.GetValue(model,
         _ => new(Interlocked.Increment(ref _lastInstanceId))).Id;
@@ -143,8 +144,7 @@ internal static partial class PredictorLiveRunCapture
             AccountWongoPoints = MegaCrit.Sts2.Core.Saves.SaveManager.Instance.Progress.WongoPoints,
             Modifiers = run.Modifiers.Select(m => new PredictorRunModifier(Key(m),
                 m is MegaCrit.Sts2.Core.Models.Modifiers.CharacterCards cc ? Key(cc.CharacterModel) : null)).ToImmutableArray(),
-            PotionPool = MegaCrit.Sts2.Core.Factories.PotionFactory.GetPotionOptions(player).Select(p =>
-                new PredictorPotionOption(Key(p), Enum.Parse<PredictorPotionRarity>(p.Rarity.ToString()), p.CanBeGeneratedInCombat)).ToImmutableArray()
+            PotionPool = MegaCrit.Sts2.Core.Factories.PotionFactory.GetPotionOptions(player).Select(PotionOption).ToImmutableArray()
         };
         var cards = player.Deck.Cards.Select(c => Card(c, catalog)).ToImmutableArray();
         var extraCards = new List<PredictorCard>();
@@ -231,7 +231,7 @@ internal static partial class PredictorLiveRunCapture
             // The native first-entry prefix precedes Neow option generation.
             // Reuse the seed predictor's pure source algorithm and copied
             // eligibility; never generate offers on the real native event.
-            if (authority.VanillaNeowCatalogExact != true)
+            if (!authority.HasExactModernNeowIdentityInputs)
                 throw new InvalidOperationException("PredictorOpeningCatalogMissing");
             var opening = RolltheSpire2.Core.Neow.ModernNeowIdentityPredictor.PredictModernCore(
                 context.Seed, authority, context.RuntimeProfile, true);
@@ -285,17 +285,28 @@ internal static partial class PredictorLiveRunCapture
         });
     }
 
+    internal static PredictorPotionOption PotionOption(PotionModel potion) => new(Key(potion),
+        Enum.Parse<PredictorPotionRarity>(potion.Rarity.ToString()), potion.CanBeGeneratedInCombat);
+
     internal static PredictorCard Card(CardModel card, PredictorCatalog catalog, bool captureSort = false)
     {
         var keywords = card.GetKeywordsWithSources(KeywordSources.Local);
         int localBase = Field<int>(card.EnergyCost, "_base");
-        int metadataLevel = PredictorCardLevelEffects.HasInvariantLevelMetadata(Key(card)) ? 0 : card.CurrentUpgradeLevel;
-        int? normalCost = catalog.CardDefinitions.FirstOrDefault(d => d.Prototype.Key == Key(card))?.Levels
+        var key = Key(card);
+        int metadataLevel = PredictorCardLevelEffects.HasInvariantLevelMetadata(key) ? 0 : card.CurrentUpgradeLevel;
+        var definitions = CardDefinitionsByKey.GetValue(catalog, static value =>
+        {
+            var index = new Dictionary<ModelKey, PredictorCardDefinition>(value.CardDefinitions.Length);
+            foreach (var definition in value.CardDefinitions) index.TryAdd(definition.Prototype.Key, definition);
+            return index;
+        });
+        int? normalCost = definitions.GetValueOrDefault(key)?.Levels
             .FirstOrDefault(l => l.UpgradeLevel == metadataLevel)?.LocalCost;
         int? costOverride = normalCost == localBase ? null : localBase;
         int increasedBlock = card is GeneticAlgorithm ga ? ga.IncreasedBlock : 0;
         int increasedDamage = card is TheScythe scythe ? scythe.IncreasedDamage : 0;
-        return new(Id(card), Key(card), Enum.TryParse<EffectCardType>(card.Type.ToString(), out var type) ? type : EffectCardType.Other,
+        bool customComparison = captureSort && !UsesBaseCardComparison(card);
+        return new(Id(card), key, Enum.TryParse<EffectCardType>(card.Type.ToString(), out var type) ? type : EffectCardType.Other,
             card.CurrentUpgradeLevel, card.MaxUpgradeLevel, !keywords.Contains(CardKeyword.Eternal), card.FloorAddedToDeck ?? 0,
             card.Enchantment == null ? null : Key(card.Enchantment), card.Enchantment?.Amount ?? 0,
             increasedBlock, increasedDamage)
@@ -304,7 +315,8 @@ internal static partial class PredictorLiveRunCapture
             HasInnateKeyword = keywords.Contains(CardKeyword.Innate), HasRetainKeyword = keywords.Contains(CardKeyword.Retain),
             PermanentCostOverride = costOverride,
             Affliction = card.Affliction == null ? null : Key(card.Affliction),
-            ObservedSort = captureSort && card.GetType().Assembly == typeof(CardModel).Assembly
+            HasCustomStableComparison = customComparison,
+            ObservedSort = captureSort && !customComparison
                 ? new(card.CurrentUpgradeLevel, costOverride, increasedDamage, increasedBlock, CardSortValues(card)) : null,
             RoomsEntered = card is Dowsing dowsing ? dowsing.RoomsEntered : 0,
             CombatsSeen = card is Guilty guilty ? guilty.CombatsSeen : 0,
@@ -315,8 +327,11 @@ internal static partial class PredictorLiveRunCapture
         };
     }
 
+    internal static bool UsesBaseCardComparison(CardModel card) =>
+        card.GetType().GetMethod(nameof(CardModel.CompareTo), [typeof(AbstractModel)])?.DeclaringType == typeof(CardModel);
+
     internal static PredictorCardSortValues CardSortValues(CardModel card) => new(
-        card.EnergyCost.CostsX ? card.EnergyCost.CapturedXValue : Math.Max(0, card.EnergyCost.GetWithModifiers(CostModifiers.Local)),
+        card.EnergyCost.GetResolved(),
         card.BaseReplayCount, card.DynamicVars.ToImmutableSortedDictionary(pair => pair.Key, pair => pair.Value.BaseValue, StringComparer.Ordinal));
 
     internal static PredictorRelic Relic(RelicModel relic, PredictorCatalog catalog, Func<CardModel, long> cardId)

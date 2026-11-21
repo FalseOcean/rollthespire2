@@ -48,6 +48,7 @@ internal static partial class PredictorLiveRunCapture
             return levels;
         }
 
-        internal void Remember(object snapshot) => SnapshotCatalogLevels.Add(snapshot, _captured);
+        internal void Remember(object snapshot, bool reusePrevious = false) =>
+            SnapshotCatalogLevels.Add(snapshot, reusePrevious && _previous != null ? _previous : _captured);
     }
 }

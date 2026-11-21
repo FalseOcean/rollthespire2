@@ -181,6 +181,10 @@ void append_output(uint logical_ordinal) {
         return;
     }
     output_ordinals.values[slot] = logical_ordinal;
+#ifdef RT2_R_SMALL_HEADER_CAPACITY
+    if (slot < RT2_R_SMALL_HEADER_CAPACITY)
+        output_header.values[RT2_R_SMALL_HEADER_OFFSET + slot] = logical_ordinal;
+#endif
 }
 
 void process_candidate_with_root(uint logical, uint64_t root) {

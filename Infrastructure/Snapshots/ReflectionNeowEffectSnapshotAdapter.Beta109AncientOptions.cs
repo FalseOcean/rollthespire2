@@ -21,6 +21,54 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             ["VAKUU"] = "MegaCrit.Sts2.Core.Models.Events.Vakuu"
         };
 
+    private static Beta109AncientRuleObservation ObserveAncientRules(Type modelDb, IReadOnlyList<ModelKey> unknownShared)
+    {
+        var patches = HarmonyLib.Harmony.GetAllPatchedMethods().ToHashSet();
+        var wrapper = ObserveAncientOptionWrapper(patches);
+        const string relicType = "MegaCrit.Sts2.Core.Models.RelicModel";
+        bool filtersAllowedRelics = modelDb.Assembly.GetType("MegaCrit.Sts2.Core.Models.AncientEventModel")?
+            .GetMethod("GetOptionsFromThreePools", PublicInstance | System.Reflection.BindingFlags.NonPublic) is not null;
+        bool standardEligibility = !patches.Any(m => m.DeclaringType?.FullName == relicType &&
+            m.Name is "IsAllowed" or "IsAllowedInternal" or "IsLateInAct3");
+        bool standardWrapper = wrapper.UnknownReason.Length == 0 && !patches.Any(m => m.DeclaringType?.FullName switch
+        {
+            "MegaCrit.Sts2.Core.Models.AncientEventModel" => m.Name is "get_DebugOption" or "AllowedOptions" or
+                "GetOptionsFromThreePools" or "TryChooseRandomAllowedOption" or "RelicOption",
+            "MegaCrit.Sts2.Core.Models.EventModel" => m.Name is "BeginEvent" or "get_IsShared",
+            "MegaCrit.Sts2.Core.Hooks.Hook" => m.Name == "ShouldAllowAncient",
+            _ => false
+        });
+        var patchedGenerators = Beta109AncientRuntimeTypes.Where(pair =>
+            modelDb.Assembly.GetType(pair.Value) is { } type && !wrapper.CanReplay(type) || patches.Any(method =>
+            method.DeclaringType?.FullName == pair.Value && (method.Name.Contains("Option", StringComparison.Ordinal) ||
+            method.Name == "get_IsShared"))).Select(pair => pair.Key).ToArray();
+        // Pael uses ModelDb.Relic<T>() directly. A failure enumerating AllRelics, or an unrelated
+        // relic with a custom rule, says nothing about these ten native bindings.
+        var getRelic = modelDb.GetMethods(PublicStatic).SingleOrDefault(method =>
+            method.Name == "Relic" && method.IsGenericMethodDefinition && method.GetParameters().Length == 0);
+        var relics = new List<Beta109PaelRelicBinding>();
+        foreach (string suffix in new[] { "Flesh", "Horn", "Tears", "Wing", "Claw", "Tooth", "Growth", "Eye", "Blood", "Legion" })
+        {
+            string typeName = "Paels" + suffix;
+            Type? type = modelDb.Assembly.GetType("MegaCrit.Sts2.Core.Models.Relics." + typeName);
+            if (type is null || getRelic is null) continue;
+            try
+            {
+                object? relic = getRelic.MakeGenericMethod(type).Invoke(null, null);
+                if (relic is null || !TryModelKey(relic, out ModelKey key)) continue;
+                var rule = relic.GetType().GetMethod("IsAllowedInternal", PublicInstance | System.Reflection.BindingFlags.NonPublic);
+                // Through 0.111 Pael directly called NextItem on each list; 0.113 first filters each list.
+                relics.Add(new(typeName, key, !filtersAllowedRelics || standardEligibility && rule?.DeclaringType?.FullName == relicType));
+            }
+            catch (Exception ex)
+            {
+                Diagnostics.RuntimeIssueLedger.Current.Record(ex, "AncientOptionRelicBindingFailed",
+                    nameof(ReflectionNeowEffectSnapshotAdapter), "PaelRelicOption", "issues.capture_failed", correlationId: typeName);
+            }
+        }
+        return new(relics, unknownShared, patchedGenerators, standardWrapper);
+    }
+
     /// <summary>
     /// Main-thread projection of the directly audited 0.109.1 Ancient option
     /// definitions into immutable DTOs. This method never instantiates an Event,
@@ -42,7 +90,8 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         int playerSlotIndex,
         bool? noRunModifiers,
         IReadOnlyList<ModelKey> unlockedCharacters,
-        bool unlockedCharactersExact)
+        bool unlockedCharactersExact,
+        Beta109AncientRuleObservation? rules = null)
     {
         var output = new List<Beta109AncientEventContextSnapshot>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -82,17 +131,22 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                 effects,
                 runtimeRelicCatalog,
                 runtimeRelicCatalogExact,
+                rules,
                 out bool dynamicFactsExact,
                 out string projectionEvidence);
 
             bool modifierFactsExact = noRunModifiers == true;
-            Beta109HookDecision hookDecision = modifierFactsExact && isVanilla
+            bool knownGenerator = rules is null || rules.StandardOptionWrapper &&
+                !rules.PatchedAncientGenerators.Contains(normalized) &&
+                !rules.SharedAncientsWithUnknownGenerator.Contains(ancient) &&
+                !orderedActs.Any(a => a.Act == act && a.AncientsWithUnknownGenerator.Contains(ancient));
+            Beta109HookDecision hookDecision = modifierFactsExact && isVanilla && knownGenerator
                 ? Beta109HookDecision.Allow
                 : Beta109HookDecision.Unknown;
             bool eventContextExact = runSeedRootExact &&
                                      eventIsSharedAuthorityExact &&
                                      character.IsValid &&
-                                     catalog is { CatalogExact: true } &&
+                                     catalog is not null &&
                                      modifierFactsExact;
             int currentActIndex = Math.Max(0, act - 1);
             ulong eventRoot = runSeedRootExact && eventIsSharedAuthorityExact
@@ -160,6 +214,10 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                 Catalog: catalog,
                 ContextFingerprint: contextFingerprint)
             {
+                OptionReplayAssumption = !knownGenerator && catalog is { CatalogExact: true } &&
+                    Beta109AncientOptionProvider.HasRegisteredGenerator(catalog)
+                    ? "StandardAncientOptionGenerator:" + ancient.Entry : string.Empty,
+                KnownGeneratorWithoutModifiers = isVanilla && knownGenerator,
                 RuntimeTypeName = runtimeType,
                 UnlockedCharacterSourceOrderExact = unlockedCharactersExact,
                 EventRngRoot = eventRoot,
@@ -253,6 +311,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         NeowEffectAuthoritySnapshot? effects,
         IReadOnlyList<ModelKey> runtimeRelicCatalog,
         bool runtimeRelicCatalogExact,
+        Beta109AncientRuleObservation? rules,
         out bool dynamicFactsExact,
         out string evidence)
     {
@@ -483,13 +542,22 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         {
             var rebound = new List<ModelKey>(pool.OrderedOptions.Count);
             bool poolKeysExact = true;
+            bool filterExact = pool.FilterResultExact;
             foreach (ModelKey key in pool.OrderedOptions)
             {
-                ModelKey bound = BindBeta109AncientOptionRelic(
-                    key.Entry,
-                    runtimeRelicCatalog,
-                    runtimeRelicCatalogExact,
-                    out bool keyExact);
+                ModelKey bound;
+                bool keyExact;
+                if (entry == "PAEL" && rules is not null)
+                {
+                    var direct = rules.PaelRelics.FirstOrDefault(r => NormalizeAncientEntry(r.TypeName) == NormalizeAncientEntry(key.Entry));
+                    bound = direct?.Key ?? key;
+                    keyExact = direct is not null;
+                    filterExact &= direct?.StandardEligibility == true;
+                }
+                else
+                {
+                    bound = BindBeta109AncientOptionRelic(key.Entry, runtimeRelicCatalog, runtimeRelicCatalogExact, out keyExact);
+                }
                 rebound.Add(bound);
                 poolKeysExact &= keyExact;
             }
@@ -497,10 +565,12 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             reboundPools.Add(pool with
             {
                 OrderedOptions = rebound.ToArray(),
+                FilterResultExact = filterExact,
                 OrderExact = pool.OrderExact && poolKeysExact
             });
         }
 
+        if (entry == "PAEL" && rules is not null) variantData["pael.directPoolBindings"] = "true";
         string fingerprint = Fingerprint(
             RuntimeProfilePolicies.CatalogFingerprintPrefix(profileId) + "-ancient-option-catalog-v3",
             new[]
@@ -514,7 +584,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                 allRuntimeKeysExact.ToString(),
                 evidence
             }.Concat(reboundPools.Select(pool =>
-                $"{pool.SourceOrdinal}:{pool.PoolId}:{pool.OrderExact}:{pool.InstanceProjectionExact}:" +
+                $"{pool.SourceOrdinal}:{pool.PoolId}:{pool.OrderExact}:{pool.FilterResultExact}:{pool.InstanceProjectionExact}:" +
                 string.Join(",", pool.OrderedOptions.Select(key => key.Serialized)))));
 
         return new Beta109AncientOptionCatalogSnapshot(
@@ -523,7 +593,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             Capability: capability,
             Pools: reboundPools,
             VariantData: variantData,
-            CatalogExact: runtimeRelicCatalogExact && allRuntimeKeysExact,
+            CatalogExact: (entry == "PAEL" && rules is not null || runtimeRelicCatalogExact) && allRuntimeKeysExact,
             MutableInstanceProjectionExact: mutableProjectionExact,
             CatalogFingerprint: fingerprint);
 

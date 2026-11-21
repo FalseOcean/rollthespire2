@@ -41,6 +41,17 @@ public sealed class SeedAncientPremiseVariants
             RuntimeProfileId.Stable107 => Stable107Profile.Instance,
             _ => UnsupportedProfile.Instance
         };
+        bool conditionalWorld = facts.ModelAssumptions.ContainsKey(SeedPredictionDomainSelection.World);
+
+        WorldPredictionResult Project(Authority.RuntimeContextAuthoritySnapshot authority, AncientOptionConditionProfile conditions) =>
+            request.TrustedRootHashInput is { } input
+                ? WorldPredictionEngine.PredictFromRootHash(profile, input.RootHash, input.SeedIdentity,
+                    request.Ascension, request.PlayerSlotIndex, request.Character.CharacterKey,
+                    authority.WorldAuthority, authority.EffectAuthority, conditions)
+                : WorldPredictionEngine.Predict(profile, facts.CanonicalSeed,
+                    request.Ascension, request.PlayerSlotIndex, request.Character.CharacterKey,
+                    authority.WorldAuthority, authority.EffectAuthority, conditions);
+
         foreach (var ancient in facts.World?.Ancients ?? [])
         {
             var keys = AncientOptionConditionProfile.AuthoredOptionKeys
@@ -48,19 +59,25 @@ public sealed class SeedAncientPremiseVariants
             if (keys.Length == 0) continue;
             try
             {
+                var modeled = request.Authority;
+                bool conditional = conditionalWorld || ancient.OptionReplayAssumption.Length > 0;
+                if (conditional)
+                {
+                    if (!SeedModelAssumptions.TryCreate(request.Authority, out modeled, out _))
+                        throw new InvalidOperationException("AncientPremiseConditionalInputsUnavailable");
+                }
                 var results = new AncientPredictionResult[1 << keys.Length];
                 for (int mask = 0; mask < results.Length; mask++)
                 {
                     var conditions = request.AncientOptionConditions;
                     for (int i = 0; i < keys.Length; i++)
                         conditions = conditions.WithOptionEligibility(keys[i], (mask & (1 << i)) != 0);
-                    var world = request.TrustedRootHashInput is { } root
-                        ? WorldPredictionEngine.PredictFromRootHash(profile, root.RootHash, root.SeedIdentity,
-                            request.Ascension, request.PlayerSlotIndex, request.Character.CharacterKey,
-                            request.Authority.WorldAuthority, request.Authority.EffectAuthority, conditions)
-                        : WorldPredictionEngine.Predict(profile, facts.CanonicalSeed,
-                            request.Ascension, request.PlayerSlotIndex, request.Character.CharacterKey,
-                            request.Authority.WorldAuthority, request.Authority.EffectAuthority, conditions);
+                    var world = Project(modeled, conditions);
+                    if (conditional)
+                    {
+                        var strict = request.Authority.NoRunModifiers == false ? null : Project(request.Authority, conditions);
+                        world = SeedAnalysisModelResults.CombineWorld(strict, world, out _)!;
+                    }
                     results[mask] = world.Ancients.FirstOrDefault(a => a.Act == ancient.Act && a.AncientKey == ancient.AncientKey)
                         ?? throw new InvalidOperationException("AncientPremiseIdentityUnavailable");
                 }

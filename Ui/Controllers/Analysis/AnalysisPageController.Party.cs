@@ -126,8 +126,21 @@ internal sealed partial class AnalysisPageController
                     owner, premises, SeedPredictionDomainSelection.All, SeedPredictionInputLimits.MaximumRelicSequencePreviewCount, false,
                     out request, out error);
             if (!created) throw new InvalidOperationException("Party.InformationRequest:" + error);
-            var choices = PartyNeowProjection.ProjectChoices(request!, root, rng.Niche, rng.CombatPotionGeneration, sharedRngKnown,
-                Search.Semantics.PartyInitialQuery.CapsuleEffectPremise(configured.Query.Players[slot].Conditions));
+            IReadOnlyList<Core.Neow.NeowChoiceResult> choices;
+            Exception? openingFailure = null;
+            try
+            {
+                choices = PartyNeowProjection.ProjectChoices(request!, root, rng.Niche, rng.CombatPotionGeneration, sharedRngKnown,
+                    Search.Semantics.PartyInitialQuery.CapsuleEffectPremise(configured.Query.Players[slot].Conditions));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                openingFailure = ex;
+                choices = [];
+                Infrastructure.Diagnostics.RuntimeIssueLedger.Current.Record(ex, "AnalysisPartyOpeningFailed",
+                    nameof(AnalysisPageController), "PartyOpening", "issues.prediction_failed",
+                    correlationId: $"request={request!.RequestId.Serialized};seed={canonical};slot={slot}");
+            }
             var selection = _partySelections.GetValueOrDefault(slot);
             bool identitiesKnown = choices.Count > 0 && choices.All(c => c.IdentityPrecision is PredictionPrecision.Exact or PredictionPrecision.Partial);
             if (_strictLibrarySeed == canonical && (selection.Choice.HasValue || !string.IsNullOrWhiteSpace(selection.Route)))
@@ -152,6 +165,21 @@ internal sealed partial class AnalysisPageController
             {
                 request!.PartyOpeningChoices = choices;
                 var facts = RuntimeProfileRegistry.Observe(_runtime.Detection, request);
+                if (openingFailure is not null)
+                {
+                    const string reason = "AnalysisDomainFailed:Neow";
+                    facts = facts with
+                    {
+                        Neow = new([], PredictionPrecision.Unknown, Core.World.SeedDomainEvaluationStatus.Unknown, reason),
+                        CombatRewards = Core.Rewards.NormalCombatRewardSequencePredictionResult.Unknown(owner.ProfileId,
+                            "NeowPrerequisite:" + reason, owner.EffectSnapshotFingerprint),
+                        ModelAssumptions = facts.ModelAssumptions.Where(pair => pair.Key is not
+                            (SeedPredictionDomainSelection.Neow or SeedPredictionDomainSelection.NormalCombatRewards)).ToDictionary(),
+                        Warnings = facts.Warnings.Append(new PredictionWarning(PredictionWarningCode.AnalysisFailed)).ToArray(),
+                        Diagnostics = facts.Diagnostics.Append(new PredictionDiagnostic(PredictionDiagnosticCodes.Exception,
+                            "PartyOpening:" + openingFailure)).ToArray()
+                    };
+                }
                 _bindingPartyDocument = true;
                 try
                 {
@@ -162,7 +190,7 @@ internal sealed partial class AnalysisPageController
                 finally { _bindingPartyDocument = false; }
                 _page.SetPartyOpeningChoices(selectedRelics);
                 RefreshResultOrigin();
-                _setGlobalStatus(GlobalStatusKind.Idle, _page.Text(Presentation.Localization.Ui1TextKey.AnalysisComplete), draft.RawSeed);
+                SetAnalysisResultStatus(facts);
                 return;
             }
             // Every displayed information-page choice is a pickup, including defaults.

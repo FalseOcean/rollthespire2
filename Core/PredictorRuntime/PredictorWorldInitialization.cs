@@ -14,9 +14,7 @@ internal sealed record PredictorRuntimeWorld(ImmutableArray<PredictorActState> A
 internal static class PredictorWorldInitialization
 {
     // A Standard run without NeowEpoch begins at a Monster point. The source
-    // NextItem(empty) returns null without advancing RNG; the Search world
-    // authority deliberately requires a nonempty Ancient pool. This Runtime
-    // replay uses the same numerical donors with the actual empty pool.
+    // NextItem(empty) returns null without advancing RNG.
     internal static PredictorRuntimeWorld Generate(PredictorContext context, WorldAuthoritySnapshot world)
     {
         if (!RuntimeProfilePolicies.SupportsPredictorSeedInitialization(context.VersionResolution))
@@ -34,8 +32,7 @@ internal static class PredictorWorldInitialization
         if (!snapshot.HasExactUpFrontPrefix) missing.Add("UpFrontPrefix");
         if (!snapshot.RunSeedRootExact) missing.Add("RunSeedRoot");
         if (!snapshot.EventAuthority.HasExactFilteringAuthority) missing.Add("EventFiltering");
-        if (!snapshot.SharedEventCatalogExact) missing.Add("SharedEventCatalog");
-        if (!snapshot.SharedAncientCatalogExact || !snapshot.AllSharedAncientCatalogExact) missing.Add("SharedAncientCatalog");
+        if (!snapshot.SharedAncientCatalogExact || !snapshot.HasUnambiguousSharedAncientAllocation) missing.Add("SharedAncientCatalog");
         if (!snapshot.UnlockFactsExact) missing.Add("UnlockFacts");
         if (!snapshot.WorldGenerationHooksExact) missing.Add("WorldGenerationHooks");
         if (snapshot.PlayerCount != 1) missing.Add("PlayerCount");
@@ -46,8 +43,7 @@ internal static class PredictorWorldInitialization
         for (int i = 0; i < acts.Length; i++)
         {
             var a = acts[i];
-            // Empty Act-1 Ancient is the only allowed deviation from the
-            // Search-oriented ordinary-generation contract.
+            // This initializer materializes all rooms, including ordinary event identities.
             bool exact = a.ActKey.IsValid && a.CatalogOrderExact && a.UnlockFilteringExact &&
                 a.RoomShapeExact && a.GenerateAllEncountersOrderExact && a.EncounterClassificationExact &&
                 a.EncounterTagIdentityExact && a.EncounterTagComparerExact &&
@@ -62,7 +58,7 @@ internal static class PredictorWorldInitialization
 
         Beta109WorldRng rng = Beta109WorldPredictionProvider.CreateUpFront(snapshot);
         var shared = Beta109WorldPredictionProvider.AssignSharedAncients(snapshot.SelectedActs,
-            snapshot.OrderedActCatalog, snapshot.SharedAncients, rng);
+            snapshot.OrderedActCatalog, snapshot.SharedAncients, rng, snapshot.SharedAncientReferenceIds);
         var output = ImmutableArray.CreateBuilder<PredictorActState>(acts.Length);
         foreach (var act in acts)
         {
@@ -72,17 +68,8 @@ internal static class PredictorWorldInitialization
                     act.OrderedRawEvents, snapshot.EventAuthority.OrderedSharedEventsRaw,
                     snapshot.EventAuthority, act.OrderedEligibleEvents, out var prepared, out string issue) || prepared is null)
                 throw new InvalidOperationException("PredictorRuntimeEventAuthorityIncomplete:" + act.ActKey + ":" + issue);
-            int eventStart = rng.CallCount;
             rng.UnstableShuffle(prepared.Candidates, $"act{act.Act}:event-shuffle");
-            var immutableEventContext = new EventImmutableEligibilityContext(snapshot.GameMode, true, 1, true,
-                snapshot.EventAuthority.CharacterCardPoolCount,
-                snapshot.EventAuthority.CharacterCardPoolCountExact);
-            var eventProjection = EventPoolSequenceProjector.Complete(snapshot.Profile, prepared,
-                new EventEffectiveCandidateContext(ancientPool.Count > 0 ? 1 : 0, true,
-                    ancientPool.Count > 0 ? "AncientOpening" : "NoAncientMonsterOpening", immutableEventContext),
-                world.SourceAuthority, world.Completeness, eventStart, rng.CallCount,
-                "predictor.runtime.event-source-shuffle");
-            var events = eventProjection.RawEntries.Select(e => e.EventKey).ToArray();
+            var events = prepared.GeneratedQueue.Select(e => e.EventKey).ToArray();
 
             var normalHistory = new List<Beta109EncounterEntrySnapshot>();
             Beta109WorldPredictionProvider.ConsumeEncounterQueue(act.WeakEncounters, act.WeakEncounterSlots,

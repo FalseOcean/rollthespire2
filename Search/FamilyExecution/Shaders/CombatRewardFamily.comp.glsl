@@ -89,11 +89,20 @@ bool c_keep_root(uint64_t root){
         return true;
     }
 #if RT2_C_OBSERVED_OPENING == 1
+    uvec2 bones_pair=uvec2(0u);
+#if RT2_C_SHARED_BONES_PAIR
+    // The Bones offer precedes the pickup-order fork. Both routes see the
+    // same child shuffle; their reward and capsule state is still private.
+    if(!c_observed_metadata_valid() || capability_meta.values[1]!=1u ||
+        plan_meta.values[40]==0u || plan_meta.values[7]>uint(bones_ids.ids.length()))return cr_family_numeric_failure();
+    RngState unused_rewards;
+    if(!cr_replay_bones(root,bones_pair.x,bones_pair.y,unused_rewards))return cr_family_numeric_failure();
+#endif
     uint reasons;
-    bool keep=c_observed_route(root,0u,reasons);
+    bool keep=c_observed_route(root,0u,bones_pair,reasons);
     if(batch_meta.values[7]==2u){
         uint other_reasons;
-        bool other=c_observed_route(root,1u,other_reasons);
+        bool other=c_observed_route(root,1u,bones_pair,other_reasons);
         keep=keep||other;reasons|=other_reasons;
     }
 #if RT2_C_OBSERVED_HOT == 1

@@ -90,7 +90,8 @@ public sealed record TransformationAggregateCondition(
             return r with { Sources = Array.AsReadOnly(sources), TargetMultiset = SortedTargets(r.TargetMultiset) };
         }).ToArray();
         if (requirements.Length == 0) ValidatePredicate(Predicate, MinimumRareCount, TargetMultiset, OpportunityCount);
-        if (UsesEvents && !ValidEventPremises())
+        if (UsesEvents && !ValidEventPremises() &&
+            !EventResultTransformSemantics.IsIncompleteCapture(EventScenario, MorphicGrove || TrialNondescript ? 2 : 1))
             throw new ArgumentException("TransformationAggregate.InitialBasicEventPremisesRequired");
         return this with { TargetMultiset = SortedTargets(TargetMultiset), ResultRequirements = Array.AsReadOnly(requirements),
             EventScenario = UsesEvents ? EventScenario : null };

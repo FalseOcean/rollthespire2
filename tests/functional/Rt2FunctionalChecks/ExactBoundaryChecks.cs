@@ -22,6 +22,132 @@ using System.Text.Json;
 
 internal static class ExactBoundaryChecks
 {
+    internal static int RunReplayNonHitSample()
+    {
+        string start = "000000000000";
+        var basis = Beta109WorldFixtureFactory.Create();
+        var complete = basis with { CapturedProfileId = RuntimeProfileId.Beta111,
+            Beta109Generation = basis.Beta109Generation! with
+            {
+                Profile = RuntimeProfileId.Beta111, RngSemantics = RngSemanticProfileId.Modern113,
+                WorldGenerationHooksExact = true, FixtureValidationStatus = Beta109FixtureValidationStatus.VerifiedRealGame,
+                VerifiedRealGameFixtureIds = ["ancient-identity:synthetic"],
+                OrderedActCatalog = basis.Beta109Generation!.OrderedActCatalog.Select(act => act.Act switch
+                {
+                    1 => act with { OrderedAncients = [] },
+                    2 => act with { OrderedAncients = [new("EVENT", "DARV"), ..act.OrderedAncients] },
+                    _ => act
+                }).ToArray()
+            } };
+        var fixture = Beta110FastSearchFixtureAuthority.CreateBeta111(BaseGameModelKeys.Characters.Defect, 10, 0, 1, "0.113.1");
+        var context = new SearchContext(RuntimeProfileId.Beta111, fixture.Character.CharacterKey, 10,
+            fixture.WithWorldAuthority(complete),
+            new("0.113.1", "0.113.1", "beta", "model-sample", true, ""), SearchEvaluationAssumptions.BroadDefault);
+        var query = SearchQuery.Empty with
+        {
+            AncientBranches = [new(2, new("EVENT", "PAEL"), [new("RELIC", "PAELS_GROWTH")], [])]
+        };
+        PreparedSearch Compile(WorldAuthoritySnapshot world, string seed, long count)
+        {
+            var compiled = SearchCompiler.Compile(query, context with { Authority = fixture.WithWorldAuthority(world) });
+            var preparation = SearchPreparationCompiler.Compile(compiled, new(seed, count, 1, 1));
+            return preparation.Plan ?? throw new InvalidOperationException(preparation.Issue);
+        }
+        void Check(bool condition, string issue)
+        {
+            if (!condition) throw new InvalidOperationException(issue);
+        }
+        var unknown = complete with { Beta109Generation = complete.Beta109Generation! with
+        {
+            WorldGenerationHooksExact = false, RoomReplayAssumption = "RoomGenerationMethodPatched:RunManager.GenerateRooms"
+        } };
+        var basisPlan = Compile(unknown, start, 3);
+        const int initialCount = 3;
+        const int resumedCount = 2;
+        var consecutiveNonHits = 0;
+        ulong startOrdinal = 0;
+        for (ulong ordinal = 0; ordinal < 256 && consecutiveNonHits < initialCount + resumedCount; ordinal++)
+        {
+            var seed = Beta110SeedCodec.FormatOrdinal(ordinal);
+            var result = ProductionExactSearchEvaluator.EvaluateCandidate(basisPlan.Model,
+                TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed));
+            if (result.Evaluation is { Disposition: SearchDisposition.Unknown, ReplayEstimate.Disposition: SearchDisposition.NoMatch })
+            {
+                if (consecutiveNonHits++ == 0) startOrdinal = ordinal;
+            }
+            else consecutiveNonHits = 0;
+        }
+        Check(consecutiveNonHits == initialCount + resumedCount, "Fixture requires a contiguous all-model-negative scan");
+        start = Beta110SeedCodec.FormatOrdinal(startOrdinal);
+        var plan = Compile(unknown, start, initialCount);
+        var input = TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, start);
+        var evaluated = ProductionExactSearchEvaluator.EvaluateCandidate(plan.Model, input);
+        Console.WriteLine($"strict={evaluated.Evaluation.Disposition};model={evaluated.Evaluation.ReplayEstimate?.Disposition};" +
+            $"strictReason={evaluated.Evaluation.FailureCode};modelReason={evaluated.Evaluation.ReplayEstimate?.Issue}");
+        Check(evaluated.Evaluation is { Disposition: SearchDisposition.Unknown, ReplayEstimate.Disposition: SearchDisposition.NoMatch },
+            "Fixture requires a real strict Unknown and conditional NoMatch");
+        var exactDraws = Enumerable.Range(1, 8).Select(ordinal => new FishingRodDrawRequirement(ordinal, 2)).ToArray();
+        Check(!FishingRodDrawResearch.Matches(input.RootHash, exactDraws), "Fixture requires an independent root-local rejection");
+        var withContradiction = query with { FishingRodDrawResearch = true, FishingRodDrawRequirements = exactDraws };
+        var contradicted = SearchPreparationCompiler.Compile(
+            SearchCompiler.Compile(withContradiction, plan.Model.CompiledSearch.Context), plan.RunOptions).Plan!;
+        var strictReject = ProductionExactSearchEvaluator.EvaluateCandidate(contradicted.Model, input);
+        Check(strictReject.Evaluation.Disposition == SearchDisposition.NoMatch && strictReject.Evaluation.ReplayEstimate is null &&
+            strictReject.FailureCode == FishingRodDrawResearch.Id + ".DrawsRejected",
+            "An independent strict rejection of the original request cannot be retained as a model non-hit sample");
+        var session = FamilyExecutionCoordinator.Start(plan, queueCapacity: 8, gpuAvailable: false);
+        Check(session.Completion.Wait(10000), "Finite scan completes without a model hit");
+        Check(session.TryReadCandidate(out var sample) && sample!.IsUnverified &&
+            sample.Evaluation.ReplayEstimate?.Disposition == SearchDisposition.NoMatch,
+            "Actual coordinator delivers an inspectable sample for an all-model-negative scan");
+        Check(!session.TryReadCandidate(out _) &&
+            session.GetProgress() is { ScannedCount: 3, ModeledNonHitCount: 3, TargetCandidateCount: 0, ModeledNonHitSampleCount: 1 },
+            "Sample neither fills target nor hides scanning progress");
+        var withoutReceipt = session.CaptureContinuation()!;
+        Check(withoutReceipt.UnreceivedOrdinals?.Count == 1 && !withoutReceipt.ModeledNonHitSampleReceived,
+            "Checkpoint retains undelivered sample before receipt");
+        var interruptedPlan = Compile(unknown, Beta110SeedCodec.FormatOrdinal(withoutReceipt.NextOrdinal), initialCount);
+        var interrupted = FamilyExecutionCoordinator.Start(interruptedPlan, queueCapacity: 8, gpuAvailable: false, continuation: withoutReceipt);
+        Check(interrupted.Completion.Wait(10000) && interrupted.TryReadCandidate(out var redelivered) &&
+            redelivered!.Seed == sample!.Seed && !interrupted.TryReadCandidate(out _),
+            "Resumption re-delivers an outstanding sample exactly once");
+        interrupted.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        session.AcknowledgeCandidate(sample!.Seed);
+        var checkpoint = JsonSerializer.Deserialize<SearchContinuationSnapshot>(JsonSerializer.Serialize(session.CaptureContinuation()))!;
+        Check(checkpoint.ModeledNonHitSampleReceived && checkpoint.NextOrdinal == startOrdinal + initialCount,
+            "Receipt commits the sample and the finite scan frontier");
+        session.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        var resumedPlan = Compile(unknown, Beta110SeedCodec.FormatOrdinal(checkpoint.NextOrdinal), resumedCount);
+        var resumed = FamilyExecutionCoordinator.Start(resumedPlan, queueCapacity: 8, gpuAvailable: false, continuation: checkpoint);
+        Check(resumed.Completion.Wait(10000) && !resumed.TryReadCandidate(out _) &&
+            resumed.GetProgress() is { ScannedCount: 2, ModeledNonHitCount: 2, ModeledNonHitSampleReceived: true },
+            "Resuming continues searching without accumulating sample rows");
+        resumed.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        // This deliberately malformed optional premise is a controlled fault, not an observed game capture.
+        var failedReplay = unknown with { Beta109Generation = unknown.Beta109Generation! with { RoomReplayAssumption = null! } };
+        var failedPlan = Compile(failedReplay, start, 1);
+        var failed = FamilyExecutionCoordinator.Start(failedPlan, queueCapacity: 8, gpuAvailable: false);
+        Check(failed.Completion.Wait(10000) && failed.TryReadCandidate(out var retained) &&
+            retained!.Evaluation is { Disposition: SearchDisposition.Unknown, ReplayEstimate.Disposition: SearchDisposition.Unknown } &&
+            retained.Evaluation.ReplayEstimate.Issue.Contains(nameof(NullReferenceException), StringComparison.Ordinal) &&
+            failed.GetProgress().PendingCandidateCount == 0,
+            "A failure inside optional replay preserves the original strict unknown and carries its cause");
+        failed.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        var damaged = fixture.WithWorldAuthority(failedReplay);
+        Check(SeedPredictionRequest.TryCreate(start, damaged.Character, 10, 1, 0, damaged,
+            AncientOptionConditionProfile.BroadDefault, SeedPredictionDomainSelection.All, false, out var analysis, out _),
+            "The seed-analysis request can use the same damaged optional premise");
+        var facts = Beta111PredictionProfile.Instance.Observe(analysis!, failedPlan.Model.Detection);
+        var openingOnly = Beta111PredictionProfile.Instance.Observe(
+            analysis!.ForModelReplay(damaged, SeedPredictionDomainSelection.Neow), failedPlan.Model.Detection);
+        Check(facts.Neow?.Choices.Count == 3 && facts.Diagnostics.Any(d => d.Value.Contains("AnalysisModelReplay:") &&
+            d.Value.Contains("NullReferenceException")) && openingOnly.Neow?.Choices.Count == 3 &&
+            !openingOnly.Diagnostics.Any(d => d.Value.Contains("AnalysisModelReplay:")),
+            "A failed world replay preserves independent analysis results and is never prepared for opening-only analysis");
+        Console.WriteLine("ReplayNonHitSample PASS");
+        return 0;
+    }
+
     internal static int RunCancellation()
     {
         int checks = 0;
@@ -79,6 +205,15 @@ internal static class ExactBoundaryChecks
             [new PredictionWarning(PredictionWarningCode.SnapshotAuthorityIncomplete)],[],SeedPredictionInputStatus.Unknown);
         ProductionExactSearchEvaluator.ThrowIfPredictionFailed(semanticUnknown);checks++;
         Check(failed.Warnings.Any(w=>w.Code==PredictionWarningCode.AnalysisFailed),"Typed analyzer failure document");
+        var all = positive.Request!.ForModelReplay(positive.Request.Authority, SeedPredictionDomainSelection.All);
+        var ordinary = Beta111PredictionProfile.Instance.Observe(all, plan.Model.Detection);
+        var partial = injected.Observe(all, plan.Model.Detection);
+        Check(partial.InputStatus == SeedPredictionInputStatus.Ready && partial.Neow?.IssueCode == "AnalysisDomainFailed:Neow" &&
+            partial.CombatRewards?.IssueCode == "NeowPrerequisite:AnalysisDomainFailed:Neow" &&
+            partial.World is not null && partial.World.Bosses.Select(b => b.BossKey).SequenceEqual(ordinary.World!.Bosses.Select(b => b.BossKey)) &&
+            partial.Relics is not null && partial.Relics.Status == ordinary.Relics!.Status &&
+            partial.Diagnostics.Any(d => d.Value.Contains("InjectedAnalyzerFailure")),
+            "Analysis isolates a throwing opening observation and keeps world, relics and the original cause");
         try { ProductionExactSearchEvaluator.ThrowIfPredictionFailed(failed); throw new Exception("Missing fatal"); }
         catch(InvalidOperationException ex) { Check(ex.Message.Contains("InjectedAnalyzerFailure") && ex.Message.Contains("ExactBoundaryChecks"),"Original exception and stack retained"); }
         var cancelled = new Beta111PredictionProfile((_,_,_,_) => throw new OperationCanceledException("InjectedCancellation"));
@@ -123,6 +258,27 @@ internal static class ExactBoundaryChecks
             "Candidate mode never records a Match");
         bypass.DisposeAsync().AsTask().GetAwaiter().GetResult();
         var diagnosticExecution = FamilyPlanner.InOrder([]);
+        var replayPlan = plan with { RunOptions = plan.RunOptions with { TargetMatchCount = 1, WorkerCount = 1 } };
+        var replaySession = new ProductionSearchSession(replayPlan, diagnosticExecution,
+            FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(replayPlan, diagnosticExecution), diagnosticExecution),
+            8, 32, null, "", exactEvaluator: (_, input) => unknown with { Evaluation = unknown.Evaluation with {
+                ReplayEstimate = new(input.CanonicalSeed == replayPlan.CanonicalStartSeed ? SearchDisposition.NoMatch : SearchDisposition.Match,
+                    "UncheckedRoomHook", "", [], []) } });
+        Check(replaySession.Completion.Wait(10000), "Conditional model search finishes at its target");
+        Check(replaySession.TryReadCandidate(out var replayMiss) && replayMiss!.Seed == replayPlan.CanonicalStartSeed &&
+            replayMiss.IsUnverified && replayMiss.Evaluation.ReplayEstimate?.Disposition == SearchDisposition.NoMatch,
+            "A conditional non-hit can be inspected without claiming a strict rejection");
+        replaySession.AcknowledgeCandidate(replayMiss!.Seed);
+        Check(replaySession.TryReadCandidate(out var replayHit) && replayHit!.Seed != replayPlan.CanonicalStartSeed &&
+            replayHit.IsUnverified && replayHit.ValidationIssue == "SemanticDetailUnknown" && replayHit.Witnesses.Count == 0 &&
+            replayHit.Evaluation.ReplayEstimate?.Disposition == SearchDisposition.Match, "Only a conditional hit receives target credit");
+        Check(replaySession.GetProgress() is { ModeledNonHitCount: 1, ModeledNonHitSampleCount: 1,
+            MatchCount: 0, UnverifiedCandidateCount: 2, TargetCandidateCount: 1 } &&
+            replaySession.GetDiagnosticSummary().DispositionCounts.GetValueOrDefault(nameof(SearchDisposition.NoMatch)) == 0,
+            "Conditional non-hit stays Unknown and distinct from proven rejections");
+        Check(replaySession.CaptureContinuation()?.ModeledNonHitSampleReceived == true,
+            "Receiving a conditional non-hit sample records its delivery across continuation");
+        replaySession.DisposeAsync().AsTask().GetAwaiter().GetResult();
         var diagnosticSession = new ProductionSearchSession(plan, diagnosticExecution,
             FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(plan, diagnosticExecution), diagnosticExecution), 8, 32, null, "",
             exactEvaluator: (_, input) => positive with { Evaluation = SearchQueryEvaluation.NoMatch("seed:" + input.CanonicalSeed) });
@@ -240,7 +396,8 @@ internal static class ExactBoundaryChecks
             var g=dimension switch {
                 "acts" => gen with {OrderedActCatalog=Enumerable.Range(0,limit+delta).Select(i=>i<gen.OrderedActCatalog.Count?gen.OrderedActCatalog[i]:gen.OrderedActCatalog[0] with {ActKey=new ModelKey("ACT","CAPACITY_"+i)}).ToArray()},
                 "groups" => gen with {ActSelectionGroups=Enumerable.Range(0,limit+delta).Select(i=>gen.ActSelectionGroups[i%gen.ActSelectionGroups.Count]).ToArray()},
-                _ => gen with {SharedAncients=Enumerable.Range(0,limit+delta).Select(i=>gen.SharedAncients[i%gen.SharedAncients.Count]).ToArray()}
+                _ => gen with {SharedAncients=Enumerable.Range(0,limit+delta).Select(i=>gen.SharedAncients[i%gen.SharedAncients.Count]).ToArray(),
+                    SharedAncientReferenceIds=Enumerable.Range(0,limit+delta).ToArray()}
             };
             var authority=context.Authority.WithWorldAuthority(context.Authority.WorldAuthority with {Beta109Generation=g});
             var c=context with {Authority=authority};
@@ -543,7 +700,9 @@ internal static class ExactBoundaryChecks
             Gold=13,GoldRewards=[],GoldStatus=NormalCombatGoldProjectionStatus.ConditionalDefaultMonsterFullKill,
             Potion=targetPotion with {Generated=false,PotionKey=null}};
         var potionBattle=cardBattle with {BattleOrdinal=2,Cards=[otherCard],Gold=14,Potion=targetPotion};
-        var splitRoute=route with {Battles=[cardBattle,potionBattle]};
+        // A legacy any-battle row searches three fights. Cover the entire window
+        // when proving that the card and potion never occur in the same fight.
+        var splitRoute=route with {Battles=[cardBattle,potionBattle,cardBattle with {BattleOrdinal=3}]};
         var jointRow=new NormalCombatRewardSearchCondition(0,new([], [card.CardKey], []),
             NormalCombatPotionRequirement.MustDrop,new([targetPotion.PotionKey!.Value],[],[]),14,14);
         SearchQueryEvaluation RewardRow(NormalCombatRewardSearchCondition row,NormalCombatRewardRoutePredictionResult facts) =>
@@ -555,6 +714,8 @@ internal static class ExactBoundaryChecks
             "Split fixture separately satisfies the card and potion/gold obligations");
         check(RewardRow(jointRow,splitRoute).Disposition==SearchDisposition.NoMatch,
             "One reward row cannot combine card and potion/gold across battles");
+        check(RewardRow(jointRow,splitRoute with {Battles = [cardBattle,potionBattle]}).Disposition==SearchDisposition.Unknown,
+            "An unresolved third fight can still provide the same-battle witness");
         check(RewardRow(jointRow,route with {Battles=[cardBattle with {Gold=14,Potion=targetPotion}]}).Disposition==SearchDisposition.Match,
             "One battle satisfying every reward field supplies a real row witness");
         check(ProductionExactSearchEvaluator.CombineIndependentEvaluations(SearchQueryEvaluation.Unknown("UnobservedCanonical"),
@@ -693,6 +854,32 @@ internal static class ExactBoundaryChecks
             BossFilters=[new(firstBoss.Act,new([firstBoss.BossKey],[],[]))]}};
         check(ProductionExactSearchEvaluator.EvaluatePartyObservations(partyWorld,partyObservation).Disposition==SearchDisposition.Unknown,
             "Required party World observation retains returned Unknown instead of a thrown fault");
+        var partialPartyWorld = partyObservation with { BossStatus = SeedDomainEvaluationStatus.Evaluated, Bosses = [firstBoss] };
+        check(ProductionExactSearchEvaluator.EvaluatePartyObservations(partyWorld, partialPartyWorld).Disposition == SearchDisposition.Match,
+            "An observed first-act Boss survives an interrupted later act");
+        var missingLaterBoss = partyWorld with { LegacyWorld = LegacyWorldSemanticConstraints.Empty with {
+            BossFilters = [new(2, new([firstBoss.BossKey], [], []))] } };
+        check(ProductionExactSearchEvaluator.EvaluatePartyObservations(missingLaterBoss, partialPartyWorld).Disposition == SearchDisposition.Unknown,
+            "Missing later Boss does not reject a required identity when another act was observed");
+        var incompleteSelection = generation with { SelectedActsExact = false, ActSelectionAuthorityExact = false,
+            ActSelectionGroups = generation.ActSelectionGroups.Select(g => g.Act == 2 ? g with { EligibilityAndOrderExact = false } : g).ToArray() };
+        check(CoreStartingAct(incompleteSelection, out var firstAct) && firstAct == generation.SelectedActs[0],
+            "Starting act selection is independent of later uncertain groups");
+        check(!CoreStartingAct(incompleteSelection with { ActSelectionGroups = incompleteSelection.ActSelectionGroups
+            .Select(g => g with { EligibilityAndOrderExact = false }).ToArray() }, out _),
+            "Starting act keeps the first group's source and selection hook authority");
+        bool CoreStartingAct(Beta109WorldGenerationSnapshot source, out ModelKey act) =>
+            RolltheSpire2.Core.World.Beta109.Beta109WorldSnapshotProjector.TryGetStartingAct(source, input.RootHash, "other-seed", out act);
+        var missingFirstAncient = projectedAuthority.WorldAuthority with { Beta109Generation = generation with {
+            OrderedActCatalog = generation.OrderedActCatalog.Select(a => a.Act == 1
+                ? a with { UnlockedAncientOrderExact = false } : a).ToArray() } };
+        var partialWorld = RolltheSpire2.Core.World.Beta109.Beta109WorldPredictionProvider.Predict(input.CanonicalSeed,
+            context.Ascension, 0, context.CharacterKey, missingFirstAncient, AncientOptionConditionProfile.BroadDefault);
+        var rawOnly = partialWorld.EventPoolSequencePrediction!.Acts.Single(a => a.Act == 1);
+        var expectedRaw = document.World.EventPoolSequencePrediction!.Acts.Single(a => a.Act == 1).RawEntries;
+        check(expectedRaw.Count > 0 && rawOnly.RawEntries.Select(e => e.EventKey).SequenceEqual(expectedRaw.Select(e => e.EventKey)) && rawOnly.OpeningAncientCursorOffset == null &&
+            rawOnly.Entries.Count == 0 && rawOnly.Precision == PredictionPrecision.Unknown,
+            "Production World retains the first raw event queue when its effective cursor and later acts are unknown");
         var secondBossPresence=partyOffers with {VariantBossBranches=[new(3,generation.SelectedActs[2],
             ModelKeySetFilter.Empty,ModelKeySetFilter.Empty,true)]};
         check(ProductionExactSearchEvaluator.EvaluatePartyObservations(secondBossPresence,partyObservation).Disposition==SearchDisposition.Unknown,

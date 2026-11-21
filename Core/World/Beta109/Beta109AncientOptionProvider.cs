@@ -13,6 +13,7 @@ public sealed record Beta109AncientOptionPrediction(
     EvidenceCode EvidenceCode,
     string IssueCode)
 {
+    public string OptionReplayAssumption { get; init; } = string.Empty;
     public AncientOptionsEvaluationStatus EvaluationStatus { get; init; } = AncientOptionsEvaluationStatus.UnknownMissingAuthority;
 }
 
@@ -29,6 +30,9 @@ public static class Beta109AncientOptionProvider
         IReadOnlyList<(ModelKey Key, string? Variant)> Options,
         IReadOnlyDictionary<int, AncientOptionCharacterTargetProjection> CharacterTargets)
     {
+        public IReadOnlyList<bool>? ExactSlots { get; init; }
+        public IReadOnlyList<IReadOnlyList<ModelKey>?>? PossibleSlots { get; init; }
+        public bool AllPoolsExact { get; init; }
         public IReadOnlySet<int> LockedOptionIndices { get; init; } = new HashSet<int>();
 
         public static OptionGenerationResult Plain(
@@ -48,7 +52,7 @@ public static class Beta109AncientOptionProvider
             ["OROBAS"] = new(Beta109AncientOptionSupport.PureInstanceProjection,
                 (snapshot, context, catalog, rng, conditions) => GenerateOrobas(snapshot, context, catalog, rng, conditions)),
             ["PAEL"] = new(Beta109AncientOptionSupport.DeckFactPredicate,
-                (_, _, catalog, rng, conditions) => OptionGenerationResult.Plain(GeneratePael(catalog, rng, conditions))),
+                (snapshot, _, catalog, rng, conditions) => GeneratePael(catalog, rng, conditions, snapshot.RngSemantics == RngSemanticProfileId.Modern113)),
             ["TEZCATARA"] = new(Beta109AncientOptionSupport.DeckFactPredicate,
                 (_, _, catalog, rng, conditions) => OptionGenerationResult.Plain(GenerateTezcatara(catalog, rng, conditions))),
             ["NONUPEIPE"] = new(Beta109AncientOptionSupport.DeckFactPredicate,
@@ -59,6 +63,10 @@ public static class Beta109AncientOptionProvider
                 (snapshot, _, catalog, rng, _) => OptionGenerationResult.Plain(snapshot.RngSemantics == RngSemanticProfileId.Modern113
                     ? GenerateThreeChoice(catalog, rng, "vakuu") : GenerateVakuu(catalog, rng)))
         };
+    internal static bool HasRegisteredGenerator(Beta109AncientOptionCatalogSnapshot catalog) =>
+        Generators.TryGetValue(NormalizeEntry(catalog.EventIdEntry), out var generator) &&
+        generator.Capability == catalog.Capability;
+
     public static Beta109AncientOptionPrediction Predict(
         Beta109WorldGenerationSnapshot snapshot,
         int act,
@@ -196,7 +204,9 @@ public static class Beta109AncientOptionProvider
 
         if (generation.Options.Count == 0)
         {
-            if (string.Equals(normalizedAncient, "DEPRECATEDANCIENTEVENT", StringComparison.Ordinal))
+            if (string.Equals(normalizedAncient, "DEPRECATEDANCIENTEVENT", StringComparison.Ordinal) ||
+                normalizedAncient == "PAEL" && generation.AllPoolsExact &&
+                AllowsExact(snapshot, context, runtimeAuthorityExact, true, independentEventLocal))
             {
                 return new Beta109AncientOptionPrediction(
                     PredictionPrecision.Exact,
@@ -206,6 +216,7 @@ public static class Beta109AncientOptionProvider
                     Evidence(snapshot, "ancient.options-known-empty"),
                     string.Empty)
                 {
+                    OptionReplayAssumption = context.OptionReplayAssumption,
                     EvaluationStatus = AncientOptionsEvaluationStatus.EvaluatedKnownEmpty
                 };
             }
@@ -223,8 +234,8 @@ public static class Beta109AncientOptionProvider
         // ModelKeys or their visible order uncertain. Search filters consume only
         // OptionPrecision; post-obtain/setup completeness remains represented by
         // the aggregate prediction Precision and IssueCode.
-        bool optionIdentityExact =
-            AllowsExact(snapshot, context, runtimeAuthorityExact, conditionAuthorityExact, independentEventLocal) &&
+        bool baseExact = AllowsExact(snapshot, context, runtimeAuthorityExact, conditionAuthorityExact, independentEventLocal);
+        bool optionIdentityExact = baseExact && (generation.ExactSlots is not null ? generation.AllPoolsExact :
             catalog.CatalogExact &&
             catalog.Pools.All(pool =>
                 pool.SourceOrdinal >= 0 &&
@@ -232,15 +243,14 @@ public static class Beta109AncientOptionProvider
                 pool.FilterResultExact) &&
             context.EventContextExact &&
             (context.DynamicFactsExact || conditionAuthorityExact) &&
-            context.ModifierFactsExact;
+            context.ModifierFactsExact);
         bool fullProjectionExact =
             optionIdentityExact &&
             catalog.Pools.All(pool => pool.InstanceProjectionExact) &&
             catalog.MutableInstanceProjectionExact;
 
-        PredictionPrecision optionIdentityPrecision = optionIdentityExact
-            ? PredictionPrecision.Exact
-            : PredictionPrecision.Partial;
+        PredictionPrecision SlotPrecision(int index) => (generation.ExactSlots is { } slots
+            ? baseExact && slots[index] : optionIdentityExact) ? PredictionPrecision.Exact : PredictionPrecision.Partial;
         PredictionPrecision projectionPrecision = fullProjectionExact
             ? PredictionPrecision.Exact
             : PredictionPrecision.Partial;
@@ -248,7 +258,7 @@ public static class Beta109AncientOptionProvider
             new AncientOptionPredictionResult(
                 index + 1,
                 item.Key,
-                optionIdentityPrecision,
+                SlotPrecision(index),
                 Evidence(snapshot, "direct-source.ancient.event-local-option"),
                 item.Variant)
             {
@@ -257,8 +267,9 @@ public static class Beta109AncientOptionProvider
                 IsVisible = !generation.LockedOptionIndices.Contains(index),
                 IsSelectable = !generation.LockedOptionIndices.Contains(index),
                 IsLocked = generation.LockedOptionIndices.Contains(index),
-                AppearancePrecision = optionIdentityPrecision,
-                SelectabilityPrecision = optionIdentityPrecision,
+                PossibleOptionKeys = baseExact ? generation.PossibleSlots?[index] : null,
+                AppearancePrecision = SlotPrecision(index),
+                SelectabilityPrecision = SlotPrecision(index),
                 StableTextKey = generation.LockedOptionIndices.Contains(index)
                     ? "OROBAS.pages.INITIAL.options.OPTION_POOL_3_LOCKED"
                     : item.Key.Entry,
@@ -275,7 +286,9 @@ public static class Beta109AncientOptionProvider
             Evidence(snapshot, "direct-source.ancient.event-local-option"),
             fullProjectionExact ? string.Empty : OptionIssue(snapshot, context, normalizedAncient))
         {
-            EvaluationStatus = AncientOptionsEvaluationStatus.EvaluatedNonEmpty
+            OptionReplayAssumption = context.OptionReplayAssumption,
+            EvaluationStatus = generation.ExactSlots is not null && !generation.AllPoolsExact
+                ? AncientOptionsEvaluationStatus.EvaluatedPartial : AncientOptionsEvaluationStatus.EvaluatedNonEmpty
         };
     }
 
@@ -389,33 +402,67 @@ public static class Beta109AncientOptionProvider
     }
 
 
-    private static IReadOnlyList<(ModelKey Key, string? Variant)> GeneratePael(
-        Beta109AncientOptionCatalogSnapshot catalog,
-        Beta109WorldRng rng,
-        AncientOptionConditionProfile conditions)
+    private static OptionGenerationResult GeneratePael(
+        Beta109AncientOptionCatalogSnapshot catalog, Beta109WorldRng rng, AncientOptionConditionProfile conditions, bool refillEmptyPools)
     {
-        ModelKey first = rng.NextModelKey(catalog.Pool("pael.pool1"), "pael:pool1");
+        var first = new[] { "pael.pool1" };
+        var second = new List<string> { "pael.pool2.base" };
+        if (conditions.PaelGoopyDefendCardsAtLeast3) second.Add("pael.pool2.goopy");
+        if (conditions.PaelRemovableCardsAtLeast5) second.Add("pael.pool2.removable");
+        second.AddRange(second.ToArray());
+        second.Add("pael.pool2.growth");
+        var third = new List<string> { "pael.pool3.base" };
+        if (conditions.PaelAllowLegionNoEventPet) third.Add("pael.pool3.no-event-pet");
 
-        var pool2 = catalog.Pool("pael.pool2.base").ToList();
-        if (conditions.PaelGoopyDefendCardsAtLeast3)
+        bool individualBindings = catalog.CatalogExact || catalog.VariantData.ContainsKey("pael.directPoolBindings");
+        var groups = new IEnumerable<string>[] { first, second, third }.Select(ids =>
         {
-            pool2.AddRange(catalog.Pool("pael.pool2.goopy"));
-        }
-        if (conditions.PaelRemovableCardsAtLeast5)
+            var pools = ids.Select(id => catalog.Pools.FirstOrDefault(p => p.PoolId == id)).ToArray();
+            bool Known(Beta109NamedOptionPoolSnapshot? p) => individualBindings &&
+                p is { OrderExact: true, SourceOrdinal: >= 0 };
+            return new
+            {
+                Values = pools.SelectMany(p => p?.OrderedOptions ?? []).ToList(),
+                Exact = pools.All(p => Known(p) && p!.FilterResultExact),
+                Bounded = pools.All(Known),
+                Nonempty = pools.Any(p => Known(p) && p!.FilterResultExact && p.OrderedOptions.Count > 0)
+            };
+        }).ToArray();
+        if (!refillEmptyPools && groups.Any(g => g.Values.Count == 0))
+            return OptionGenerationResult.Plain([]);
+        string[] stages = ["pael:pool1", "pael:pool2-weighted", "pael:pool3"];
+        var offers = new List<(ModelKey Key, string? Variant)>();
+        var exact = new List<bool>();
+        var possible = new List<IReadOnlyList<ModelKey>?>();
+        bool allExact = groups.All(g => g.Exact);
+        bool noRefills = groups.All(g => g.Nonempty);
+        bool previousDrawCountsExact = true;
+        for (int i = 0; i < groups.Length; i++)
         {
-            pool2.AddRange(catalog.Pool("pael.pool2.removable"));
+            var group = groups[i];
+            if (group.Values.Count > 0)
+            {
+                offers.Add((rng.NextModelKey(group.Values, stages[i]), null));
+                exact.Add(previousDrawCountsExact && group.Exact);
+                possible.Add(noRefills && group.Bounded ? group.Values.Distinct().ToArray() : null);
+            }
+            previousDrawCountsExact &= group.Exact || group.Nonempty;
         }
-        pool2.AddRange(pool2.ToArray());
-        pool2.AddRange(catalog.Pool("pael.pool2.growth"));
-        ModelKey second = rng.NextModelKey(pool2, "pael:pool2-weighted");
-
-        var pool3 = catalog.Pool("pael.pool3.base").ToList();
-        if (conditions.PaelAllowLegionNoEventPet)
+        // Native removes a single selected option per draw; duplicated weights in pool 2 remain.
+        var remaining = groups.SelectMany(g => g.Values).ToList();
+        foreach (var offer in offers) remaining.Remove(offer.Key);
+        while (offers.Count < 3 && remaining.Count > 0)
         {
-            pool3.AddRange(catalog.Pool("pael.pool3.no-event-pet"));
+            var extra = rng.NextModelKey(remaining, "pael:empty-pool-refill");
+            offers.Add((extra, null));
+            exact.Add(allExact);
+            possible.Add(null);
+            remaining.Remove(extra);
         }
-        ModelKey third = rng.NextModelKey(pool3, "pael:pool3");
-        return new[] { (first, (string?)null), (second, (string?)null), (third, (string?)null) };
+        return OptionGenerationResult.Plain(offers) with
+        {
+            AllPoolsExact = allExact, ExactSlots = exact, PossibleSlots = possible
+        };
     }
 
     private static IReadOnlyList<(ModelKey Key, string? Variant)> GenerateTezcatara(

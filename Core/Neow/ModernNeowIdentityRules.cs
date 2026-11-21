@@ -4,6 +4,10 @@ using RolltheSpire2.Core.Identity;
 
 namespace RolltheSpire2.Core.Neow;
 
+// Runtime order (including multiplicity) before the documented Neow exclusions.
+public sealed record NeowOfferCatalog(ImmutableArray<ModelKey> Positives, ImmutableArray<ModelKey> Curses,
+    ImmutableArray<ModelKey>? AllPossibleRelics);
+
 internal sealed record ModernNeowBinaryChoice(
     ModelKey TrueCandidate,
     ModelKey FalseCandidate,
@@ -105,16 +109,23 @@ internal static class ModernNeowIdentityRules
         for (int scrolls = 0; scrolls < eligibility.Length; scrolls++)
         {
             bool? colorsAllowed = eligibility[colors], scrollsAllowed = eligibility[scrolls];
-            var curses = CurseCandidates.Where(key =>
-                IsAllowed(key, playersCount, colorsAllowed, scrollsAllowed) != false).ToImmutableArray();
-            var pools = CurseCandidates.Select(curse => new ModernNeowCursePool(curse,
-                PositiveCandidates.Where(key => !HasConflict(curse, key) &&
-                    IsAllowed(key, playersCount, colorsAllowed, scrollsAllowed) != false).ToImmutableArray(),
-                BinaryChoices.Where(choice => choice.SuppressedByCurse != curse).ToImmutableArray())).ToImmutableArray();
-            preparations[playersCount * 9 + colors * 3 + scrolls] = new(curses, pools,
-                !colorsAllowed.HasValue || !scrollsAllowed.HasValue);
+            preparations[playersCount * 9 + colors * 3 + scrolls] = PrepareCatalog(
+                PositiveCandidates, CurseCandidates, playersCount, colorsAllowed, scrollsAllowed);
         }
         return preparations;
+    }
+
+    internal static ModernNeowIdentityPreparation PrepareCatalog(ImmutableArray<ModelKey> positives,
+        ImmutableArray<ModelKey> curseSource, int playersCount, bool? colorsAllowed, bool? scrollsAllowed)
+    {
+        var curses = curseSource.Where(key =>
+            IsAllowed(key, playersCount, colorsAllowed, scrollsAllowed) != false).ToImmutableArray();
+        var pools = curseSource.Distinct().Select(curse => new ModernNeowCursePool(curse,
+            positives.Where(key => !Conflicts.Any(pair => pair.Curse == curse && pair.Positive == key) &&
+                IsAllowed(key, playersCount, colorsAllowed, scrollsAllowed) != false).ToImmutableArray(),
+            BinaryChoices.Where(choice => choice.SuppressedByCurse != curse).ToImmutableArray())).ToImmutableArray();
+        return new(curses, pools, positives.Concat(curseSource).Any(k =>
+            !IsAllowed(k, playersCount, colorsAllowed, scrollsAllowed).HasValue));
     }
 
     internal static bool CanCoOffer(IEnumerable<ModelKey> targets)
@@ -134,14 +145,13 @@ internal static class ModernNeowIdentityRules
         out IReadOnlyList<ModelKey> eligible)
     {
         ArgumentNullException.ThrowIfNull(authority);
-        if (!authority.IsProductionBetaProjectionAuthorityExact ||
-            !authority.AllCharacterCardPoolsUnlocked.HasValue || !authority.IsScrollBoxesAllowed.HasValue)
+        if (!(authority.IsProductionBetaProjectionAuthorityExact || authority.CapturedNeowOffers != null &&
+            authority.IsBeta111NeowIdentityAuthorityExact) || !authority.HasExactModernNeowIdentityInputs)
         {
             eligible = Array.Empty<ModelKey>();
             return false;
         }
-        eligible = Prepare(authority.PlayersCount, authority.AllCharacterCardPoolsUnlocked,
-            authority.IsScrollBoxesAllowed).EligibleCurses;
+        eligible = authority.NeowPreparation.EligibleCurses;
         return eligible.Count != 0;
     }
 
@@ -165,7 +175,7 @@ internal static class ModernNeowIdentityRules
         Action<ModelKey, ModelKey, ModelKey, double> visit)
     {
         if (!TryGetEligibleCursePool(authority, out var curses)) return false;
-        var preparation = Prepare(authority.PlayersCount, authority.AllCharacterCardPoolsUnlocked, authority.IsScrollBoxesAllowed);
+        var preparation = authority.NeowPreparation;
         foreach (ModelKey curse in curses)
         {
             ModernNeowCursePool pool = preparation.ForCurse(curse);

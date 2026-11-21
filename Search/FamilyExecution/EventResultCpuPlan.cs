@@ -16,8 +16,7 @@ internal sealed class EventResultCpuPlan(EventResultFamilyPlan plan, uint allowe
         if (plan.HasMorphic || plan.HasLocalOpportunities || !request.Authority.CanUseCurrentModel || !plan.NumericalSupported ||
             !plan.Authority.ColorfulPoolAuthorityExact ||
             !plan.Conditions.Any(c => c.Kind == EventResultConditionKind.ColorfulPhilosophersOfferedColor)) return null;
-        var candidates = Beta111EventRules.ColorfulCandidates(plan.Authority.OwnerCharacterKey,
-            plan.Authority.UnlockedCharacterCardPoolKeys, plan.Authority.RngSemantics);
+        var candidates = plan.Authority.ColorfulCandidates();
         // Current fully-unlocked vanilla removes one of four candidates. Other
         // pool geometries keep the existing numerical/reference implementation.
         if (candidates.Length != 4) return null;

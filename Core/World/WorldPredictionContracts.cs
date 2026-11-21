@@ -20,7 +20,8 @@ public enum AncientOptionsEvaluationStatus
     EvaluatedLocked,
     NotEvaluatedByPolicy,
     UnknownMissingAuthority,
-    Unsupported
+    Unsupported,
+    EvaluatedPartial
 }
 
 public enum WorldRngConsumptionShape
@@ -103,6 +104,7 @@ public sealed record AncientOptionPredictionResult(
     string? VariantId = null)
 {
     public IReadOnlyList<WorldRngTraceEntry> RngTrace { get; init; } = Array.Empty<WorldRngTraceEntry>();
+    public IReadOnlyList<ModelKey>? PossibleOptionKeys { get; init; }
     public string AuthorityFingerprint { get; init; } = string.Empty;
     public bool IsVisible { get; init; } = true;
     public bool IsSelectable { get; init; } = true;
@@ -135,6 +137,7 @@ public sealed record AncientPredictionResult(
     public string AuthorityFingerprint { get; init; } = string.Empty;
     public string GenerationRuleFingerprint { get; init; } = string.Empty;
     public AncientOptionsEvaluationStatus OptionsEvaluationStatus { get; init; } = AncientOptionsEvaluationStatus.UnknownMissingAuthority;
+    public string OptionReplayAssumption { get; init; } = string.Empty;
     public string OptionIssueCode { get; init; } = string.Empty;
 }
 
@@ -156,6 +159,12 @@ public sealed record WorldPredictionResult(
     string BossIssueCode = "",
     string AncientIssueCode = "")
 {
+    // Lobby act selection precedes room generation and uses a separate RNG stream.
+    public IReadOnlyList<ModelKey> SelectedActs { get; init; } = [];
+    public string EventSequenceReplayAssumption { get; init; } = string.Empty;
+    public string RoomGenerationIssueCode { get; init; } = string.Empty;
+    public IReadOnlyDictionary<int, string> EventSequenceIssues { get; init; } =
+        System.Collections.Immutable.ImmutableDictionary<int, string>.Empty;
     public EventPoolSequencePredictionResult? EventPoolSequencePrediction { get; init; }
     public IReadOnlyList<ActEncounterSequenceResult> EncounterSequences { get; init; } = [];
     public static WorldPredictionResult Unsupported(string bossIssue, string ancientIssue) => new(
@@ -165,7 +174,7 @@ public sealed record WorldPredictionResult(
         Array.Empty<AncientPredictionResult>(),
         Array.Empty<PredictionDiagnostic>(),
         bossIssue,
-        ancientIssue);
+        ancientIssue) { RoomGenerationIssueCode = bossIssue == ancientIssue ? bossIssue : string.Empty };
 
     public static WorldPredictionResult Unknown(string issue) => new(
         SeedDomainEvaluationStatus.Unknown,
@@ -174,5 +183,5 @@ public sealed record WorldPredictionResult(
         Array.Empty<AncientPredictionResult>(),
         Array.Empty<PredictionDiagnostic>(),
         issue,
-        issue);
+        issue) { RoomGenerationIssueCode = issue };
 }

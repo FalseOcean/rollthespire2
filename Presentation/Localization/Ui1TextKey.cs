@@ -806,17 +806,18 @@ public static class Ui1TextKey
     public const string SearchCompactUnavailable = "ui1.search.control.compact_unavailable";
 
     public const string SaveStatusTitle = "ui1.save_status.title";
-    public const string SaveStatusSubtitle = "ui1.save_status.subtitle";
+    public const string StableAndBetaGameVersions = "ui1.game_versions.stable_and_beta";
     public const string SaveStatusUnknownMessage = "ui1.save_status.unknown_message";
     public const string SaveStatusGameModelTitle = "ui1.save_status.game_model.title";
     public const string SaveStatusGameVersion = "ui1.save_status.game_version";
-    public const string SaveStatusPredictionModel = "ui1.save_status.prediction_model";
-    public const string SaveStatusModelStatus = "ui1.save_status.model_status";
-    public const string SaveStatusFingerprintSchema = "ui1.save_status.fingerprint_schema";
-    public const string SaveStatusModelKnown = "ui1.save_status.model.known";
-    public const string SaveStatusModelBestEffort = "ui1.save_status.model.best_effort";
-    public const string SaveStatusModelProvisionalVersioned = "ui1.save_status.model.provisional_versioned";
-    public const string SaveStatusModelUnverified = "ui1.save_status.model.unverified";
+    public const string SaveStatusGameVersionUnknown = "ui1.save_status.game_version_unknown";
+    public const string SaveStatusTargetVersions = "ui1.save_status.target_versions";
+    public const string SaveStatusRulesVersion = "ui1.save_status.rules_version";
+    public const string SaveStatusRulesAdapted = "ui1.save_status.rules.adapted";
+    public const string SaveStatusRulesOlder = "ui1.save_status.rules.older";
+    public const string SaveStatusRulesFallback = "ui1.save_status.rules.fallback";
+    public const string SaveStatusRulesUnverified = "ui1.save_status.rules.unverified";
+    public const string SaveStatusRulesUnavailable = "ui1.save_status.rules.unavailable";
     public const string SaveStatusSemanticTitle = "ui1.save_status.semantic.title";
     public const string SaveStatusSemanticVerified = "ui1.save_status.semantic.verified";
     public const string SaveStatusSemanticCrossVersionMatch = "ui1.save_status.semantic.cross_version_match";

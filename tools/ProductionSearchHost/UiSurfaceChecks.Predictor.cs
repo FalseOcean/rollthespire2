@@ -90,6 +90,98 @@ internal static partial class UiSurfaceChecks
         int checks = 0;
         int eventResultChecks = 0;
         int tiedRouteChecks = 0;
+        if (OS.GetCmdlineUserArgs().Contains("--analysis-model-premises"))
+        {
+            var world = fixtureAuthority.WorldAuthority!;
+            var patched = fixtureAuthority.WithWorldAuthority(world with
+            {
+                Beta109Generation = world.Beta109Generation! with
+                {
+                    WorldGenerationHooksExact = false,
+                    RoomReplayAssumption = "RoomGenerationMethodPatched:Fixture"
+                }
+            });
+            if (!SeedPredictionRequest.TryCreate(request!.OriginalSeed, request.Character, 10, 1, 0, patched,
+                request.AncientOptionConditions, SeedPredictionDomainSelection.All, request.RelicSequencePreviewCount,
+                true, out var conditional, out issue)) throw new Exception(issue.ToString());
+            var estimated = RuntimeProfileRegistry.Observe(detection, conditional!);
+            if (!estimated.ModelAssumptions.ContainsKey(SeedPredictionDomainSelection.World) ||
+                estimated.ModelAssumptions.ContainsKey(SeedPredictionDomainSelection.RelicSequence) ||
+                estimated.World?.Ancients.Count == 0 || estimated.Relics?.Lanes.Count == 0)
+                throw new Exception("Independent bag or conditional room results missing");
+            var source = world.Beta109Generation!;
+            var filter = source.EventAuthority with { LockedEventsAfterShuffle = null };
+            var leafInputs = fixtureAuthority.WithWorldAuthority(world with
+            {
+                EventAuthority = filter,
+                Beta109Generation = source with
+                {
+                    EventAuthority = filter,
+                    AncientEventContexts = source.AncientEventContexts.Select(c => c.AncientKey.Entry != "PAEL" ? c : c with
+                    {
+                        HookDecision = RolltheSpire2.Core.World.Snapshots.Beta109HookDecision.Unknown,
+                        EventContextExact = false, OptionReplayAssumption = "StandardAncientOptionGenerator:PAEL"
+                    }).ToArray()
+                }
+            });
+            var local = request.ForModelReplay(leafInputs, SeedPredictionDomainSelection.All);
+            var leafResults = RuntimeProfileRegistry.Observe(detection, local);
+            var paelAct = leafResults.World!.Ancients.Single(a => a.AncientKey.Entry == "PAEL").Act;
+            foreach (var language in new[] { "en", "zh" })
+            {
+                var text = JsonUiTextProvider.CreatePredictorUi13(language);
+                var names = RolltheSpire2.Infrastructure.ContentNames.RuntimeGameContentNameResolver.Create(language);
+                Call(page, "ApplyLocalization", text, names);
+                Call(page, "ShowFacts", conditional, estimated, null);
+                var tabs = (List<Button>)Field(page, "_wbTabs");
+                tabs[1].EmitSignal(Button.SignalName.Pressed);
+                var expected = text.Format("predictor.analysis.assumed.World", text.Get("predictor.analysis.premise.rooms"));
+                if (page.FindChild("AnalysisAssumptionWorld", true, false) is not Label { Text: var actual } ||
+                    actual != expected || page.FindChild("EventQueue", true, false) is null)
+                    throw new Exception("Act 2 omitted its structured queue or localized room premise: " + language);
+                var group = Field(page, "_ancientGroupCard");
+                var edited = conditional!.AncientOptionConditions with
+                    { PaelGoopyDefendCardsAtLeast3 = !conditional.AncientOptionConditions.PaelGoopyDefendCardsAtLeast3 };
+                Call(group, "SetConditions", edited, true);
+                var editedFacts = (SeedPredictionFacts)Property(page, "LastFacts");
+                var pael = editedFacts.World!.Ancients.Single(a => a.AncientKey.Entry == "PAEL");
+                if (editedFacts.Context.RequestId == estimated.Context.RequestId ||
+                    pael.IdentityPrecision != PredictionPrecision.Partial || pael.OptionPrecision == PredictionPrecision.Exact ||
+                    !ReferenceEquals(estimated.Relics, editedFacts.Relics) || !editedFacts.ModelAssumptions.ContainsKey(SeedPredictionDomainSelection.World))
+                    throw new Exception("Changing Pael's premise lost the conditional option or changed an independent observation");
+                tabs[3].EmitSignal(Button.SignalName.Pressed);
+                if (page.FindChild("AnalysisAssumptionRelicSequence", true, false) != null ||
+                    page.FindChild("PlayerRelicBagPreview", true, false) is null)
+                    throw new Exception("Room premise leaked onto independently observed relic bag");
+                Call(page, "ShowFacts", local, leafResults, null);
+                tabs[paelAct - 1].EmitSignal(Button.SignalName.Pressed);
+                var strictPael = document.World!.Ancients.Single(a => a.AncientKey.Entry == "PAEL");
+                var localPael = leafResults.World!.Ancients.Single(a => a.AncientKey.Entry == "PAEL");
+                if (leafResults.ModelAssumptions.ContainsKey(SeedPredictionDomainSelection.World) ||
+                    leafResults.World.EventSequenceReplayAssumption != "NoAdditionalEventRemovals" ||
+                    localPael.IdentityPrecision != strictPael.IdentityPrecision ||
+                    localPael.OptionReplayAssumption != "StandardAncientOptionGenerator:PAEL" ||
+                    page.FindChild("AnalysisAssumptionWorld", true, false) != null ||
+                    page.FindChild("AssumedAncientOptions", true, false) is null ||
+                    page.FindChild("AssumedEventOrder", true, false) is null)
+                    throw new Exception("Independent identity and conditional event/option markers were not preserved");
+                Call(group, "SetConditions", edited, true);
+                var revised = (SeedPredictionFacts)Property(page, "LastFacts");
+                var revisedPael = revised.World!.Ancients.Single(a => a.AncientKey.Entry == "PAEL");
+                if (revisedPael.IdentityPrecision != strictPael.IdentityPrecision ||
+                    revisedPael.OptionReplayAssumption != localPael.OptionReplayAssumption ||
+                    revisedPael.OptionPrecision == PredictionPrecision.Exact || revised.Context.RequestId == local.RequestId)
+                    throw new Exception("Changing an option under a conditional generator lost its provenance");
+                Call(page, "ShowFacts", request, document, null);
+                tabs[1].EmitSignal(Button.SignalName.Pressed);
+                if (page.FindChild("AnalysisAssumptionWorld", true, false) != null)
+                    throw new Exception("Previous request's premise survived rebinding");
+            }
+            canvas.QueueFree(); tooltip.QueueFree();
+            await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+            GD.Print("ANALYSIS_MODEL_PREMISES_PASS normal observation;Act 2 queue;localized premise zh/en;independent bag;per-option and event assumptions;Pael edits;rebind");
+            return;
+        }
         if (OS.GetCmdlineUserArgs().Contains("--seed-event-options-only"))
         {
             string[] entries = ["DOLL_ROOM", "DENSE_VEGETATION", "JUNGLE_MAZE_ADVENTURE", "LOST_WISP",

@@ -24,6 +24,7 @@ internal sealed class QueryHistoryEntry
     public SeedLibraryContext? Context { get; set; }
     public DateTimeOffset LastUsedAtUtc { get; set; }
     public int RunCount { get; set; }
+    public SeedScanCoverage? SeedCoverage { get; set; }
     public double ElapsedSeconds { get; set; }
     public List<PersistedSearchResult> Results { get; set; } = [];
     public SearchContinuationSnapshot? Continuation { get; set; }

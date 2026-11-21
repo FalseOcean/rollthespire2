@@ -27,20 +27,25 @@ bool mc_top_contains(uint64_t player_root, uint source) {
     if (source == 5u) return false;
     uint at = mc_value(46u) + ordinal * 25u;
     uint length = mc_value(at), choices = mc_value(at + 1u);
-    uint positives[17];
-    for (uint i = 0u; i < length; ++i) positives[i] = mc_value(at + 2u + i);
+    // The visit only observes membership in the first two shuffled slots.
+    // Track every position carrying this source, including duplicate entries.
+    uint positions = 0u;
+    for (uint i = 0u; i < length; ++i)
+        if (mc_value(at + 2u + i) == source) positions |= 1u << i;
     for (uint i = 0u; i < choices; ++i)
-        positives[length + i] = mc_value(at + 2u + length + i * 2u + mc_next_int(2u));
+        if (mc_value(at + 2u + length + i * 2u + mc_next_int(2u)) == source)
+            positions |= 1u << (length + i);
+    if (positions == 0u) return false;
     length += choices;
     uint64_t seed = next_u64();
     rng_initialize(seed);
     for (uint n = length; n > 1u; --n) {
         uint selected = mc_next_int(n);
-        uint tail = n - 1u, old = positives[tail];
-        positives[tail] = positives[selected];
-        positives[selected] = old;
+        uint tail = n - 1u;
+        uint different = ((positions >> selected) ^ (positions >> tail)) & 1u;
+        positions ^= (different << selected) | (different << tail);
     }
-    return positives[0] == source || positives[1] == source;
+    return (positions & 3u) != 0u;
 #endif
 }
 
@@ -229,9 +234,32 @@ void mc_advance_companion(uint burn) {
 #if !MC_LOCAL_NEOW
 bool mc_route(uint64_t root, uint64_t player_root, uint first, uint second,
     inout bool ready, inout uint64_t lane_seeds[3], inout bool initialized[3], inout uint heads[9]) {
+#if MC_DIRECT_SINGLE
+    // The plan fixes the route to Small Capsule and proves one draw.
+    const uint draws = 1u;
+#else
     uint first_count = mc_slots(first), draws = first_count + mc_slots(second);
+#endif
     if (!mc_sources_present(first, second, draws)) return false;
+#if MC_DIRECT_TARGET
+    uint target = mc_value(mc_value(mc_value(30u) != 0u ? 29u : 31u));
+    rng_initialize(player_root + mc_hash(12u));
+    uint consumed[3] = uint[3](0u, 0u, 0u);
+    uint rank;
+    uint lane = mc_choose_lane(mc_next_float(), consumed, rank);
+    if (lane != mc_target_lane(target)) return false;
+    if (lane == 3u) return target == MC_CIRCLET;
+    // A single draw observes only this bucket's child seed. The other raw
+    // buckets still contribute one parent word each before the selected lane.
+    rng_initialize(root + mc_hash(14u));
+    uint bucket = mc_value(37u + lane * 3u);
+    for (uint i = 0u; i < bucket; ++i) next_u64();
+    uint64_t child_seed = next_u64();
+    mc_lane_head(lane, child_seed, heads);
+    return heads[lane * 3u + rank] == target;
+#else
     uint observed[3] = uint[3](MC_CIRCLET, MC_CIRCLET, MC_CIRCLET);
+#if !MC_DIRECT_SINGLE
     if (draws == 0u) return mc_matches_targets(observed, draws, first, false);
     uint burn = 0u;
     if (first_count == 0u) {
@@ -241,6 +269,9 @@ bool mc_route(uint64_t root, uint64_t player_root, uint first, uint second,
     }
     rng_initialize(player_root + mc_hash(12u));
     mc_advance_companion(burn);
+#else
+    rng_initialize(player_root + mc_hash(12u));
+#endif
     uint consumed[3] = uint[3](0u, 0u, 0u);
     uint lanes[3], ranks[3];
     for (uint i = 0u; i < draws; ++i) lanes[i] = mc_choose_lane(mc_next_float(), consumed, ranks[i]);
@@ -258,25 +289,31 @@ bool mc_route(uint64_t root, uint64_t player_root, uint first, uint second,
         observed[i] = key;
     }
     return mc_matches_targets(observed, draws, first, false);
+#endif
 }
 
 bool mc_matches(uint64_t root) {
     uint64_t player_root = root + uint64_t(mc_value(0u));
-    bool bones = mc_value(1u) != 0u;
     uint selected = mc_value(2u);
-    if (!mc_top_contains(player_root, bones ? 5u : selected)) return false;
-    if (bones && selected != MC_NONE && selected != 5u && !mc_top_contains(player_root, selected)) return false;
     uint first = selected, second = MC_NONE;
 #if MC_BONES
+    if (!mc_top_contains(player_root, 5u)) return false;
+    if (selected != MC_NONE && selected != 5u && !mc_top_contains(player_root, selected)) return false;
     if (!mc_pair(player_root, first, second)) return false;
+#else
+    if (!mc_top_contains(player_root, selected)) return false;
 #endif
     uint64_t lane_seeds[3] = uint64_t[3](uint64_t(0u), uint64_t(0u), uint64_t(0u));
     bool initialized[3] = bool[3](false, false, false);
     uint heads[9] = uint[9](MC_UNTRACKED, MC_UNTRACKED, MC_UNTRACKED,
         MC_UNTRACKED, MC_UNTRACKED, MC_UNTRACKED, MC_UNTRACKED, MC_UNTRACKED, MC_UNTRACKED);
     bool ready = false;
-    if (mc_route(root, player_root, first, second, ready, lane_seeds, initialized, heads)) return true;
-    return bones && mc_value(3u) == MC_NONE &&
-        mc_route(root, player_root, second, first, ready, lane_seeds, initialized, heads);
+    bool forward = mc_route(root, player_root, first, second, ready, lane_seeds, initialized, heads);
+#if MC_BONES
+    return forward || (mc_value(3u) == MC_NONE &&
+        mc_route(root, player_root, second, first, ready, lane_seeds, initialized, heads));
+#else
+    return forward;
+#endif
 }
 #endif

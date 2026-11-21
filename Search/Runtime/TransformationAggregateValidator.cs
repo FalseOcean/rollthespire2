@@ -31,12 +31,30 @@ internal static class TransformationAggregateValidator
         (EventResultConditionKind.TrialNondescriptInitialBasicsContains, c => c.TrialNondescript)
     ];
 
-    internal static SearchQueryEvaluation Evaluate(SearchModel request, ulong root, RuntimeContextAuthoritySnapshot authority)
+    internal static Func<ulong, List<Output>?>? PrepareIndependentEventCheck(SearchModel request)
     {
-        if (request.Evaluation.TransformationAggregate is not { } condition) return SearchQueryEvaluation.Match();
-        if (authority.ProfileId != RuntimeProfileId.Beta111 || authority.PlayersCount != 1)
-            return SearchQueryEvaluation.Unsupported("TransformationAggregate.SinglePlayerBeta111Required");
+        if (request.Evaluation.TransformationAggregate is not { UsesAncient: true, UsesEvents: true } condition ||
+            request.Authority.ProfileId != RuntimeProfileId.Beta111 || request.Authority.PlayersCount != 1)
+            return null;
+        var requirements = condition.ResultRequirements.Where(requirement =>
+            requirement.Sources.All(source => source.StartsWith("E.", StringComparison.Ordinal))).ToArray();
+        if (requirements.Length == 0) return null;
 
+        // Event transforms use event-local streams and captured card inputs. Their
+        // scoped requirements apply to every opening and Ancient witness.
+        return root =>
+        {
+            var events = ProjectEvents(request, condition, root, request.Authority);
+            if (events is null) return null;
+            foreach (var requirement in requirements)
+                if (EvaluateRequirement(requirement, events, null) == SearchDisposition.NoMatch) return null;
+            return events;
+        };
+    }
+
+    private static List<Output>? ProjectEvents(SearchModel request, TransformationAggregateCondition condition,
+        ulong root, RuntimeContextAuthoritySnapshot authority)
+    {
         var events = new List<Output>();
         if (condition.EventScenario is { } scenario)
         {
@@ -49,6 +67,14 @@ internal static class TransformationAggregateValidator
                 var entry = EventResultTransformSemantics.Entry(kind);
                 string source = "E." + entry;
                 int count = EventResultTransformSemantics.DrawCount(kind);
+                if (scenario.Targets.Count < count)
+                {
+                    if (kind == EventResultConditionKind.TrialNondescriptInitialBasicsContains &&
+                        Beta111TrialTinkerProjector.TrialCase(root, authority.PlayerSlotIndex) != (int)TrialCaseTarget.Nondescript)
+                        return null;
+                    AddUnknownOutputs(events, count, source);
+                    continue;
+                }
                 IReadOnlyList<MorphicGroveCard?>? projection = kind switch
                 {
                     EventResultConditionKind.MorphicGroveGroupInitialBasicsContains =>
@@ -62,11 +88,23 @@ internal static class TransformationAggregateValidator
                             SingleBasicTransformEvent.WhisperingHollow, scenario.Premises, scenario.Targets[0]).RawReplacement],
                     _ => ProjectOtherEvent(root, kind, count, scenario)
                 };
-                if (projection is { Count: 0 }) return SearchQueryEvaluation.NoMatch("TransformationAggregate.TrialCaseNotNondescript");
+                if (projection is { Count: 0 }) return null;
                 if (projection is null) AddUnknownOutputs(events, count, source);
                 else events.AddRange(projection.Select(card => new Output(card?.CardKey, card is null ? null : card.Rarity == "Rare", source)));
             }
         }
+        return events;
+    }
+
+    internal static SearchQueryEvaluation Evaluate(SearchModel request, ulong root, RuntimeContextAuthoritySnapshot authority,
+        List<Output>? knownEvents = null)
+    {
+        if (request.Evaluation.TransformationAggregate is not { } condition) return SearchQueryEvaluation.Match();
+        if (authority.ProfileId != RuntimeProfileId.Beta111 || authority.PlayersCount != 1)
+            return SearchQueryEvaluation.Unsupported("TransformationAggregate.SinglePlayerBeta111Required");
+
+        var events = knownEvents ?? ProjectEvents(request, condition, root, authority);
+        if (events is null) return SearchQueryEvaluation.NoMatch("TransformationAggregate.TrialCaseNotNondescript");
 
         var profile = RuntimeProfileRegistry.Select(request.Detection);
         // Per-root reprojection replaces relic bag authority only. The request's
@@ -113,7 +151,8 @@ internal static class TransformationAggregateValidator
             if (disposition == SearchDisposition.NoMatch)
                 return SearchQueryEvaluation.NoMatch("TransformationAggregate.PredicateRejected");
             if (pendingOpening is not null || disposition == SearchDisposition.Unknown)
-                return SearchQueryEvaluation.Unknown(pendingOpening ?? ancient.FailureCode ?? "TransformationAggregate.OutputUnknown");
+                return SearchQueryEvaluation.Unknown(pendingOpening ?? ancient.FailureCode ??
+                    condition.EventScenario?.Premises.InitialBasicCaptureIssue ?? "TransformationAggregate.OutputUnknown");
             return Result(outputs, route, pickup);
         }
 
@@ -201,6 +240,7 @@ internal static class TransformationAggregateValidator
             var scenario = selected(condition) ? condition.EventScenario :
                 request.Evaluation.EventResultConditions.FirstOrDefault(result => result.Kind == kind)?.MorphicGroveScenario;
             if (scenario is null) continue;
+            if (scenario.Targets.Count < EventResultTransformSemantics.DrawCount(kind)) return null;
             foreach (var target in scenario.Targets.Take(EventResultTransformSemantics.DrawCount(kind)))
             {
                 if (condition.AncientSource == TransformationAncientSource.Astrolabe ||
@@ -283,14 +323,18 @@ internal static class TransformationAggregateValidator
         var result = SearchDisposition.Match;
         foreach (var requirement in condition.ResultRequirements)
         {
-            var disposition = EvaluatePredicate(requirement.Predicate, requirement.MinimumRareCount, requirement.TargetMultiset,
-                outputs.Where(output => requirement.Sources.Contains(output.Source)).ToArray(),
-                unboundedSource is not null && requirement.Sources.Contains(unboundedSource));
+            var disposition = EvaluateRequirement(requirement, outputs, unboundedSource);
             if (disposition == SearchDisposition.NoMatch) return disposition;
             if (disposition == SearchDisposition.Unknown) result = disposition;
         }
         return result;
     }
+
+    private static SearchDisposition EvaluateRequirement(TransformationResultRequirement requirement,
+        IReadOnlyList<Output> outputs, string? unboundedSource) =>
+        EvaluatePredicate(requirement.Predicate, requirement.MinimumRareCount, requirement.TargetMultiset,
+            outputs.Where(output => requirement.Sources.Contains(output.Source)).ToArray(),
+            unboundedSource is not null && requirement.Sources.Contains(unboundedSource));
 
     private static SearchDisposition EvaluatePredicate(TransformationAggregatePredicate predicate, int minimumRare,
         IReadOnlyList<ModelKey> targets, IReadOnlyList<Output> outputs, bool outputCountUnknown)

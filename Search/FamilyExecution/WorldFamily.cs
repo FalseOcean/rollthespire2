@@ -74,6 +74,8 @@ internal static partial class WorldFamily
             Cost = new()
             {
                 CanonicalScope = true,
+                PrivateOutputRevision = WorldFamilyGpuExecutor.SmallHeaderRevision,
+                PrivateOutputPathSuffix = ".PrivateSmallHeader8",
                 MinimumComparableInput = _ => gpuPlan.Capacity * gpuPlan.GroupingK,
                 PartyChild = new(1 + Math.Max(0, replay.Plan.MaxRequiredAct - 2) * .5 + replay.Plan.Acts.Sum(a => a.EventPredicates.Length) * .25,
                     numericalVariant == GpuNumericalVariant.NativeFloat64,
@@ -122,7 +124,7 @@ internal static partial class WorldFamily
             else result = input is null ? gpu.Execute(FamilyCandidateSet.Dense(batch), token, out metrics) :
                 gpu.ExecutePrivate(batch, count, token, out metrics);
             return new(metrics.Output, result, metrics.DispatchSyncMs, metrics.HeaderReadbackMs,
-                metrics.HeaderReadBytes + metrics.PayloadReadBytes, metrics.CanonicalMs, metrics.Dispatches);
+                metrics.HeaderReadBytes + metrics.PayloadReadBytes, metrics.CanonicalMs, metrics.Dispatches) { SmallOutput = metrics.SmallOutput };
         });
     }
 }

@@ -3,7 +3,6 @@ using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Reflection;
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Godot;
@@ -74,8 +73,14 @@ internal static partial class PredictorOperationCapture
             foreach (var match in Nodes<T>(child)) yield return match;
     }
 
-    private static string Hash(object value) => Convert.ToHexString(SHA256.HashData(
-        Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value, Json))));
+    private static string Hash(object value)
+    {
+        using var hash = SHA256.Create();
+        using var stream = new CryptoStream(Stream.Null, hash, CryptoStreamMode.Write);
+        JsonSerializer.Serialize(stream, value, Json);
+        stream.FlushFinalBlock();
+        return Convert.ToHexString(hash.Hash!);
+    }
 
     internal static string SceneFingerprint(PredictorOperationScene scene) => Hash((object)scene);
 
@@ -92,6 +97,7 @@ internal static partial class PredictorOperationCapture
         public int PoolReads, PoolReuses, PoolProjectionReuses;
         public int CatalogLevelReads, CatalogLevelReuses, SnapshotReuses;
         public int DirectPoolReads, ContentObservationReads;
+        public int SelectionCatalogReuses, SelectionCatalogDigestReuses;
     }
 
     internal static PredictorOperationSnapshot Capture(RunState run, string version, Node? root,
@@ -103,7 +109,7 @@ internal static partial class PredictorOperationCapture
 
     private static PredictorOperationSnapshot Capture(RunState run, string version, Node? root,
         bool includeObservationStamp, out string observationStamp, CaptureTiming? timing = null,
-        PredictorOperationSnapshot? previous = null)
+        PredictorOperationSnapshot? previous = null, bool selectionCatalog = false)
     {
         RuntimeSnapshotThreadGuard.RequireMainThread();
         ArgumentNullException.ThrowIfNull(run);
@@ -119,7 +125,11 @@ internal static partial class PredictorOperationCapture
         var pools = new CrystalSphereCatalogCapture.CapturePools(run, player);
         var levels = new CatalogLevels(previous, timing);
         stage = Stopwatch.GetTimestamp();
-        var (catalog, _) = CrystalSphereCatalogCapture.Capture(run, player, pools, levels.Capture);
+        SelectionCardCatalog? observed = null;
+        bool reusedSelectionCatalog = false;
+        var catalog = selectionCatalog
+            ? CaptureSelectionCardCatalog(run, player, pools, levels, timing, previous, out observed, out reusedSelectionCatalog)
+            : CrystalSphereCatalogCapture.Capture(run, player, pools, levels.Capture).Catalog;
         if (timing != null) timing.CatalogMs = Stopwatch.GetElapsedTime(stage).TotalMilliseconds;
         stage = Stopwatch.GetTimestamp();
         catalog = CompleteCatalog(catalog, run, player,
@@ -137,7 +147,15 @@ internal static partial class PredictorOperationCapture
         var visited = run.VisitedMapCoords.Select(Position).ToImmutableArray();
         var (visits, previousVisits) = Visits(run, visited);
         stage = Stopwatch.GetTimestamp();
-        string catalogHash = Hash(catalog), unlockHash = Hash(unlocks);
+        string catalogHash;
+        if (selectionCatalog && previous?.Context.Catalog is { } previousCatalog && SameSelectionCatalog(previousCatalog, catalog))
+        {
+            catalog = previousCatalog;
+            catalogHash = previous.Context.CatalogFingerprint;
+            if (timing != null) timing.SelectionCatalogDigestReuses++;
+        }
+        else catalogHash = Hash(catalog);
+        string unlockHash = Hash(unlocks);
         if (timing != null) timing.HashMs = Stopwatch.GetElapsedTime(stage).TotalMilliseconds;
         var context = new PredictorContext(run.Rng.StringSeed, version, Key(player.Character), run.AscensionLevel,
             catalogHash, unlockHash, unlocks.UnlockedEpochs.ToImmutableArray(),
@@ -156,8 +174,7 @@ internal static partial class PredictorOperationCapture
             AccountWongoPoints = MegaCrit.Sts2.Core.Saves.SaveManager.Instance.Progress.WongoPoints,
             Modifiers = run.Modifiers.Select(m => new PredictorRunModifier(Key(m),
                 m is MegaCrit.Sts2.Core.Models.Modifiers.CharacterCards cc ? Key(cc.CharacterModel) : null)).ToImmutableArray(),
-            PotionPool = MegaCrit.Sts2.Core.Factories.PotionFactory.GetPotionOptions(player).Select(p =>
-                new PredictorPotionOption(Key(p), Enum.Parse<PredictorPotionRarity>(p.Rarity.ToString()), p.CanBeGeneratedInCombat)).ToImmutableArray()
+            PotionPool = MegaCrit.Sts2.Core.Factories.PotionFactory.GetPotionOptions(player).Select(PotionOption).ToImmutableArray()
         };
         var cards = player.Deck.Cards.Select(c => Card(c, catalog, captureSort)).ToImmutableArray();
         var extras = new List<PredictorCard>();
@@ -224,7 +241,8 @@ internal static partial class PredictorOperationCapture
             SelectedCardIds = Nodes<NCardGridSelectionScreen>(root).Where(n => n.IsVisibleInTree())
                 .SelectMany(n => Read<IEnumerable<CardModel>>(n, "_selectedCards")).Select(Id).ToImmutableArray()
         };
-        levels.Remember(snapshot);
+        levels.Remember(snapshot, reusedSelectionCatalog);
+        if (observed != null && scene is PredictorOperationEventScene) SelectionCardCatalogs.Add(snapshot, observed);
         return snapshot;
     }
 
@@ -306,7 +324,7 @@ internal static partial class PredictorOperationCapture
         run.CurrentMapCoord, Players = run.Players.Select(p => p.ToSerializable()).ToArray(),
         Rng = run.Rng.ToSerializable(), PersonalBag = Bag(player.RelicGrabBag), SharedBag = Bag(run.SharedRelicGrabBag),
         Odds = run.Odds.ToSerializable(), Cards = player.Deck.Cards.Select(Id).ToArray(),
-        CardSort = captureSort ? player.Deck.Cards.Where(card => card.GetType().Assembly == typeof(CardModel).Assembly)
+        CardSort = captureSort ? player.Deck.Cards.Where(UsesBaseCardComparison)
             .Select(card => new { Id = Id(card), Affliction = card.Affliction?.Id, Values = CardSortValues(card) }).ToArray() : null,
         BingBong = player.Relics.OfType<MegaCrit.Sts2.Core.Models.Relics.BingBong>()
             .Select(relic => BingBongSkipCards(relic)?.Select(Id).Order().ToArray()).ToArray(),

@@ -14,7 +14,7 @@ using RolltheSpire2.Core.World.Snapshots;
 namespace RolltheSpire2.Core.Rewards;
 
 /// <summary>
-/// Pure copied-data projection of three consecutive default Monster rewards from
+/// Pure copied-data projection of consecutive default Monster rewards from
 /// one completed Neow/Bones OpeningRewardContinuation. The first battle is tied
 /// to the selected opening route. Battles two and three remain a consecutive
 /// no-intervening-consumer baseline.
@@ -114,6 +114,18 @@ public static class NormalCombatRewardSequencePredictor
         IReadOnlyList<NeowChoiceResult> neowChoices,
         NeowEffectAuthoritySnapshot? effectAuthority,
         WorldAuthoritySnapshot? worldAuthority) =>
+        Predict(profile, canonicalSeed, playerSlotIndex, ascension, neowChoices, effectAuthority, worldAuthority,
+            NormalCombatRewardProjectionRequest.RichAnalysis);
+
+    public static NormalCombatRewardSequencePredictionResult Predict(
+        IRuntimeProfile profile,
+        string canonicalSeed,
+        int playerSlotIndex,
+        int ascension,
+        IReadOnlyList<NeowChoiceResult> neowChoices,
+        NeowEffectAuthoritySnapshot? effectAuthority,
+        WorldAuthoritySnapshot? worldAuthority,
+        NormalCombatRewardProjectionRequest projectionRequest) =>
         PredictCore(
             profile,
             profile.ComputeRootSeed(canonicalSeed),
@@ -123,7 +135,7 @@ public static class NormalCombatRewardSequencePredictor
             neowChoices,
             effectAuthority,
             worldAuthority,
-            NormalCombatRewardProjectionRequest.RichAnalysis);
+            projectionRequest);
 
     internal static NormalCombatRewardSequencePredictionResult PredictFromRootHash(
         IRuntimeProfile profile,
@@ -209,17 +221,6 @@ public static class NormalCombatRewardSequencePredictor
                     : "CharacterRewardPoolAuthorityIncomplete",
                 fingerprint);
         }
-        if (!effectAuthority.HasExactFoundation ||
-            !effectAuthority.PotionPoolExact ||
-            effectAuthority.PotionPool is null)
-        {
-            return NormalCombatRewardSequencePredictionResult.Unknown(
-                profile.ProfileId,
-                effectAuthority.PotionPool is null
-                    ? "MissingPotionPool"
-                    : "PotionPoolAuthorityIncomplete",
-                fingerprint);
-        }
 
         if (!TryResolveStartingAct(profile, rootHash, seedIdentity, worldAuthority, out int act, out ModelKey actKey, out string actIssue))
         {
@@ -233,18 +234,19 @@ public static class NormalCombatRewardSequencePredictor
                 fingerprint);
         }
 
-        // Resolve only after the original authority and starting-act guards, so
-        // preparation never changes their failure precedence or scope.
         var prepared = poolPreparation?.Resolve(profile.ProfileId, effectAuthority, worldAuthority);
         IReadOnlyList<NeowEffectCardSnapshot> cards;
         IReadOnlyList<NeowEffectPotionSnapshot> potions;
         if (prepared is not null) { cards = prepared.Cards; potions = prepared.Potions; }
         else (cards, potions) = BuildPoolInputs(effectAuthority, worldAuthority);
-        string? poolIssue = prepared is null ? ValidatePools(profile.ProfileId, cards, potions) : null;
+        string? poolIssue = prepared is null ? ValidateCardPool(profile.ProfileId, cards) : null;
         if (poolIssue is not null)
         {
             return NormalCombatRewardSequencePredictionResult.Unknown(profile.ProfileId, poolIssue, fingerprint);
         }
+        string? potionPoolIssue = effectAuthority.PotionPool is null ? "MissingPotionPool"
+            : !effectAuthority.PotionPoolExact ? "PotionPoolAuthorityIncomplete"
+            : prepared is null ? ValidatePotionPool(potions) : null;
 
         OpeningRewardContinuation[] realContinuations = BuildChoiceContinuations(neowChoices);
         if (realContinuations.Length == 0)
@@ -332,7 +334,7 @@ public static class NormalCombatRewardSequencePredictor
                 actKey,
                 clampedAscension,
                 cards,
-                potions, projectionRequest.BattleCount));
+                potions, potionPoolIssue, projectionRequest.BattleCount));
         }
 
         bool anyEvaluated = routeResults.Any(route => route.Status == SeedDomainEvaluationStatus.Evaluated);
@@ -419,7 +421,7 @@ public static class NormalCombatRewardSequencePredictor
                 new PredictionDiagnostic("reward-modern-direct-audit", RuntimeProfilePolicies.IsModernCore(profile.ProfileId).ToString().ToLowerInvariant()),
                 new PredictionDiagnostic("reward-source-audit-sha256", RewardAuditSha256(profile.ProfileId)),
                 new PredictionDiagnostic(PredictionDiagnosticCodes.RuntimeAuthorityId, RuntimeProfilePolicies.AuthorityId(profile.ProfileId)),
-                new PredictionDiagnostic(PredictionDiagnosticCodes.RuntimeAuditFingerprint, RuntimeProfilePolicies.AuditFingerprint(profile.ProfileId)),
+                new PredictionDiagnostic("reward-adapter-audit-fingerprint", RuntimeProfilePolicies.AuditFingerprint(profile.ProfileId)),
                 new PredictionDiagnostic(PredictionDiagnosticCodes.RuntimeCardCatalogFingerprint, effectAuthority.CatalogFingerprint),
                 new PredictionDiagnostic(PredictionDiagnosticCodes.CardBaseOddsPolicy, RuntimeProfilePolicies.BaseOddsPolicy(profile.ProfileId).ToString()),
                 new PredictionDiagnostic("reward-rarity-policy", "Encounter=StatefulCardRarityOdds.Roll;Candy=Other.BaseOdds.NoPityMutation"),
@@ -457,7 +459,7 @@ public static class NormalCombatRewardSequencePredictor
         ModelKey actKey,
         int ascension,
         IReadOnlyList<NeowEffectCardSnapshot> cards,
-        IReadOnlyList<NeowEffectPotionSnapshot> potions, int battleCount)
+        IReadOnlyList<NeowEffectPotionSnapshot> potions, string? potionPoolIssue, int battleCount)
     {
         if (battleCount is < 1 or > 6) throw new ArgumentOutOfRangeException(nameof(battleCount));
         if (!TryBuildRouteImpactPlan(profileId, continuation, out RouteRewardImpactPlan impactPlan, out string impactIssue))
@@ -563,6 +565,8 @@ public static class NormalCombatRewardSequencePredictor
             NormalCombatRewardPotionResult potionResult;
             if (potionDropped)
             {
+                if (potionPoolIssue is not null)
+                    return UnknownRoute(groupId, continuation, equivalentRoutes, potionPoolIssue, battles);
                 float rarityRoll = NextFloat(rewards, trace, battleOrdinal, "potion-rarity");
                 EffectPotionRarity potionRarity = PotionRarityRules.Evaluate(rarityRoll);
                 List<NeowEffectPotionSnapshot> candidates = potions
@@ -574,7 +578,7 @@ public static class NormalCombatRewardSequencePredictor
                         groupId,
                         continuation,
                         equivalentRoutes,
-                        $"PotionPoolEmptyForRolledRarity:Battle{battleOrdinal}:{potionRarity}");
+                        $"PotionPoolEmptyForRolledRarity:Battle{battleOrdinal}:{potionRarity}", battles);
                 }
                 NeowEffectPotionSnapshot selectedPotion = NextItem(
                     rewards,
@@ -643,7 +647,7 @@ public static class NormalCombatRewardSequencePredictor
                     groupId,
                     continuation,
                     equivalentRoutes,
-                    ex.Message);
+                    ex.Message, battles);
             }
 
             if (candyPolicy == LastingCandyCounterPolicy.RewardOfferingOdd && impactPlan.EveryOtherPowerCardImpacts.Count > 0)
@@ -1155,15 +1159,15 @@ public static class NormalCombatRewardSequencePredictor
         string groupId,
         OpeningRewardContinuation continuation,
         IReadOnlyList<OpeningRewardRouteDescriptor> equivalentRoutes,
-        string issueCode) => new(
+        string issueCode, IReadOnlyList<NormalCombatRewardBattleResult>? completedBattles = null) => new(
         groupId,
         continuation,
         equivalentRoutes,
-        SeedDomainEvaluationStatus.Unknown,
-        Array.Empty<NormalCombatRewardBattleResult>(),
-        PredictionPrecision.Unknown,
+        completedBattles is { Count: > 0 } ? SeedDomainEvaluationStatus.Evaluated : SeedDomainEvaluationStatus.Unknown,
+        completedBattles ?? Array.Empty<NormalCombatRewardBattleResult>(),
+        completedBattles is { Count: > 0 } ? PredictionPrecision.Partial : PredictionPrecision.Unknown,
         continuation.Authority,
-        continuation.Completeness,
+        SnapshotCompleteness.Partial,
         issueCode,
         continuation.ContinuationFingerprint,
         continuation.Route.EvidenceCode);
@@ -1260,10 +1264,7 @@ public static class NormalCombatRewardSequencePredictor
         act = 0;
         actKey = default;
         issue = string.Empty;
-        if (authority is null ||
-            authority.CapturedProfileId != profile.ProfileId ||
-            !SourceAuthorityRules.SupportsExactIdentity(authority.SourceAuthority) ||
-            authority.Completeness != SnapshotCompleteness.Complete)
+        if (authority is null || authority.CapturedProfileId != profile.ProfileId)
         {
             issue = "MissingStartingActAuthority";
             return false;
@@ -1271,35 +1272,23 @@ public static class NormalCombatRewardSequencePredictor
 
         if (RuntimeProfilePolicies.IsModernCore(profile.ProfileId))
         {
-            if (authority.Beta109Generation is null)
+            if (authority.Beta109Generation is not { } generation || generation.Profile != profile.ProfileId)
             {
                 issue = "MissingModernStartingActAuthority";
                 return false;
             }
-            Beta109WorldGenerationSnapshot projected;
-            projected = Beta109WorldSnapshotProjector.ProjectForRootHash(
-                authority.Beta109Generation,
-                rootHash,
-                seedIdentity);
-            if (!projected.SelectedActsExact || projected.SelectedActs.Count == 0)
+            if (!Beta109WorldSnapshotProjector.TryGetStartingAct(generation, rootHash, seedIdentity, out actKey))
             {
                 issue = "MissingSelectedActsForRewardProjection";
                 return false;
             }
-            ModelKey selectedActKey = projected.SelectedActs[0];
-            actKey = selectedActKey;
-            Beta109ActGenerationSnapshot? selected = projected.OrderedActCatalog
-                .FirstOrDefault(item => item.ActKey == selectedActKey);
-            if (selected is null)
-            {
-                issue = "SelectedActCatalogEntryMissingForRewardProjection";
-                return false;
-            }
-            act = selected.Act;
+            act = 1;
             return true;
         }
 
-        if (!authority.CatalogOrderExact || authority.ActGroups is not { Count: > 0 })
+        if (!SourceAuthorityRules.SupportsExactIdentity(authority.SourceAuthority) ||
+            authority.Completeness != SnapshotCompleteness.Complete ||
+            !authority.CatalogOrderExact || authority.ActGroups is not { Count: > 0 })
         {
             issue = "MissingStable107StartingActAuthority";
             return false;
@@ -1335,7 +1324,7 @@ public static class NormalCombatRewardSequencePredictor
             .Where(card => card.IsUnlockedInCapturedPool)
             .Where(card => card.Rarity is EffectCardRarity.Common or EffectCardRarity.Uncommon or EffectCardRarity.Rare)
             .OrderBy(card => card.PoolOrder).ToList(),
-            authority.PotionPool!
+            (authority.PotionPool ?? [])
             .Where(potion => worldAuthority?.Beta109Generation?.IsMultiplayer == true || !potion.IsMultiplayerOnly)
             .Where(potion => potion.Rarity is EffectPotionRarity.Common or EffectPotionRarity.Uncommon or EffectPotionRarity.Rare)
             .OrderBy(potion => potion.PoolOrder).ToList());
@@ -1353,7 +1342,10 @@ public static class NormalCombatRewardSequencePredictor
     internal static string? ValidatePools(
         RuntimeProfileId profileId,
         IReadOnlyList<NeowEffectCardSnapshot> cards,
-        IReadOnlyList<NeowEffectPotionSnapshot> potions)
+        IReadOnlyList<NeowEffectPotionSnapshot> potions) =>
+        ValidateCardPool(profileId, cards) ?? ValidatePotionPool(potions);
+
+    private static string? ValidateCardPool(RuntimeProfileId profileId, IReadOnlyList<NeowEffectCardSnapshot> cards)
     {
         if (cards.Count == 0) return "CharacterRewardPoolEmpty";
         if (RuntimeProfilePolicies.UsesBeta110SharedAlgorithms(profileId) &&
@@ -1362,13 +1354,17 @@ public static class NormalCombatRewardSequencePredictor
         if (RuntimeProfilePolicies.UsesBeta110SharedAlgorithms(profileId) &&
             cards.Any(card => string.IsNullOrWhiteSpace(card.EligibilityAuthority)))
             return profileId + "CharacterRewardEligibilityAuthorityMissing";
-        if (potions.Count == 0) return "PotionPoolEmpty";
         if (cards.Select(card => card.CardKey).Distinct().Count() != cards.Count)
             return "CharacterRewardPoolContainsDuplicateModelKeys";
-        if (potions.Select(potion => potion.PotionKey).Distinct().Count() != potions.Count)
-            return "PotionPoolContainsDuplicateModelKeys";
         if (cards.Select(card => card.PoolOrder).Distinct().Count() != cards.Count)
             return "CharacterRewardPoolContainsDuplicatePoolOrder";
+        return null;
+    }
+
+    private static string? ValidatePotionPool(IReadOnlyList<NeowEffectPotionSnapshot> potions)
+    {
+        if (potions.Select(potion => potion.PotionKey).Distinct().Count() != potions.Count)
+            return "PotionPoolContainsDuplicateModelKeys";
         if (potions.Select(potion => potion.PoolOrder).Distinct().Count() != potions.Count)
             return "PotionPoolContainsDuplicatePoolOrder";
         return null;

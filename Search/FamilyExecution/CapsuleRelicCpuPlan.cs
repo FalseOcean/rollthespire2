@@ -43,7 +43,7 @@ internal sealed class CapsuleRelicCpuPlan
                     route.ContinuationIssue(capsule: true).Length != 0) return null;
             }
         }
-        if (!RelicFamilyPlanCompiler.TryCompilePool(request, out var pool, out var dense, out _, out _)) return null;
+        if (!RelicFamilyPlanCompiler.TryCompilePool(request, out var pool, out var dense, out _, out _, requireOrdinaryLanes: true)) return null;
         // Up to three draws cannot exhaust an admitted lane; unusual tiny/modded
         // pools stay on the reference realization before execution.
         for (int b = 0; b < pool.BucketCount; b++)

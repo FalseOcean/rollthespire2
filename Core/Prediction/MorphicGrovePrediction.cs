@@ -64,6 +64,8 @@ internal static class MorphicGrovePredictor
         if (RuntimeProfileRegistry.Resolve(detection).ProfileId != RuntimeProfileId.Beta111 || a.ProfileId != RuntimeProfileId.Beta111)
             return Missing(PredictionPrecision.Unsupported, "MorphicGrove.Beta111ModelRequired");
         ValidateAuthority(detection, a, scenario);
+        if (scenario.Targets.Count < 2 && scenario.Premises.InitialBasicCaptureIssue is { } issueCode)
+            return Missing(PredictionPrecision.Unknown, issueCode);
         if (string.IsNullOrWhiteSpace(scenario.Premises.EventOccurrenceBasis))
             return Missing(PredictionPrecision.Unknown, "MorphicGrove.EventOccurrencePremiseRequired");
         // Vanilla offers Group or Loner, neither is an effect-free Skip. Missing

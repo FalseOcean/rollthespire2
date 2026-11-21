@@ -139,7 +139,7 @@ public sealed record EventPoolActSequenceResult(
     int EligibleCount,
     int EffectiveCount,
     int FilteredOutCount,
-    int OpeningAncientCursorOffset,
+    int? OpeningAncientCursorOffset,
     int OpeningAncientSkippedCount,
     int StaticFilteredOutCount,
     int DuplicateFilteredOutCount,

@@ -12,7 +12,7 @@ namespace RolltheSpire2.Search.FamilyExecution;
 /// All requirements in this shape observe the same draws. The Ancient offer
 /// and final search disposition are established by their existing owners.
 /// </summary>
-internal sealed class TransformationAncientNumericalPlan
+internal sealed partial class TransformationAncientNumericalPlan
 {
     private readonly record struct CandidateRule(int Counter, int Minimum, int Maximum, bool Rare);
 
@@ -141,5 +141,31 @@ internal sealed class TransformationAncientNumericalPlan
             if (count <= candidate.Minimum) targets--;
         }
         return targets == 0 && rare <= 0;
+    }
+
+    // Keep one entry per draw index, even when several indices select the same card.
+    // A shared counter belongs to the card identity and observes all its occurrences.
+    internal uint[][] PackGpu()
+    {
+        uint[] meta = new uint[8 + 2 * _counterCount];
+        meta[0] = (uint)_streamSeedOffset;
+        meta[1] = (uint)(_streamSeedOffset >> 32);
+        meta[2] = (uint)_drawCount;
+        meta[3] = (uint)_candidateRules.Length;
+        meta[4] = (uint)_minimumTargets;
+        meta[5] = (uint)_minimumRare;
+        meta[6] = _requiresRareRemainder ? 1u : 0u;
+        meta[7] = (uint)_counterCount;
+        var pool = new uint[_candidateRules.Length];
+        for (int index = 0; index < pool.Length; index++)
+        {
+            var rule = _candidateRules[index];
+            pool[index] = (rule.Rare ? 0x80000000u : 0u) | (rule.Maximum == 0 ? 0x40000000u : 0u) |
+                (uint)(rule.Counter + 1);
+            if (rule.Counter < 0) continue;
+            meta[8 + 2 * rule.Counter] = (uint)rule.Minimum;
+            meta[9 + 2 * rule.Counter] = (uint)rule.Maximum;
+        }
+        return [meta, pool];
     }
 }

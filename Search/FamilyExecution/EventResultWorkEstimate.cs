@@ -13,8 +13,7 @@ internal static class EventResultWorkEstimate
         bool trash = rows.Any(c => c.Kind is EventResultConditionKind.TrashHeapGrabCard or EventResultConditionKind.TrashHeapDiveRelic);
         bool fake = rows.Any(c => c.Kind == EventResultConditionKind.FakeMerchantOfferedFakeRelic);
         bool color = rows.Any(c => c.Kind == EventResultConditionKind.ColorfulPhilosophersOfferedColor);
-        int colors = color ? Beta111EventRules.ColorfulCandidates(plan.Authority.OwnerCharacterKey,
-            plan.Authority.UnlockedCharacterCardPoolKeys, plan.Authority.RngSemantics).Length : 0;
+        int colors = color ? plan.Authority.ColorfulCandidates().Length : 0;
         int transforms = rows.Count(c => EventResultTransformSemantics.IsTransform(c.Kind));
         int scalar = rows.Select(c => c.Kind).Distinct().Count(k => k is EventResultConditionKind.TrialCase or
             EventResultConditionKind.TinkerTimeTypeAndRider);

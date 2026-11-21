@@ -137,7 +137,12 @@ internal sealed partial class PredictorRun
                 GenerationStages = trialRewards.Stages;
                 return PredictorInputResult.Accepted;
             case ("COLORFUL_PHILOSOPHERS", _):
-                var chosenPool = Context.Catalog!.CharacterPools.Single(p => p.Character.Entry == choice.OptionKey);
+                var characterPools = Context.Catalog!.CharacterPools;
+                var chosenPool = option.OfferedCardPool is { } poolKey
+                    ? characterPools.First(p => p.PoolKey == poolKey)
+                    : Context.Operation == null
+                        ? characterPools.Single(p => p.Character.Entry == choice.OptionKey)
+                        : throw new InvalidOperationException("OperationColorfulPoolMissing:" + choice.OptionKey);
                 var colorful = PredictorRewardGeneration.Generate(Context, Working,
                     new[] { EffectCardRarity.Common, EffectCardRarity.Uncommon, EffectCardRarity.Rare }
                         .Select(r => new PredictorRewardPlan(PredictorRewardKind.Card, CardCount: 3,
@@ -181,9 +186,14 @@ internal sealed partial class PredictorRun
     private ImmutableArray<PredictorEventOption> ColorfulOptions()
     {
         var catalog = Context.Catalog ?? throw new InvalidOperationException("PredictorCatalogMissing");
-        return Beta111EventRules.ColorfulOffers(_eventRng!, Context.Character,
-                catalog.CharacterPools.Select(pool => pool.Character), Context.VersionResolution.SemanticProfileId)
-            .Select(key => new PredictorEventOption(key.Entry)).ToImmutableArray();
+        var semantics = Context.VersionResolution.SemanticProfileId;
+        var own = catalog.CharacterPools.FirstOrDefault(pool => pool.Character == Context.Character)?.PoolKey;
+        var available = catalog.CharacterPools.Select(p => p.PoolKey).Where(p => p != own).ToHashSet();
+        var colors = own.HasValue
+            ? Beta111EventResultCatalog.ColorfulOrder(semantics).Where(color => available.Contains(Beta111EventResultCatalog.PoolForColor(color)))
+            : Beta111EventRules.ColorfulCandidates(Context.Character, catalog.CharacterPools.Select(pool => pool.Character), semantics);
+        return Beta111EventRules.ColorfulOffers(_eventRng!, colors)
+            .Select(key => new PredictorEventOption(key.Entry) { OfferedCardPool = own.HasValue ? Beta111EventResultCatalog.PoolForColor(key) : null }).ToImmutableArray();
     }
 
     private ImmutableArray<long> SymbioteCandidates() => Working.Deck.Where(id =>

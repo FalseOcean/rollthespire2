@@ -1,7 +1,9 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using RolltheSpire2.Compatibility;
+using RolltheSpire2.Core.Events;
 using RolltheSpire2.Core.Identity;
+using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Presentation.Ui1;
 using RolltheSpire2.Search.Compilation;
 using RolltheSpire2.Search.Contracts;
@@ -115,6 +117,32 @@ internal static class TransformationScopeChecks
             new("0.113.1", "0.113.1", "beta", "transformation-scope-fixture", true, ""), SearchEvaluationAssumptions.BroadDefault);
         SearchQuery Query(TransformationAggregateCondition condition) => SearchQuery.Empty with { TransformationAggregate = condition };
         CompiledSearch Compile(TransformationAggregateCondition condition) => SearchCompiler.Compile(Query(condition), context);
+        var starter = new MorphicGroveCard(new("CARD", "STRIKE_IRONCLAD"), "IRONCLAD", "Attack", "Basic", 0, 1, true, true, null);
+        var offered = starter with { CardKey = Common, Rarity = "Common" };
+        TransformationAggregateCondition MixedEvents(bool closedPool, params string[] sources) =>
+            large with
+            {
+                Symbiote = true,
+                EventScenario = new MorphicGroveScenario(authority, new("test", closedPool, false, null),
+                    [new("basic:0", starter, [offered])]),
+                ResultRequirements = [new(sources, Predicate.ContainsMultiset, 0, [Rare])]
+            };
+        Func<ulong, List<Output>?>? PrepareEventCheck(TransformationAggregateCondition c)
+        {
+            var compiled = Compile(c);
+            var model = new SearchModel(compiled, CompiledSearchEvaluationProjector.Project(compiled).Evaluation,
+                CombatRewardRoutePolicyContract.None, compiled.SemanticFingerprint);
+            return TransformationAggregateValidator.PrepareIndependentEventCheck(model);
+        }
+        var knownMiss = PrepareEventCheck(MixedEvents(true, "E.SYMBIOTE"));
+        var unknownEvent = PrepareEventCheck(MixedEvents(false, "E.SYMBIOTE"));
+        Check(knownMiss is not null && knownMiss(1) is null, "an independent known event miss rejects every Ancient witness");
+        Check(unknownEvent is not null && unknownEvent(1) is [{ Card: null, Rare: null }],
+            "an unresolved event remains available for the full mixed replay");
+        Check(PrepareEventCheck(MixedEvents(true, "E.SYMBIOTE", Pandora)) is null,
+            "a jointly scoped card may still come from the Ancient");
+
+
         var json = SearchPresetStore.CreateJsonOptions();
         var original = Compile(combined);
         void Reject(TransformationResultRequirement requirement, string issue)

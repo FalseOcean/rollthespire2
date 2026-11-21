@@ -7,10 +7,16 @@ internal sealed record ModernCapsuleGpuPlan(uint[] Metadata, GpuNumericalVariant
     bool UsesTrackedRanks, bool HasBones, bool NeedsPositiveOffer)
 {
     internal bool UsesShopFirstDraw { get; init; }
+    internal bool CapsuleOnly { get; init; }
+    internal bool IsDirectSingleDraw => !HasBones && Metadata[7] == 1;
+    internal bool IsDirectSingleTarget => IsDirectSingleDraw && UsesTrackedRanks &&
+        Metadata[30] + Metadata[32] == 1 && Metadata[34] == 0 && Metadata[36] == 0;
     internal const string ShopFirstDrawRevision = ".ShopFirstDraw.20261119.v1";
 
     internal ModernCapsuleGpuPlan WithOrdinarySequence(RelicFamilyPlan sequence)
     {
+        if (sequence.Predicates.Length == 0 && sequence.ShopPredicates.Length == 0)
+            return this with { CapsuleOnly = true };
         if (string.Equals(Environment.GetEnvironmentVariable("RT2_R_CAPSULE_SHOP_FIRST"), "off",
                 StringComparison.OrdinalIgnoreCase) || sequence.AlwaysReject || sequence.Predicates.Length != 0 ||
             sequence.ShopPredicates is not [{ Count: 1, TargetIds: [var target] }] || target == ushort.MaxValue)
@@ -29,6 +35,10 @@ internal sealed record ModernCapsuleGpuPlan(uint[] Metadata, GpuNumericalVariant
     internal string Revision(bool compact) => "R.Relic.Gpu.ModernCapsuleHeads.20261114.v1" +
         (UsesTrackedRanks ? ".TrackedRanks" : "") +
         (UsesShopFirstDraw ? ShopFirstDrawRevision : "") +
+        (CapsuleOnly ? ".CapsuleOnly.20261121.v1" : "") +
+        (IsDirectSingleDraw ? ".DirectSingleDraw.20261121.v1" : "") +
+        (IsDirectSingleTarget ? ".SingleTarget" : "") +
+        (NeedsPositiveOffer ? ".PositiveOfferPositions.20261121.v1" : "") +
         (NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne" : ".NativeFloat64") +
         (compact ? ".CompactAbi1" : ".DenseCarry8");
 
@@ -58,7 +68,9 @@ internal sealed record ModernCapsuleGpuPlan(uint[] Metadata, GpuNumericalVariant
         string flags = "#define MC_META_BINDING 13\n#define MC_CHILD_INDEX(bound) mc_next_int(bound)\n" +
             "#define MC_COMPANION_INDEX(bound) mc_next_int(bound)\n#define MC_COMPANION_WORD() next_u64()\n" +
             "#define MC_MAX_LANE " + laneLength + "\n#define MC_TRACKED " + (UsesTrackedRanks ? "1" : "0") +
-            "\n#define MC_BONES " + (HasBones ? "1" : "0") + "\n#define MC_POSITIVE " + (NeedsPositiveOffer ? "1" : "0") + "\n";
+            "\n#define MC_BONES " + (HasBones ? "1" : "0") + "\n#define MC_POSITIVE " + (NeedsPositiveOffer ? "1" : "0") +
+            "\n#define MC_DIRECT_SINGLE " + (IsDirectSingleDraw ? "1" : "0") +
+            "\n#define MC_DIRECT_TARGET " + (IsDirectSingleTarget ? "1" : "0") + "\n";
         string functions = flags + numerics + "\n" +
             FamilyGpuComputeUtility.LoadEmbeddedShader("ModernCapsuleRelic.glsl");
         string source = RelicFamilyGpuExecutor.ShaderSource(false, localStateCapacity: localStateCapacity, childShuffle: true);
@@ -72,9 +84,9 @@ internal sealed record ModernCapsuleGpuPlan(uint[] Metadata, GpuNumericalVariant
             "    if (mc_matches(root)) append_output(logical);", "R.ModernCapsule");
         const string begin = "    rng_initialize(root + make_u64(0xda243e80u, 0x1a8a7b60u));";
         source = GpuIntegerNumerics.ReplaceUnique(source, begin,
-            "    if (plan_meta.values[3u] != 0u || plan_meta.values[4u] != 0u) {\n" + begin, "R.ModernCapsule");
+            (CapsuleOnly ? "#if 0\n" : "    if (plan_meta.values[3u] != 0u || plan_meta.values[4u] != 0u) {\n") + begin, "R.ModernCapsule");
         source = GpuIntegerNumerics.ReplaceUnique(source, "    if (mc_matches(root)) append_output(logical);",
-            "    }\n    if (mc_matches(root)) append_output(logical);", "R.ModernCapsule");
+            (CapsuleOnly ? "#endif\n" : "    }\n") + "    if (mc_matches(root)) append_output(logical);", "R.ModernCapsule");
         if (integer) return GpuIntegerNumerics.RequireNoFloat64(source, "R.ModernCapsule");
         return source.Replace("#version 450", "#version 450\n#extension GL_EXT_shader_explicit_arithmetic_types_float64 : require",
             StringComparison.Ordinal);

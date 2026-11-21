@@ -13,6 +13,7 @@ namespace RolltheSpire2.Ui.Workspace;
 internal sealed partial class SearchWorkspace
 {
     internal const int ResultsPerQuery = 30;
+    internal const int MaximumQueryHistoryLimit = 999;
     // Current-process display may exceed the disk quota when the search target does.
     private double _historyRunElapsed;
     internal string QueryHistoryIssue { get; private set; } = "";
@@ -77,7 +78,7 @@ internal sealed partial class SearchWorkspace
 
     internal void SetQueryHistoryLimit(int count)
     {
-        _preferences.QueryHistoryLimit = Math.Clamp(count, 1, 300);
+        _preferences.QueryHistoryLimit = Math.Clamp(count, 1, MaximumQueryHistoryLimit);
         TrimQueryHistory(); MarkPreferencesDirty(); FlushPreferences(); FlushWorkspace();
     }
 
@@ -181,7 +182,7 @@ internal sealed partial class SearchWorkspace
 
     private void NormalizeQueryHistory()
     {
-        _preferences.QueryHistoryLimit = Math.Clamp(_preferences.QueryHistoryLimit, 1, 300);
+        _preferences.QueryHistoryLimit = Math.Clamp(_preferences.QueryHistoryLimit, 1, MaximumQueryHistoryLimit);
         _workspace.QueryHistory ??= [];
         _workspace.LegacyPresetQueryKeys ??= [];
         _workspace.LegacyQueryAliases ??= [];

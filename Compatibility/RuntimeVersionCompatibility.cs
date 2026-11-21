@@ -17,8 +17,9 @@ public enum RuntimeVersionSupportKind
 /// <summary>
 /// One exact game-version compatibility decision. GameVersionIdentity identifies
 /// the detected official build; ProfileId selects the current runtime adapter;
-/// SemanticProfileId selects RNG/generation semantics; Confidence says whether
-/// that mapping itself has been audited. Those dimensions must not be conflated.
+/// SemanticProfileId selects RNG/generation semantics. ReferenceVersion is the
+/// source of those rules. RulesAdaptedThroughVersion names them for players by
+/// the latest game release to which this rule set has been adapted.
 /// </summary>
 public sealed record RuntimeVersionResolution(
     GameVersionIdentity GameVersionIdentity,
@@ -31,6 +32,9 @@ public sealed record RuntimeVersionResolution(
     string ReferenceVersion,
     string EvidenceCode)
 {
+    public string RulesAdaptedThroughVersion { get; init; } = string.Empty;
+    public bool IsReleaseSupported { get; init; }
+
     public bool IsAuditedExact => SupportKind == RuntimeVersionSupportKind.AuditedExact;
     public bool IsAcceptedCompatible => SupportKind == RuntimeVersionSupportKind.AcceptedCompatible;
     public bool IsAuditedCompatible => Confidence == CompatibilityConfidence.AuditedCompatible;
@@ -145,17 +149,46 @@ public static class RuntimeVersionCompatibility
     public const string Beta111Version = "0.111.0";
     public const string Stable111Version = "0.111.1";
     public const string Beta113Version = "0.113.0";
+    public const string SupportedStableVersion = Stable111Version;
+    public const string SupportedBetaVersion = "0.113.1";
 
     public const string LatestAuditedVersion = Beta111Version;
-    public const string LatestProductionCompatibleVersion = Stable111Version;
+    public const string LatestProductionCompatibleVersion = SupportedBetaVersion;
     public const string LatestSourceAuditedVersion = Beta111Version;
     public const string LatestSemanticProfileBaseVersion = Beta110Version;
     public const string LatestKnownProfileVersion = Beta113Version;
 
-    // Newer unknown builds inherit the newest known rule set that predates them.
-    // This does not upgrade compatibility confidence or the verified baseline.
-    private static readonly string[] ProvisionalRuleReferences =
-        [LatestKnownProfileVersion, Beta111Version];
+    // Newest rule origin first. A patch can extend a release line without
+    // introducing new mechanics. Keep the evidence for the original build.
+    private static readonly RuntimeVersionResolution[] MaintainedRuleReferences =
+    [
+        new(new(Beta113Version), RuntimeProfileId.Beta111, RngSemanticProfileId.Modern113,
+            CompatibilityConfidence.ProvisionalUnverified, CompatibilityDomainMask.None,
+            RuntimeVersionSupportKind.ProvisionalVersionedRules, Beta113Version, Beta113Version,
+            "provisional-versioned-rng:" + Beta113Version)
+        { RulesAdaptedThroughVersion = SupportedBetaVersion },
+        new(new(Beta111Version), RuntimeProfileId.Beta111, RngSemanticProfileId.Modern110,
+            CompatibilityConfidence.AuditedCompatible, CompatibilityDomainMask.None,
+            RuntimeVersionSupportKind.AcceptedCompatible, Beta111Version, Beta111Version,
+            "semantic-compatible-patch:source-audited+compile-load+authority-smoke:" + Beta111Version)
+        { RulesAdaptedThroughVersion = SupportedStableVersion }
+    ];
+    private static readonly RuntimeVersionResolution[] SupportedReleases =
+        Array.ConvertAll(MaintainedRuleReferences, AdaptedRelease);
+
+    internal static RuntimeVersionResolution AdaptedRelease(RuntimeVersionResolution rules)
+    {
+        string target = rules.RulesAdaptedThroughVersion;
+        return rules with
+        {
+            GameVersionIdentity = new(target),
+            DetectedVersion = target,
+            IsReleaseSupported = true,
+            Confidence = CompatibilityConfidence.AuditedCompatible,
+            SupportKind = RuntimeVersionSupportKind.AcceptedCompatible,
+            EvidenceCode = $"release-adapted:{target}->rules:{rules.ReferenceVersion}:{rules.SemanticProfileId}"
+        };
+    }
 
     public static bool IsStable107(string? normalizedGameVersion) =>
         string.Equals(normalizedGameVersion, Stable107Version, StringComparison.Ordinal);
@@ -211,54 +244,28 @@ public static class RuntimeVersionCompatibility
                 RuntimeVersionSupportKind.AuditedExact,
                 normalized,
                 Beta110Version,
-                "audited-exact:" + Beta110Version);
+                "audited-exact:" + Beta110Version)
+            { RulesAdaptedThroughVersion = Beta110Version };
         }
 
-        if (UsesAccepted111Rules(normalized))
-        {
-            return new RuntimeVersionResolution(
-                identity,
-                RuntimeProfileId.Beta111,
-                RngSemanticProfileId.Modern110,
-                CompatibilityConfidence.AuditedCompatible,
-                CompatibilityDomainMask.None,
-                RuntimeVersionSupportKind.AcceptedCompatible,
-                normalized,
-                Beta111Version,
-                normalized == Stable111Version
-                    ? "stable-release-inherits-tested-rules:" + Stable111Version + "->" + Beta111Version
-                    : "semantic-compatible-patch:source-audited+compile-load+authority-smoke:" + Beta111Version);
-        }
-
-        if (string.Equals(normalized, Beta113Version, StringComparison.Ordinal))
-        {
-            return new RuntimeVersionResolution(
-                identity,
-                RuntimeProfileId.Beta111,
-                RngSemanticProfileId.Modern113,
-                CompatibilityConfidence.ProvisionalUnverified,
-                CompatibilityDomainMask.None,
-                RuntimeVersionSupportKind.ProvisionalVersionedRules,
-                normalized,
-                Beta113Version,
-                "provisional-versioned-rng:" + Beta113Version);
-        }
+        foreach (var release in SupportedReleases)
+            if (normalized == release.DetectedVersion) return release;
+        foreach (var rules in MaintainedRuleReferences)
+            if (normalized == rules.ReferenceVersion) return rules;
 
         if (TryParseSemanticVersion(normalized, out Version detected))
         {
-            foreach (string referenceVersion in ProvisionalRuleReferences)
+            foreach (var rules in MaintainedRuleReferences)
             {
-                if (!TryParseSemanticVersion(referenceVersion, out Version reference) || detected <= reference)
+                if (!TryParseSemanticVersion(rules.ReferenceVersion, out Version reference) || detected <= reference)
                     continue;
-                RuntimeVersionResolution known = Resolve(referenceVersion);
-                return known with
+                return rules with
                 {
                     GameVersionIdentity = identity,
                     Confidence = CompatibilityConfidence.ProvisionalUnverified,
                     SupportKind = RuntimeVersionSupportKind.LatestKnownFallback,
                     DetectedVersion = normalized,
-                    ReferenceVersion = referenceVersion,
-                    EvidenceCode = $"provisional-latest-known-semantic-reuse:{normalized}->{referenceVersion};semantic={known.SemanticProfileId}"
+                    EvidenceCode = $"provisional-latest-known-semantic-reuse:{normalized}->{rules.ReferenceVersion};semantic={rules.SemanticProfileId}"
                 };
             }
         }

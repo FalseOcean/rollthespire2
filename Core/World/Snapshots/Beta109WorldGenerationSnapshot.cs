@@ -118,7 +118,10 @@ public sealed record Beta109UpFrontPrefixSnapshot(
 public sealed record Beta109RelicBucketEntrySnapshot(
     ModelKey RelicKey,
     bool IsAllowedInShops,
-    bool ShopEligibilityExact);
+    bool ShopEligibilityExact)
+{
+    public bool UnmodeledRunEligibility { get; init; }
+}
 
 public sealed record Beta109RelicBucketSnapshot(
     string BucketId,
@@ -169,6 +172,10 @@ public sealed record Beta109EventCatalogAuthoritySnapshot(
     bool EpochFilterOrderExact,
     string EvidenceCode)
 {
+    // Applied to the generated queue only when a surviving event remains.
+    // A null observation leaves the post-shuffle queue unresolved.
+    public IReadOnlyList<ModelKey>? LockedEventsAfterShuffle { get; init; } = [];
+
     public static Beta109EventCatalogAuthoritySnapshot Missing(string evidenceCode) => new(
         Array.Empty<ModelKey>(),
         false,
@@ -176,10 +183,13 @@ public sealed record Beta109EventCatalogAuthoritySnapshot(
         false,
         evidenceCode);
 
-    public bool EpochMembershipExact =>
+    public bool EpochMembershipExact => EpochFilterOrderExact && EpochsInFilterOrder.Count == 3 &&
+        EpochsInFilterOrder.All(epoch => epoch.MembershipExact);
+
+    public bool RequiredEpochMembershipExact =>
         EpochFilterOrderExact &&
         EpochsInFilterOrder.Count == 3 &&
-        EpochsInFilterOrder.All(epoch => epoch.MembershipExact);
+        EpochsInFilterOrder.All(epoch => epoch.MembershipExact || epoch.RevealFactExact && epoch.IsRevealed);
 
     public bool EpochRevealFactsExact =>
         EpochFilterOrderExact &&
@@ -193,7 +203,7 @@ public sealed record Beta109EventCatalogAuthoritySnapshot(
 
     public bool HasExactFilteringAuthority =>
         SharedRawOrderExact &&
-        EpochMembershipExact &&
+        RequiredEpochMembershipExact &&
         EpochRevealFactsExact;
 }
 
@@ -221,6 +231,8 @@ public sealed record Beta109ActGenerationSnapshot(
 {
     public IReadOnlyList<ModelKey> OrderedRawEvents { get; init; } = OrderedEvents;
     public IReadOnlyList<ModelKey> OrderedEligibleEvents { get; init; } = OrderedEvents;
+    public bool? UnlockedAncientOrderExact { get; init; }
+    public IReadOnlyList<ModelKey> AncientsWithUnknownGenerator { get; init; } = [];
     public bool RawEventCatalogOrderExact { get; init; }
     public bool EventEpochMembershipExact { get; init; }
     public bool EventEpochRevealFactsExact { get; init; }
@@ -233,7 +245,7 @@ public sealed record Beta109ActGenerationSnapshot(
         EligibleEventOrderExact;
 
     public IReadOnlyList<Beta109EncounterEntrySnapshot> WeakEncounters =>
-        OrderedGenerateAllEncounters.Where(item => item.RoomType == Beta109RoomType.Weak || item.IsWeak).ToArray();
+        OrderedGenerateAllEncounters.Where(item => item.RoomType == Beta109RoomType.Weak || item.RoomType == Beta109RoomType.Regular && item.IsWeak).ToArray();
 
     public IReadOnlyList<Beta109EncounterEntrySnapshot> RegularEncounters =>
         OrderedGenerateAllEncounters.Where(item => item.RoomType == Beta109RoomType.Regular && !item.IsWeak).ToArray();
@@ -245,10 +257,9 @@ public sealed record Beta109ActGenerationSnapshot(
         OrderedGenerateAllEncounters.Where(item => item.RoomType == Beta109RoomType.Boss)
             .Select(item => item.EncounterKey).ToArray();
 
-    public bool HasExactGenerationInputs =>
+    public bool HasExactEncounterInputs =>
         ActKey.IsValid &&
-        CatalogOrderExact &&
-        UnlockFilteringExact &&
+        (UnlockedAncientOrderExact.HasValue || CatalogOrderExact) &&
         RoomShapeExact &&
         GenerateAllEncountersOrderExact &&
         EncounterClassificationExact &&
@@ -259,12 +270,10 @@ public sealed record Beta109ActGenerationSnapshot(
         EncounterRetryShapeExact &&
         EncounterCatalogOfficialVanilla &&
         EliteEncounterSlots == 15 &&
-        OrderedEvents is not null &&
-        WeakEncounters.Count > 0 &&
-        RegularEncounters.Count > 0 &&
-        EliteEncounters.Count > 0 &&
-        Bosses.Count > 0 &&
-        OrderedAncients.Count > 0;
+        OrderedGenerateAllEncounters is not null;
+
+    public bool HasExactGenerationInputs => HasExactEncounterInputs && Bosses.Count > 0 &&
+        (UnlockedAncientOrderExact ?? UnlockFilteringExact) && OrderedAncients is not null;
 }
 
 public sealed record Beta109ActSelectionCandidateSnapshot(
@@ -336,6 +345,14 @@ public sealed record Beta109AncientOptionCatalogSnapshot(
         .ToArray();
 }
 
+public sealed record Beta109PaelRelicBinding(string TypeName, ModelKey Key, bool StandardEligibility);
+
+public sealed record Beta109AncientRuleObservation(
+    IReadOnlyList<Beta109PaelRelicBinding> PaelRelics,
+    IReadOnlyList<ModelKey> SharedAncientsWithUnknownGenerator,
+    IReadOnlyList<string> PatchedAncientGenerators,
+    bool StandardOptionWrapper);
+
 public sealed record Beta109AncientEventContextSnapshot(
     int Act,
     ModelKey AncientKey,
@@ -355,6 +372,8 @@ public sealed record Beta109AncientEventContextSnapshot(
     Beta109AncientOptionCatalogSnapshot? Catalog,
     string ContextFingerprint)
 {
+    public string OptionReplayAssumption { get; init; } = string.Empty;
+    public bool KnownGeneratorWithoutModifiers { get; init; }
     public string RuntimeTypeName { get; init; } = string.Empty;
     public bool UnlockedCharacterSourceOrderExact { get; init; }
     public bool CandidateFromSharedAncientAllocation { get; init; }
@@ -437,9 +456,11 @@ public sealed record Beta109WorldGenerationSnapshot(
     public bool HasExactPartyRoster => GameMode == WorldGameMode.Multiplayer && IsMultiplayer &&
         PlayerCount >= 2 && LobbyPlayers.Count == PlayerCount &&
         LobbyPlayers.Select((p, slot) => p.Exact && !p.IsRandomCharacter && p.Slot == slot).All(x => x);
-    public bool HasExactPartyRelicBags => HasExactPartyRoster && SharedRelicBuckets.Count > 0 &&
+    public bool? CapturedPartyRelicBagSourcesExact { get; init; }
+    public bool HasExactPartyRelicBags => HasExactPartyRoster &&
+        (CapturedPartyRelicBagSourcesExact ?? (SharedRelicBuckets.Count > 0 && PartyRelicBuckets.All(b => b.Count > 0))) &&
         SharedRelicBuckets.All(b => b.OrderExact) && PartyRelicBuckets.Count == PlayerCount &&
-        PartyRelicBuckets.All(b => b.Count > 0 && b.All(r => r.OrderExact));
+        PartyRelicBuckets.All(b => b.All(r => r.OrderExact));
     public bool HasExactFixedParty => HasExactPartyRelicBags && PartyBossDiscoveryExact;
     public bool RequestedGameModeExact { get; init; }
     public string GameModeEvidenceCode { get; init; } = string.Empty;
@@ -453,8 +474,23 @@ public sealed record Beta109WorldGenerationSnapshot(
     /// This is intentionally independent from Character provenance: a Mod Character
     /// does not by itself imply custom ActModel.GenerateRooms behavior.
     /// </summary>
+    public IReadOnlyList<int>? SharedAncientReferenceIds { get; init; }
+    public bool HasUnambiguousSharedAncientAllocation => SharedAncientReferenceIds is { } ids
+        ? ids.Count == SharedAncients.Count && ids.All(id => id >= 0) &&
+          ids.Select((id, i) => (id, Key: SharedAncients[i])).GroupBy(row => row.id)
+              .All(group => group.Select(row => row.Key).Distinct().Count() == 1)
+        : SharedAncients.Distinct().Count() == SharedAncients.Count;
+    public Beta109AncientRuleObservation? AncientRules { get; init; }
     public bool WorldGenerationHooksExact { get; init; }
+    public string EventSequenceReplayAssumption { get; init; } = string.Empty;
+    public string RoomReplayAssumption { get; init; } = string.Empty;
+    public bool AppliedReplayAssumptions { get; init; }
+    public string InitialRelicReplayAssumption { get; init; } = string.Empty;
+    public int? ObservedInitialRelicShuffleCount { get; init; }
     public bool RelicRarityAuthorityExact { get; init; }
+    // Each actually allocated bucket consumes one child seed on Modern113.
+    // Reading every rarity can establish this count even when a model ID is unavailable.
+    public int? InitialRelicShuffleCount { get; init; }
     public bool RelicShopEligibilityAuthorityExact { get; init; }
     public bool PlayerRelicPoolCompositionExact { get; init; }
     public string RelicAuthorityEvidenceCode { get; init; } = string.Empty;
@@ -478,6 +514,19 @@ public sealed record Beta109WorldGenerationSnapshot(
         }
     }
 
+    public bool HasCountedChildRelicShuffles =>
+        !IsMultiplayer && RngSemantics == RngSemanticProfileId.Modern113 && InitialRelicShuffleCount is >= 0;
+
+    public bool CanReplayInitialRelicDraws => HasCountedChildRelicShuffles ||
+        RelicInitializationExact && SharedRelicPoolOrderExact && CharacterRelicPoolOrderExact &&
+        RelicRarityAuthorityExact && PlayerRelicPoolCompositionExact &&
+        SharedRelicBuckets.All(bucket => bucket.OrderExact) && PlayerRelicBuckets.All(bucket => bucket.OrderExact) &&
+        (!IsMultiplayer || HasExactFixedParty);
+
+    public bool CanAdvanceEventShuffle(Beta109ActGenerationSnapshot act) =>
+        RngSemantics == RngSemanticProfileId.Modern113 ||
+        EventAuthority.HasExactFilteringAuthority && act.EventRngConsumptionExact;
+
     public bool HasExactUpFrontPrefix =>
         UpFrontPrefix.PriorInputsExact &&
         (UpFrontPrefix.Kind switch
@@ -487,15 +536,7 @@ public sealed record Beta109WorldGenerationSnapshot(
                 UpFrontPrefix.Checkpoint is not null,
             Beta109UpFrontPrefixAuthorityKind.ReplayFromRunStart =>
                 UpFrontPrefix.Origin == Beta109UpFrontReplayOrigin.RunStartBeforeRelicInitialization &&
-                RelicInitializationExact &&
-                SharedRelicPoolOrderExact &&
-                CharacterRelicPoolOrderExact &&
-                RelicRarityAuthorityExact &&
-                PlayerRelicPoolCompositionExact &&
-                SharedRelicBuckets.Count > 0 &&
-                PlayerRelicBuckets.Count > 0 &&
-                SharedRelicBuckets.All(bucket => bucket.OrderExact) &&
-                PlayerRelicBuckets.All(bucket => bucket.OrderExact) && (!IsMultiplayer || HasExactFixedParty),
+                CanReplayInitialRelicDraws,
             _ => false
         });
 
@@ -506,7 +547,9 @@ public sealed record Beta109WorldGenerationSnapshot(
     /// selection from ActSelectionRoot and ActSelectionGroups for every Seed.
     /// Production prediction keeps its stricter selected-act authority.
     /// </summary>
-    public bool HasExactWorldFastPlanInputs =>
+    public bool HasExactWorldFastPlanInputs => CanPrepareWorldFastThrough(int.MaxValue);
+
+    public bool CanPrepareWorldFastThrough(int lastAct) =>
         RuntimeProfilePolicies.IsModernCore(Profile) &&
         DirectSourceAudited &&
         ActSelectionRootExact &&
@@ -521,17 +564,15 @@ public sealed record Beta109WorldGenerationSnapshot(
         ((GameMode == WorldGameMode.Singleplayer && !IsMultiplayer && PlayerCount == 1 && LobbyPlayers.Count == 1) ||
             HasExactFixedParty) &&
         LobbyPlayers.All(player => player.Exact && !player.IsRandomCharacter) &&
-        SharedEventCatalogExact &&
-        EventAuthority.HasExactFilteringAuthority &&
-        AllSharedAncientCatalogExact &&
-        SharedAncientCatalogExact &&
+        SharedAncientCatalogExact && HasUnambiguousSharedAncientAllocation &&
         UnlockFactsExact &&
         HasExactUpFrontPrefix &&
         OrderedActCatalog.Count > 0 &&
-        ActSelectionGroups
-            .SelectMany(group => group.EligibleActsInSourceOrder)
+        ActSelectionGroups.Where(group => group.Act <= lastAct)
+            .SelectMany(group => group.Act == 1 && Act1OverrideResolvedKey is { IsValid: true } first
+                ? new[] { first } : group.EligibleActsInSourceOrder)
             .Distinct(ModelKeyComparer.Instance)
-            .All(key => OrderedActCatalog.Any(act => act.ActKey == key && act.HasExactGenerationInputs)) &&
+            .All(key => OrderedActCatalog.Any(act => act.ActKey == key && act.HasExactGenerationInputs && CanAdvanceEventShuffle(act))) &&
         WorldGenerationHooksExact &&
         !string.IsNullOrWhiteSpace(CatalogFingerprint) &&
         !string.IsNullOrWhiteSpace(UnlockFingerprint) &&
@@ -552,7 +593,10 @@ public sealed record Beta109WorldGenerationSnapshot(
     /// reconstructs Act selection per seed before entering this independent leaf.
     /// </summary>
     public bool AllowsAncientOptionFastSearch(string ancientEntry) =>
-        HasExactWorldFastPlanInputs &&
+        RuntimeProfilePolicies.IsModernCore(Profile) && DirectSourceAudited && RunSeedRootExact &&
+        RunSeedHashKind == Beta109RunSeedHashKind.ModernXxHash64 && OldSeedBranchStatus == Beta109OldSeedBranchStatus.NewSeedHashed &&
+        ModeFactsExact && (GameMode is WorldGameMode.Singleplayer or WorldGameMode.Multiplayer) &&
+        LobbyPlayers.Count == PlayerCount && LobbyPlayers.All(p => p.Exact && !p.IsRandomCharacter) &&
         HasVerifiedFixturePrefix("ancient-option:" + NormalizeFixtureEntry(ancientEntry) + ":");
 
     public bool HasExactReplayInputs =>
@@ -571,14 +615,10 @@ public sealed record Beta109WorldGenerationSnapshot(
         Act1OverrideExact &&
         ((GameMode == WorldGameMode.Singleplayer && !IsMultiplayer && PlayerCount == 1 && LobbyPlayers.Count == 1) || HasExactFixedParty) &&
         LobbyPlayers.All(player => player.Exact && !player.IsRandomCharacter) &&
-        SharedEventCatalogExact &&
-        EventAuthority.HasExactFilteringAuthority &&
-        AllSharedAncientCatalogExact &&
-        SharedAncientCatalogExact &&
+        SharedAncientCatalogExact && HasUnambiguousSharedAncientAllocation &&
         UnlockFactsExact &&
         HasExactUpFrontPrefix &&
         OrderedActCatalog.Count > 0 &&
-        SelectedActs.All(key => OrderedActCatalog.Any(act => act.ActKey == key && act.HasExactGenerationInputs)) &&
         WorldGenerationHooksExact &&
         !string.IsNullOrWhiteSpace(CatalogFingerprint) &&
         !string.IsNullOrWhiteSpace(UnlockFingerprint) &&
@@ -625,7 +665,8 @@ public sealed record Beta109WorldGenerationSnapshot(
     /// generator-specific and is queried through AllowsAncientOptionProductionExact.
     /// </summary>
     public bool AllowsProductionExact =>
-        AllowsBossProductionExact && AllowsAncientIdentityProductionExact;
+        AllowsBossProductionExact && AllowsAncientIdentityProductionExact && SelectedActs.All(key =>
+            OrderedActCatalog.Any(act => act.ActKey == key && act.HasExactGenerationInputs && CanAdvanceEventShuffle(act)));
 
     private bool HasVerifiedFixturePrefix(string prefix) =>
         (FixtureValidationStatus is Beta109FixtureValidationStatus.VerifiedRealGame or

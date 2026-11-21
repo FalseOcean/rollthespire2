@@ -34,6 +34,10 @@ internal sealed partial class SearchWorkspaceRuntime(SearchWorkspace store)
         internal double ElapsedSeconds;
         internal Queue<SearchCandidate> Inbox { get; } = new();
         internal bool Wrapped;
+        internal long ProgressRequestedAt;
+        internal long LastOperationalCheckpoint = System.Environment.TickCount64;
+        internal string StartupSessionId = "";
+        internal SearchFeedbackAttempt? Feedback;
     }
     private sealed record Cleanup(Task Task, string HistoryId, string BatchId, SearchProgressSnapshot? Progress);
     private Execution? _execution;
@@ -47,6 +51,7 @@ internal sealed partial class SearchWorkspaceRuntime(SearchWorkspace store)
     private SearchDiagnosticSummarySnapshot? _diagnostics;
     private ManualValidationReceipt? _receipt;
     internal bool Receiving => _execution is not null;
+    internal bool IsReceivingSearchFeedback(SearchFeedbackAttempt attempt) => ReferenceEquals(_execution?.Feedback, attempt);
     internal bool HasSearchInFlight => Receiving || HasManualCandidateValidation;
     internal bool IsPolling => _tree is not null;
     internal int CleanupCount => _cleanup.Count;
@@ -57,7 +62,7 @@ internal sealed partial class SearchWorkspaceRuntime(SearchWorkspace store)
         ReferenceEquals(_lastBatch, store.ResultBatch) ? _diagnostics : null, _receiptRevision, _receipt);
 
     internal SearchFeasibilityResult Start(WorkbenchSearchDraft draft, ModRuntimeSnapshot runtime,
-        int target, int workers, SceneTree? tree)
+        int target, int workers, SceneTree? tree, long requestedAt = 0)
     {
         if (HasSearchInFlight) throw new InvalidOperationException("SearchAlreadyRunning");
         var compiled = draft.Compile(runtime, out _);
@@ -66,7 +71,7 @@ internal sealed partial class SearchWorkspaceRuntime(SearchWorkspace store)
         store.InitializeWorkbenchCursor();
         var execution = SearchPreparationCompiler.Compile(compiled,
             new(store.CurrentNextCursorSeed, long.MaxValue, target, workers, SkipExactValidation: store.Preferences.SkipExactValidation,
-                ManualFamilyOrder: draft.ManualFamilyOrder, MapLossy: store.MapLossyPreferences));
+                ManualFamilyOrder: draft.ManualFamilyOrder, MapLossy: store.MapLossyPreferences), feasibility);
         if (!execution.Success || execution.Plan is null) throw new InvalidOperationException(execution.Issue);
         Auxiliary(() => store.EnsureEnvironment(SearchEnvironmentSignatureBuilder.Capture(runtime)), "EnvironmentSave");
         Auxiliary(() => store.SaveWorkbench(draft), "DraftSave");
@@ -74,26 +79,37 @@ internal sealed partial class SearchWorkspaceRuntime(SearchWorkspace store)
         Auxiliary(() => context = SeedLibraryContextCapture.ForSearch(draft, runtime), "ResultContext");
         var prepared = store.PrepareSearchStart(draft, execution.Plan, context);
         var start = prepared.Batch.Start!;
+        RuntimeLog.TryBackgroundInfo($"searchBackendPreference={store.Preferences.SearchMode};requestedWorkers={start.Plan.WorkerCount}");
         var session = FamilyExecutionCoordinator.Start(start.Plan, queueCapacity: 64,
-            gpuAvailable: store.Preferences.SearchMode == "CPU" ? false : null, continuation: start.Resolution.Continuation);
+            gpuAvailable: store.Preferences.SearchMode == "CPU" ? false : null, continuation: start.Resolution.Continuation,
+            enableGpuPowerDiagnostics: store.Preferences.EnableGpuPowerDiagnostics);
         // The session belongs to this owner before any optional publication,
         // diagnostics, save or frame binding can fail.
-        InstallStartedSession(session, start.Plan.Model.CompiledSearch.SemanticFingerprint, prepared, tree);
+        InstallStartedSession(session, start.Plan.Model.CompiledSearch.SemanticFingerprint, prepared, tree, requestedAt);
         store.ResolvePresentationFailure("QueryAdmission");
         return feasibility;
     }
 
     internal void InstallStartedSession(IProductionSearchSession session, string fingerprint,
-        SearchWorkspace.PreparedSearchResultWorkspace? prepared = null, SceneTree? tree = null)
+        SearchWorkspace.PreparedSearchResultWorkspace? prepared = null, SceneTree? tree = null, long requestedAt = 0)
     {
         if (HasSearchInFlight) throw new InvalidOperationException("SearchAlreadyRunning");
         _execution = new(session, fingerprint, prepared?.Batch ?? store.ResultBatch,
-            prepared?.History ?? store.Workspace.QueryHistory.FirstOrDefault(history => history.Id == store.Workspace.ActiveHistoryId));
+            prepared?.History ?? store.Workspace.QueryHistory.FirstOrDefault(history => history.Id == store.Workspace.ActiveHistoryId))
+        { ProgressRequestedAt = requestedAt, StartupSessionId = RuntimeLog.SessionId };
         _runRevision++; _diagnostics = null; _eta = null;
         _lastBatch = _execution.Batch;
         if (prepared is not null) Auxiliary(() => store.BindPreparedResultWorkspace(prepared), "StartReceiverInstall");
+        if (_execution.Batch?.Start is { } source)
+            Auxiliary(() =>
+            {
+                var attempt = SearchFeedbackAttempt.Start(source, _execution.StartupSessionId);
+                store.InstallSearchFeedback(attempt);
+                _execution.Feedback = attempt;
+            }, "SearchFeedbackStart");
         if (session is ProductionSearchSession production) _eta = production.EtaProjection;
         Auxiliary(() => _execution.Progress = session.GetProgress(), "StartProgress");
+        ObserveFirstScan(_execution);
         Auxiliary(() => Bind(tree), "StartFrameBinding");
     }
 
@@ -171,12 +187,15 @@ internal sealed partial class SearchWorkspaceRuntime(SearchWorkspace store)
                 store.AppendResult(candidate, active.Fingerprint, active.History, active.Batch);
                 session.AcknowledgeCandidate(candidate.Seed);
                 active.Inbox.Dequeue();
+                if (active.Feedback is { } feedback)
+                    Auxiliary(() => feedback.Receive(candidate), "SearchFeedbackCandidate", candidate.Seed);
             }
         }
         Drain();
         bool complete = session.Completion.IsCompleted;
         if (complete) Drain();
         Checkpoint(active, complete);
+        ObserveFirstScan(active);
         if (complete) Auxiliary(() => _diagnostics = session.GetDiagnosticSummary(), "FinalDiagnostics");
         if (!complete) return;
         _execution = null;
@@ -188,18 +207,44 @@ internal sealed partial class SearchWorkspaceRuntime(SearchWorkspace store)
             active.Batch?.Id ?? store.Workspace.ResultBatchId, active.Progress));
     }
 
+    private static void ObserveFirstScan(Execution active)
+    {
+        if (active.ProgressRequestedAt == 0 || active.Progress is not { ScannedCount: > 0 } progress) return;
+        using var startupLog = RuntimeLog.SearchScope(active.StartupSessionId);
+        RuntimeLog.TryBackgroundInfo($"searchStartup=true;phase=FirstWorkbenchScanReceived;elapsedMs={Stopwatch.GetElapsedTime(active.ProgressRequestedAt).TotalMilliseconds:F4};scanned={progress.ScannedCount}");
+        active.ProgressRequestedAt = 0;
+    }
+
     private void Checkpoint(Execution active, bool complete)
     {
         var session = active.Session;
         var continuation = session.CaptureContinuation();
-        ulong next;
-        bool safe = continuation is not null ? (next = continuation.NextOrdinal) <= Beta110SeedCodec.SpaceSize : session.TryGetSafeNextOrdinal(out next);
-        bool wrap = safe && next == Beta110SeedCodec.SpaceSize && complete && !active.Wrapped;
+        // An outstanding delivery may hold back the durable continuation even
+        // after its batch was scanned. Seed coverage does not move that cursor.
+        ulong? scannedFrontier = session.TryGetSafeNextOrdinal(out ulong scanned) ? scanned : null;
+        ulong? next = continuation?.NextOrdinal ?? scannedFrontier;
+        bool wrap = next == Beta110SeedCodec.SpaceSize && complete && !active.Wrapped;
         var progress = session.GetProgress();
-        store.SaveCheckpoint(progress, continuation, safe ? next : null, wrap, active.History, active.Batch,
-            Math.Max(0, progress.ElapsedSeconds - active.ElapsedSeconds));
+        long now = System.Environment.TickCount64;
+        if (!complete && now - active.LastOperationalCheckpoint >= 30_000)
+        {
+            active.LastOperationalCheckpoint = now;
+            using var scope = RuntimeLog.SearchScope(active.StartupSessionId);
+            RuntimeLog.TryBackgroundInfo(
+                FormattableString.Invariant($"searchWorkbenchCheckpoint=true;elapsedSeconds={progress.ElapsedSeconds:F1};") +
+                $"state={progress.State};scanned={progress.ScannedCount};confirmed={progress.MatchCount};" +
+                $"unverified={progress.UnverifiedCandidateCount};pending={progress.PendingCandidateCount};" +
+                $"cancelRequested={progress.CancellationRequested};inbox={active.Inbox.Count};" +
+                $"plan={(session as ProductionSearchSession)?.ExecutionPlan.PlanId}");
+            OperationalFileLog.Flush();
+        }
+        store.SaveCheckpoint(progress, continuation, next <= Beta110SeedCodec.SpaceSize ? next : null, wrap, active.History, active.Batch,
+            Math.Max(0, progress.ElapsedSeconds - active.ElapsedSeconds), scannedFrontier);
         active.ElapsedSeconds = progress.ElapsedSeconds;
         active.Progress = progress;
+        if (active.Feedback is { } feedback)
+            Auxiliary(() => feedback.Checkpoint(progress, continuation, scannedFrontier,
+                (session as ProductionSearchSession)?.ExecutionPlan.PlanId), "SearchFeedbackCheckpoint");
         if (wrap) active.Wrapped = true;
     }
 

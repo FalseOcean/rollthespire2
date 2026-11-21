@@ -122,9 +122,14 @@ internal sealed class PrivateOrdinalBuffer : IDisposable
     private static FamilyCandidateSet DecodeOrderedAbi1(SearchBatch batch, int count, byte[] bytes)
     {
         if (bytes.Length != checked(count * sizeof(uint))) throw new InvalidDataException("PrivateOrdinal.PayloadLength");
-        ReadOnlySpan<uint> packed = FamilyGpuComputeUtility.UInt32Span(bytes);
-        var ordinals = new ulong[count];
-        for (int index = 0; index < count; index++) ordinals[index] = packed[index];
+        return FromGpuOrdinals(batch, FamilyGpuComputeUtility.UInt32Span(bytes));
+    }
+
+    // GPU atomic append order is unspecified, including the first few slots mirrored in a header.
+    internal static FamilyCandidateSet FromGpuOrdinals(SearchBatch batch, ReadOnlySpan<uint> packed)
+    {
+        var ordinals = new ulong[packed.Length];
+        for (int index = 0; index < packed.Length; index++) ordinals[index] = packed[index];
         Array.Sort(ordinals);
         return FamilyCandidateSet.FromSortedAbi1(batch, ordinals);
     }

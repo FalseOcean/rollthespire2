@@ -588,6 +588,22 @@ internal static class WorkbenchContractChecks
             CheckShopCombatAuthoringRanges(runtime, Check);
             CheckEditorStateRoundTrip(runtime, frame, store, directory, Check);
             frame.Refresh("zh", RolltheSpire2.Presentation.Localization.JsonUiTextProvider.CreateUi13("zh"));
+            var scene = ((Godot.SceneTree)Godot.Engine.GetMainLoop()).CurrentScene;
+            scene.AddChild(frame);
+            try
+            {
+                const string writeFailure = "Workspace checkpoint write failed";
+                store.RecordPresentationFailure(new IOException(writeFailure), "PersistenceWrite:search_workspace.json");
+                Call("UpdateDraftStatus");
+                var status = (Godot.Label)Field("_status");
+                Check(status.Text.Contains(writeFailure, StringComparison.Ordinal),
+                    "The idle editor displays the outstanding workspace write failure");
+                store.FlushWorkspace();
+                Call("UpdateDraftStatus");
+                Check(!status.Text.Contains(writeFailure, StringComparison.Ordinal),
+                    "The idle editor withdraws the recovered write failure without starting a search or changing pages");
+            }
+            finally { scene.RemoveChild(frame); }
             // Disclosure preserves selected builder parameters and committed predicates.
             {
                 string builderReturnDomain = (string)Field("_selectedDomain");

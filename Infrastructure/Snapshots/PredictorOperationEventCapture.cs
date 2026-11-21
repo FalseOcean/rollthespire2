@@ -17,6 +17,8 @@ using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Rewards;
 using MegaCrit.Sts2.Core.Rooms;
+using RolltheSpire2.Compatibility;
+using RolltheSpire2.Core.Events;
 using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.PredictorRuntime;
@@ -398,9 +400,12 @@ internal static class PredictorOperationEventCapture
             };
         if (ev.Id.Entry == "COLORFUL_PHILOSOPHERS")
         {
-            var pool = Captured<CardPoolModel>(Callback(option)?.Target)
-                ?? throw new InvalidOperationException("OperationColorfulPoolMissing");
-            key = ModelDb.AllCharacters.Single(c => c.CardPool.Id == pool.Id).Id.Entry;
+            var pool = Captured<CardPoolModel>(Callback(option)?.Target);
+            if (pool is null) return new(key, !option.IsLocked);
+            var poolKey = Key(pool);
+            var color = Beta111EventResultCatalog.ColorfulOrder(RngSemanticProfileId.Modern113)
+                .FirstOrDefault(candidate => Beta111EventResultCatalog.PoolForColor(candidate) == poolKey);
+            return new(color.IsValid ? color.Entry : key, !option.IsLocked) { OfferedCardPool = poolKey };
         }
         if (ev.Id.Entry == "DOLL_ROOM" && Captured<RelicModel>(Callback(option)?.Target) is { } doll)
             return new("DOLL_" + doll.Id.Entry, !option.IsLocked, OfferedRelic: Key(doll));

@@ -33,7 +33,7 @@ internal sealed class CapsuleRelicReplay
     internal bool Matches(ulong root)
     {
         var rng = new Beta110FastRng(unchecked(root + XxHash64.Hash("up_front"u8, 0)));
-        var lanes = new ModelKey[4][];
+        ModelKey[][] lanes = [[], [], [], []];
         // Adopt the runtime pool compiler and canonical shuffle/draw direction.
         // Ordinary and Capsule predicates both inspect these same initial lanes.
         for (int bucket = 0; bucket < Pool.BucketCount; bucket++)

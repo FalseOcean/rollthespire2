@@ -59,6 +59,9 @@ internal static partial class UiSurfaceChecks
         var phases = new List<object>();
         var allNativeCards = new HashSet<NCard>();
         var correctness = new List<object>();
+        var stageFaces = typeof(NeowOperationOverlay).GetProperty("StageCardFaces", flags);
+        var pendingFaces = typeof(NeowOperationOverlay).GetProperty("HasPendingCardFaces", flags);
+        var buildFaces = typeof(NeowOperationOverlay).GetMethod("BuildCardFaceBatch", flags);
         string playerBefore = JsonSerializer.Serialize(player.ToSerializable());
         string PreparedSignature() => JsonSerializer.Serialize(prepared.Select(item => new { item.Name, item.A, item.B }));
         string preparedBefore = PreparedSignature();
@@ -110,10 +113,33 @@ internal static partial class UiSurfaceChecks
         {
             if (view != null) hide();
             long displayStarted = now();
-            var construct = Measure(() => { view = new NeowOperationOverlay(); view.UseCardDisplays(reuse); });
+            var construct = Measure(() =>
+            {
+                view = new NeowOperationOverlay();
+                view.UseCardDisplays(reuse);
+                stageFaces?.SetValue(view, true);
+                view.Modulate = new Color(1, 1, 1, 0);
+            });
             var ready = Measure(() => { controller.AddChild(view!); Set("_view", view); });
             var build = Measure(() => view!.SetPreview(preview));
+            var batchTimes = new List<double>();
+            var batchBytes = new List<long>();
+            var frameSpans = new List<double>();
+            long frameStart = displayStarted;
+            while (pendingFaces?.GetValue(view) is true)
+            {
+                Require(view!.VisibleRegions.Count == 0, "partial cards remain invisible");
+                await root.ToSignal(root.GetTree(), SceneTree.SignalName.ProcessFrame);
+                frameSpans.Add(Stopwatch.GetElapsedTime(frameStart).TotalMilliseconds);
+                frameStart = now();
+                var batch = Measure(() => buildFaces!.Invoke(view, null));
+                batchTimes.Add(batch.Ms);
+                batchBytes.Add(batch.Bytes);
+            }
             var layout = Measure(position);
+            double wallThroughLayoutMs = Stopwatch.GetElapsedTime(displayStarted).TotalMilliseconds;
+            await root.ToSignal(root.GetTree(), SceneTree.SignalName.ProcessFrame);
+            frameSpans.Add(Stopwatch.GetElapsedTime(frameStart).TotalMilliseconds);
             rows.Add(new { name, constructMs = construct.Ms, constructBytes = construct.Bytes,
                 addToTreeMs = ready.Ms, addToTreeBytes = ready.Bytes,
                 setPreviewMs = build.Ms, setPreviewBytes = build.Bytes,
@@ -121,7 +147,9 @@ internal static partial class UiSurfaceChecks
                 nativeCreateMs = view!.NativeCardCreateMilliseconds, nativeReadyMs = view.NativeCardReadyMilliseconds,
                 view.NativeCardCount, nativeNodes = Descendants(view).OfType<NCard>().Count(),
                 nativeReused = view.NativeCardReuseCount, nativeCreated = view.NativeCardCount - view.NativeCardReuseCount,
-                totalNodes = Descendants(view).Count() });
+                totalNodes = Descendants(view).Count(), batchTimes, batchBytes, frameSpans,
+                maxSynchronousMs = new[] { construct.Ms + ready.Ms + build.Ms, batchTimes.DefaultIfEmpty().Max(), layout.Ms }.Max(),
+                wallThroughLayoutMs });
             await FrameSamples(name + "/show-subsequent", 12, true, displayStarted);
             Require(ReferenceEquals(typeof(NeowOperationOverlay).GetField("_preview", flags)!.GetValue(view), preview), "same prepared DTO");
             int expected = preview.Branches.SelectMany(b => b.Sections).SelectMany(s => s.CardGroups).Sum(g => g.Cards.Length);
@@ -206,6 +234,24 @@ internal static partial class UiSurfaceChecks
             await NativeCase("identity-changed", SingleGroup(cards[1], upgraded, basic), 2);
             await NativeCase("duplicate-count-increased", SingleGroup(basic, basic, basic, basic, basic), 1);
             await NativeCase("same-five-duplicates", SingleGroup(basic, basic, basic, basic, basic), 5);
+            if (stageFaces != null)
+            {
+                // Interrupt a staged rebuild after one frame. The abandoned
+                // overlay cannot publish or create the remaining native faces.
+                hide(); view = null;
+                var cancelled = new NeowOperationOverlay { Modulate = new Color(1, 1, 1, 0) };
+                controller.AddChild(cancelled);
+                stageFaces.SetValue(cancelled, true);
+                cancelled.SetPreview(prepared[1].A);
+                await root.ToSignal(root.GetTree(), SceneTree.SignalName.ProcessFrame);
+                buildFaces!.Invoke(cancelled, null);
+                Require(pendingFaces!.GetValue(cancelled) is true && cancelled.VisibleRegions.Count == 0,
+                    "a build can be cancelled while cards are pending and still invisible");
+                cancelled.QueueFree();
+                await FrameSamples("correctness/cancel-staged", 3, false);
+                Require(!GodotObject.IsInstanceValid(cancelled), "cancelled staged nodes and card preparation are released");
+                correctness.Add(new { name = "cancel-staged-cards-before-publication", passed = true });
+            }
             MegaCrit.Sts2.Core.Localization.LocManager.Instance.SetLanguage("eng");
             await NativeCase("language-changed-eng", SingleGroup(basic, basic, basic, basic, basic), 0);
             MegaCrit.Sts2.Core.Localization.LocManager.Instance.SetLanguage("zhs");

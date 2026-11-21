@@ -12,6 +12,8 @@ namespace RolltheSpire2.Core.Prediction;
 public sealed class SeedPredictionDocument
 {
     public PartySeedInformation? Party { get; init; }
+    public IReadOnlyDictionary<SeedPredictionDomainSelection, string> ModelAssumptions { get; init; } =
+        System.Collections.Immutable.ImmutableDictionary<SeedPredictionDomainSelection, string>.Empty;
     public required PredictionContext Context { get; init; }
     // Stable wire name and identifier values preserve existing evidence/readers.
     [System.Text.Json.Serialization.JsonPropertyName("AnalyzerId")]

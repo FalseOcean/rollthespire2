@@ -7,6 +7,7 @@ using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Rewards;
 using RolltheSpire2.Search.Contracts;
+using RolltheSpire2.Bootstrap;
 
 namespace RolltheSpire2.Search.Runtime;
 
@@ -27,6 +28,34 @@ internal sealed record ProductionExactSearchResult(
 /// </summary>
 internal static class ProductionExactSearchEvaluator
 {
+    internal static ProductionExactSearchResult EvaluateCandidate(SearchModel plan, TrustedRootHashInput input,
+        CancellationToken cancellationToken = default)
+    {
+        var strict = Evaluate(plan, input, cancellationToken);
+        if (strict.Evaluation.Disposition is not (SearchDisposition.Unknown or SearchDisposition.Unsupported))
+            return strict;
+        SearchReplayInputs? replay = null;
+        SearchReplayEstimate estimate;
+        try
+        {
+            replay = SearchReplayInputs.For(plan);
+            if (replay.Model is null) return strict;
+            var conditional = Evaluate(replay.Model, input, cancellationToken);
+            estimate = new(conditional.Evaluation.Disposition, replay.Assumptions,
+                conditional.Evaluation.FailureCode, conditional.Evaluation.MatchedRouteIds, conditional.Evaluation.Evidence);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException cancelled ||
+            !cancellationToken.IsCancellationRequested || cancelled.CancellationToken != cancellationToken)
+        {
+            string stage = replay is null ? "SearchReplayPreparation" : "SearchReplayEvaluation";
+            string issue = stage + "Failed:" + exception;
+            RuntimeLog.TryBackgroundWarning($"searchReplayFailed=true;stage={stage};seed={input.CanonicalSeed};" +
+                $"query={plan.CompiledSearch.SemanticFingerprint};causeJson=" + RuntimeLog.SafeJson(issue));
+            estimate = new(SearchDisposition.Unknown, replay?.Assumptions ?? "", issue, [], []);
+        }
+        return strict with { Evaluation = strict.Evaluation with { ReplayEstimate = estimate } };
+    }
+
     public static ProductionExactSearchResult Evaluate(
         SearchModel plan,
         TrustedRootHashInput input) => Evaluate(plan, input, CancellationToken.None);
@@ -259,8 +288,14 @@ internal static class ProductionExactSearchEvaluator
         SeedPredictionDomainSelection rewardDomains =
             SeedPredictionDomainSelection.Neow |
             SeedPredictionDomainSelection.NormalCombatRewards;
+        int legacyHorizon = plan.CompiledSearch.NormalizedQuery.LegacyCombatRewardConstraints
+            .Select(condition => condition.BattleOrdinal == 0 ? 3 : condition.BattleOrdinal)
+            .DefaultIfEmpty(1).Max();
         NormalCombatRewardProjectionRequest rewardProjectionRequest = BuildRewardProjectionRequest(plan) with
-        { BattleCount = Math.Max(plan.Evaluation.CombatCardExclusion?.BattleCount ?? 0, Math.Max(3, Math.Max(plan.Evaluation.CombatCardRewardSequence?.Count ?? 0, plan.Evaluation.CombatPotionRewardSequence?.Count ?? 0))) };
+        {
+            BattleCount = Math.Max(Math.Max(legacyHorizon, plan.Evaluation.CombatCardExclusion?.BattleCount ?? 0),
+                Math.Max(plan.Evaluation.CombatCardRewardSequence?.Count ?? 0, plan.Evaluation.CombatPotionRewardSequence?.Count ?? 0))
+        };
         if (!SeedPredictionRequest.TryCreateFromRootHash(
                 input,
                 character,
@@ -611,22 +646,9 @@ internal static class ProductionExactSearchEvaluator
         }
         if (includeWorld && Semantics.PartyInitialQuery.HasWorld(query))
         {
-            bool needsActs = query.VariantBossBranches.Count > 0;
-            bool needsBosses = RequiresPartyBosses(query);
-            if (needsActs && initial.ActIdentityPrecision != PredictionPrecision.Exact)
-                unresolved ??= SearchQueryEvaluation.Unknown("Party.SelectedActsNotExact");
-            else if (needsActs && query.VariantBossBranches.Any(b => initial.Acts.Count < b.Act))
-                unresolved ??= SearchQueryEvaluation.Unknown("Party.SelectedActMissing");
-            else if (needsActs && query.VariantBossBranches.GroupBy(b => b.Act).Any(g =>
-                initial.Acts.Count >= g.Key && !g.Any(b => b.VariantKey == initial.Acts[g.Key - 1])))
-                return SearchQueryEvaluation.NoMatch("Party.VariantParentRejected");
-            if (needsBosses && initial.BossStatus != Core.World.SeedDomainEvaluationStatus.Evaluated)
-                unresolved ??= initial.BossStatus == Core.World.SeedDomainEvaluationStatus.Unsupported
-                    ? SearchQueryEvaluation.Unsupported("Party.WorldProjectionIncomplete:" + initial.BossIssueCode)
-                    : SearchQueryEvaluation.Unknown("Party.WorldProjectionIncomplete:" + initial.BossIssueCode);
-            else if ((!needsActs || initial.ActIdentityPrecision == PredictionPrecision.Exact) &&
-                !Semantics.PartyInitialQuery.MatchesWorld(query, initial))
-                return SearchQueryEvaluation.NoMatch("Party.InitialWorldPredicate");
+            var world = Semantics.PartyInitialQuery.EvaluateWorld(query, initial);
+            if (world.Disposition == SearchDisposition.NoMatch) return world;
+            if (world.Disposition != SearchDisposition.Match) unresolved ??= world;
         }
         return unresolved ?? SearchQueryEvaluation.Match();
     }

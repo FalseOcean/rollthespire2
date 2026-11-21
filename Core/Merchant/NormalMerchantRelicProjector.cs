@@ -27,7 +27,7 @@ public static class NormalMerchantRelicProjector
             authority.PredictionGameMode != WorldGameMode.Singleplayer)
             return new([], "NormalMerchantRelicsRequiresSolo113");
 
-        var bags = BuildBags(initialSequences, authority);
+        var bags = BuildBags(initialSequences);
         var shops = new Xoshiro256StarStar(Beta111Profile.Instance.DeriveNamedStreamSeed(rootHash, "shops"));
         int calls = Beta111NormalMerchantShopsContinuation.For(true).Total;
         var merchants = new List<NormalMerchantRelics>(merchantCount);
@@ -36,16 +36,18 @@ public static class NormalMerchantRelicProjector
         {
             // Relic rarities are the first two calls. Later ordinals also
             // require the preceding successful inventory's consumption shape.
-            if (ordinal > 1 && authority.EffectAuthority?.MerchantInitialInventoryShapeExact != true)
-            {
-                issue = "NormalMerchantRelicsMissingStoreContinuation";
-                break;
-            }
+            var start = shops.Clone();
             var left = Slot();
             var middle = Slot();
             merchants.Add(new(ordinal, left, middle));
             // Slot three can draw Common when the Shop-only bucket runs out.
-            bags?.Pull(RelicSequenceKind.Shop);
+            bags?.ConsumeShopSlot();
+            if (ordinal < merchantCount && authority.EffectAuthority?.MerchantInitialInventoryShapeExact != true &&
+                Beta111NormalMerchantShopsContinuation.CheckPotionStock(authority.EffectAuthority?.MerchantPotionStock, start, ordinal) is { } lost)
+            {
+                issue = lost;
+                break;
+            }
             shops.Advance(calls - 2);
         }
         return new(merchants, issue);
@@ -70,65 +72,59 @@ public static class NormalMerchantRelicProjector
         internal readonly Stack<(int Index, ModelKey Key)>[] Possible = NewLanes();
         internal readonly Stack<(int Index, ModelKey Key)>[] Certain = NewLanes();
 
-        private static Stack<(int, ModelKey)>[] NewLanes() => [new(), new(), new(), new()];
+        private static Stack<(int, ModelKey)>[] NewLanes() => [new(), new(), new()];
+
+        internal readonly bool[] UnknownLane = new bool[3];
+        internal int PossibleShopStock;
+        internal int CertainShopStock;
+
+        internal void ConsumeShopSlot()
+        {
+            if (PossibleShopStock > 0) PossibleShopStock--;
+            else Pull(Possible, RelicSequenceKind.Common);
+            if (CertainShopStock > 0) CertainShopStock--;
+            else Pull(Certain, RelicSequenceKind.Common);
+        }
 
         internal ModelKey? Pull(RelicSequenceKind rolled)
         {
             var first = Pull(Possible, rolled);
             var last = Pull(Certain, rolled);
-            return first == last ? first.Key : null;
+            return first == last ? first?.Key : null;
         }
 
-        private static (RelicSequenceKind Lane, int Index, ModelKey Key) Pull(
+        private (RelicSequenceKind Lane, int Index, ModelKey Key)? Pull(
             Stack<(int Index, ModelKey Key)>[] bags, RelicSequenceKind rolled)
         {
             var lane = rolled;
             while (true)
             {
+                if (bags == Possible && UnknownLane[(int)lane]) return null;
                 if (bags[(int)lane].TryPop(out var item)) return (lane, item.Index, item.Key);
                 if (lane == RelicSequenceKind.Rare) return (lane, -1, Circlet);
-                lane = lane == RelicSequenceKind.Shop ? RelicSequenceKind.Common : lane + 1;
+                lane = lane + 1;
             }
         }
     }
 
-    private static Bags? BuildBags(RelicSequencePredictionResult sequence, RuntimeContextAuthoritySnapshot authority)
+    private static Bags? BuildBags(RelicSequencePredictionResult sequence)
     {
-        var catalog = authority.WorldAuthority?.Beta109Generation;
-        if (sequence.Status != SeedDomainEvaluationStatus.Evaluated || sequence.RngSemantics != RngSemanticProfileId.Modern113 ||
-            catalog is null || sequence.Lanes.Count != 4) return null;
-        var eligibility = new Dictionary<ModelKey, bool?>();
-        foreach (var bucket in catalog.PlayerRelicBuckets)
-            foreach (var entry in bucket.OrderedEntries)
-                eligibility[entry.RelicKey] = entry.ShopEligibilityExact ? entry.IsAllowedInShops : null;
-
-        var bags = new Bags();
-        foreach (var lane in sequence.Lanes)
+        if (sequence.Status != SeedDomainEvaluationStatus.Evaluated || sequence.RngSemantics != RngSemanticProfileId.Modern113) return null;
+        var stock = sequence.ShopStockCount ?? (Certain: 0, Possible: int.MaxValue);
+        var bags = new Bags { CertainShopStock = stock.Certain, PossibleShopStock = stock.Possible };
+        foreach (var kind in new[] { RelicSequenceKind.Common, RelicSequenceKind.Uncommon, RelicSequenceKind.Rare })
         {
-            // Slot three matters only when its eligible stock is exhausted.
-            // Captured eligibility counts suffice even when the initial Shop
-            // lane omitted its ordered preview due to one unknown entry.
-            if (lane.Kind == RelicSequenceKind.Shop)
+            var lane = sequence.GetPlayerLane(kind);
+            if (lane is null || lane.FullEntries.Count != lane.TotalCount || lane.IssueCode.Length > 0)
             {
-                var shop = catalog.PlayerRelicBuckets.FirstOrDefault(b =>
-                    b.BucketId.EndsWith(":Shop", StringComparison.Ordinal));
-                if (shop == null) return null;
-                for (int i = 0; i < shop.OrderedEntries.Count; i++)
-                {
-                    var entry = shop.OrderedEntries[i];
-                    if (!entry.ShopEligibilityExact || entry.IsAllowedInShops)
-                        bags.Possible[(int)lane.Kind].Push((i, entry.RelicKey));
-                    if (entry.ShopEligibilityExact && entry.IsAllowedInShops)
-                        bags.Certain[(int)lane.Kind].Push((i, entry.RelicKey));
-                }
+                bags.UnknownLane[(int)kind] = true;
                 continue;
             }
-            if (lane.FullEntries.Count != lane.TotalCount || lane.IssueCode.Length > 0) return null;
             foreach (var entry in lane.FullEntries)
             {
                 var key = entry.RelicKey;
                 if (key == BaseGameModelKeys.Relics.MassiveScroll) continue;
-                bool? allowed = eligibility.GetValueOrDefault(key);
+                bool? allowed = entry.ShopEligible;
                 if (key == StandardOpeningRelicEligibility.LastingCandy)
                     allowed &= sequence.EarlyLastingCandyEligible;
                 if (allowed != false) bags.Possible[(int)lane.Kind].Push((entry.Position, key));

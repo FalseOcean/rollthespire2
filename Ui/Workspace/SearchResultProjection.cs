@@ -19,7 +19,7 @@ internal static class SearchResultProjection
             Seed = candidate.Seed, CharacterKey = candidate.CharacterKey.Serialized, Ascension = candidate.Ascension,
             QueryFingerprint = queryFingerprint, Party = candidate.Party, IsUnverified = candidate.IsUnverified,
             IsUnfiltered = candidate.IsUnverified && candidate.IsUnfiltered, ValidationDisposition = candidate.ValidationDisposition,
-            ValidationIssue = candidate.ValidationIssue, SupportScope = candidate.SupportScope, MapSearch = candidate.MapSearch,
+            ReplayEstimate = candidate.Evaluation.ReplayEstimate, ValidationIssue = candidate.ValidationIssue, SupportScope = candidate.SupportScope, MapSearch = candidate.MapSearch,
             ExecutionWarnings = candidate.ExecutionWarnings.ToArray(), WitnessOpeningRouteId = route?.OpeningRouteId ?? "",
             TreasureSources = TreasureSources(candidate), MapRouteWitnesses = MapRouteWitnessProjection.FromCandidate(candidate)
         };

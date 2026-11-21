@@ -50,7 +50,7 @@ internal sealed partial record RelicFullGpuPlan
         if (openingPrefix is null && (!catalog.CharacterRewardAuthorityExact || !catalog.ColorlessRewardAuthorityExact || !catalog.PotionAuthorityExact ||
             catalog.OtherCharacterPools.Length < 3 || catalog.OtherCharacterPools.Any(p => p.TotalCount == 0)))
             return Unsupported("R.GenericOpeningPools", out issue);
-        if (!RelicFamilyPlanCompiler.TryCompilePool(request, out var pool, out var dense, out _, out issue)) return false;
+        if (!RelicFamilyPlanCompiler.TryCompilePool(request, out var pool, out var dense, out _, out issue, requireOrdinaryLanes: true)) return false;
         if (Enumerable.Range(0, pool.BucketCount).Where(i => pool.BucketScopes[i] == 1 && pool.BucketKinds[i] <= 3)
             .Sum(i => pool.BucketLengths[i]) > 512) return Unsupported("R.GenericPersonalBagCapacity", out issue);
         var circlet = new ModelKey("RELIC", "CIRCLET");

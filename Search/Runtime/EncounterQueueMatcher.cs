@@ -15,6 +15,17 @@ internal static class EncounterQueueMatcher
         var evidence = new List<SearchMatchEvidence>();
         foreach (var condition in conditions)
         {
+            var generation = authority?.Beta109Generation;
+            if (generation is { SelectedActsExact: true } && condition.Act > 0 && condition.Act <= generation.SelectedActs.Count)
+            {
+                ModelKey selected = generation.SelectedActs[condition.Act - 1];
+                if (selected.IsValid && condition.VariantKey is { } required && selected != required)
+                    return SearchQueryEvaluation.NoMatch("EncounterQueue.VariantMismatch");
+                var shape = generation.OrderedActCatalog.FirstOrDefault(a => a.ActKey == selected);
+                if (condition.Kind == EncounterQueueKind.Elite && generation.WorldGenerationHooksExact &&
+                    shape is { EncounterCatalogOfficialVanilla: true, EliteEncounterSlots: 15 } && condition.RangeValue > 15)
+                    return SearchQueryEvaluation.NoMatch("EncounterQueue.PositionAbsent");
+            }
             var sequence = world?.EncounterSequences.SingleOrDefault(s => s.Act == condition.Act);
             if (sequence is null || sequence.Precision != PredictionPrecision.Exact)
             { unknown ??= sequence is null ? "EncounterQueue.ObservationMissing:Act" + condition.Act :
@@ -23,9 +34,10 @@ internal static class EncounterQueueMatcher
                 return SearchQueryEvaluation.NoMatch("EncounterQueue.VariantMismatch");
             var act = authority?.Beta109Generation?.OrderedActCatalog.FirstOrDefault(a => a.Act == condition.Act && a.ActKey == sequence.ActKey);
             if (condition.Kind != EncounterQueueKind.Elite && act is null) { unknown ??= "EncounterQueue.ActShapeMissing:Act" + condition.Act; continue; }
+            int weakCount = act is not null && act.WeakEncounters.Count != 0 ? act.WeakEncounterSlots : 0;
             var queue = condition.Kind == EncounterQueueKind.Elite ? sequence.Elite :
-                condition.Kind == EncounterQueueKind.Weak ? sequence.Normal.Take(act!.WeakEncounterSlots).ToArray() :
-                sequence.Normal.Skip(act!.WeakEncounterSlots).ToArray();
+                condition.Kind == EncounterQueueKind.Weak ? sequence.Normal.Take(weakCount).ToArray() :
+                sequence.Normal.Skip(weakCount).ToArray();
             if (queue.Count < condition.RangeValue) return SearchQueryEvaluation.NoMatch("EncounterQueue.PositionAbsent");
             var observed = condition.RangeMode == SearchSequenceRangeMode.FirstN ? queue.Take(condition.RangeValue) : queue.Skip(condition.RangeValue - 1).Take(1);
             var allowed = condition.AllowedKeys.ToHashSet(ModelKeyComparer.Instance);

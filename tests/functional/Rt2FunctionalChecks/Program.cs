@@ -24,11 +24,13 @@ if (args.Contains("--encyclopedia-editions", StringComparer.Ordinal)) return Enc
 if (args.Contains("--live-run-seed-premises", StringComparer.Ordinal)) return LiveRunSeedPremisesChecks.Run();
 if (args.Contains("--transformation-scopes", StringComparer.Ordinal)) return TransformationScopeChecks.Run();
 if (args.Contains("--transformation-ancient", StringComparer.Ordinal)) return TransformationAncientChecks.Run();
+if (args.Contains("--transformation-ancient-gpu", StringComparer.Ordinal)) return TransformationAncientPrefilterChecks.Run(gpu: true);
 if (args.Contains("--transformation-takeover-editor", StringComparer.Ordinal)) return TransformationTakeoverEditorChecks.Run();
 if (args.Contains("--event-eligibility-catalog", StringComparer.Ordinal)) return EventEligibilityCatalogChecks.Run();
 if (args.Contains("--event-eligibility-editor", StringComparer.Ordinal)) return EventEligibilityEditorChecks.Run();
 if (args.Contains("--crystal-seed-cards", StringComparer.Ordinal)) return CrystalSeedCardChecks.Run();
 if (args.Contains("--crystal-search-integration", StringComparer.Ordinal)) return CrystalSearchIntegrationChecks.Run();
+if (args.Contains("--event-operation-authority", StringComparer.Ordinal)) return EventOperationAuthorityChecks.Run();
 if (args.Contains("--crystal-native-pools", StringComparer.Ordinal)) return CrystalNativePoolChecks.Run();
 if (args.Contains("--event-opportunity-persistence", StringComparer.Ordinal)) return EventOpportunityPersistenceChecks.Run();
 if (args.Contains("--event-opportunities", StringComparer.Ordinal)) return EventOpportunityChecks.Run();
@@ -133,6 +135,7 @@ if (args.Contains("--developer-notes-document", StringComparer.Ordinal))
     return archive == 0 ? PersistenceChecks.Run(notesOnly: true) : archive;
 }
 if (args.Contains("--feedback-export", StringComparer.Ordinal)) return FeedbackBundleChecks.Run();
+if (args.Contains("--feedback-search", StringComparer.Ordinal)) return SearchFeedbackChecks.Run();
 if (args.Contains("--preset-workbench", StringComparer.Ordinal)) return PresetWorkbenchChecks.Run();
 if (args.Contains("--seed-library-workflow", StringComparer.Ordinal)) return SeedLibraryWorkflowChecks.Run();
 if (args.Contains("--seed-library-persistence", StringComparer.Ordinal)) return SeedLibraryPersistenceChecks.Run();
@@ -142,6 +145,7 @@ if (args.Contains("--card-collection-workbench", StringComparer.Ordinal)) return
 if (args.Contains("--predictability-math", StringComparer.Ordinal)) return PredictabilityMathChecks.Run();
 if (args.Contains("--workbench-contract")) return WorkbenchContractChecks.Run();
 if (args.Contains("--result-navigation")) return WorkbenchContractChecks.RunResultNavigation();
+if (args.Contains("--save-status-version-ui", StringComparer.Ordinal)) return SaveStatusVersionChecks.Run();
 if (args.Contains("--combat-rarity-audit")) return CombatRarityAuditChecks.Run();
 if (args.Contains("--object-picker-context")) return ObjectPickerContextChecks.Run();
 if (args.Contains("--unknown-room", StringComparer.Ordinal)) return UnknownRoomChecks.Run();
@@ -185,6 +189,7 @@ if (args.Contains("--compatibility-reference", StringComparer.Ordinal)) return C
 if (args.Contains("--shop-ordered", StringComparer.Ordinal)) return ShopOrderedChecks.Run();
 if (args.Contains("--wwp-commitment", StringComparer.Ordinal)) return WwpCommitmentChecks.Run();
 if (args.Contains("--exact-boundary", StringComparer.Ordinal)) return ExactBoundaryChecks.Run();
+if (args.Contains("--replay-non-hit-sample", StringComparer.Ordinal)) return ExactBoundaryChecks.RunReplayNonHitSample();
 if (args.Contains("--exact-cancellation", StringComparer.Ordinal)) return ExactBoundaryChecks.RunCancellation();
 if (args.Contains("--party-exact-independent", StringComparer.Ordinal)) return ExactBoundaryChecks.RunPartyIndependentMismatch();
 if (args.Contains("--predictor-closure", StringComparer.Ordinal)) return PredictorClosureChecks.Run();

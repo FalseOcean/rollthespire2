@@ -20,6 +20,8 @@ public sealed record NeowSeedObservation(
 /// </summary>
 public sealed record SeedPredictionFacts
 {
+    public IReadOnlyDictionary<SeedPredictionDomainSelection, string> ModelAssumptions { get; init; } =
+        System.Collections.Immutable.ImmutableDictionary<SeedPredictionDomainSelection, string>.Empty;
     public required PredictionContext Context { get; init; }
     public required string PredictorId { get; init; }
     public required string OriginalSeed { get; init; }

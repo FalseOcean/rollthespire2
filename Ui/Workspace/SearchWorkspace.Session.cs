@@ -30,7 +30,8 @@ internal sealed partial class SearchWorkspace
 
     internal void SaveCheckpoint(SearchProgressSnapshot progress, SearchContinuationSnapshot? continuation,
         ulong? safeNext, bool wrap = false, QueryHistoryEntry? targetHistory = null,
-        SearchResultBatch? targetBatch = null, double elapsedDelta = 0)
+        SearchResultBatch? targetBatch = null, double elapsedDelta = 0,
+        ulong? scannedFrontier = null)
     {
         if (targetBatch is null) SaveResultProgress(progress);
         else
@@ -39,6 +40,11 @@ internal sealed partial class SearchWorkspace
             {
                 if (!_workspace.QueryHistory.Any(record => record.Id == history.Id)) _workspace.QueryHistory.Add(history);
                 history.ElapsedSeconds += elapsedDelta; history.Progress = progress;
+                if (targetBatch.Start?.ScanStartOrdinal is { } start)
+                {
+                    var coverage = history.SeedCoverage ??= new();
+                    if ((scannedFrontier ?? safeNext) is { } frontier) coverage.Add(start, frontier);
+                }
             }
             if (ReferenceEquals(targetBatch, _resultBatch)) _workspace.ResultProgress = progress;
             MarkWorkspaceDirty();
@@ -129,6 +135,7 @@ internal sealed partial class SearchWorkspace
                 _cursor.PersistentOrigin, continuation?.PendingCandidates ?? [], continuation?.PublishedOrdinals ?? [])
             {
                 ContinuationFingerprint = SearchContinuationIdentity.For(plan),
+                ModeledNonHitSampleReceived = continuation?.ModeledNonHitSampleReceived ?? false,
                 UnreceivedOrdinals = continuation?.UnreceivedOrdinals ?? []
             };
         }

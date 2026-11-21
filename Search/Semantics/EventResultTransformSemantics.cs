@@ -32,6 +32,13 @@ internal static class EventResultTransformSemantics
             s.Targets[0].Original is { Rarity: "Basic", CanTransform: true } card && card.CardType != "Quest" &&
             s.Targets[0].OrderedSourceCandidates is not { Count: 0 };
     }
+    internal static bool IsIncompleteCapture(MorphicGroveScenario? scenario, int count) =>
+        scenario is { Premises.InitialBasicCaptureIssue.Length: > 0 } &&
+        scenario.Targets.Count < count && !string.IsNullOrWhiteSpace(scenario.Premises.EventOccurrenceBasis) &&
+        scenario.Premises.EntryFloor is null or >= 0 &&
+        (scenario.Targets.Count == 0 || scenario.Targets is [{ InstanceId: "basic:0", Original: { Rarity: "Basic", CanTransform: true, CardType: not "Quest" },
+            OrderedSourceCandidates.Count: > 0 }]);
+
     internal static IReadOnlyList<MorphicGroveCard>? ClosedPool(EventResultSearchCondition c) =>
         IsInitialBasics(c) && c.MorphicGroveScenario!.Premises.VanillaLocalDependenciesBound &&
         c.MorphicGroveScenario.Authority.ProfileId == Compatibility.RuntimeProfileId.Beta111 &&

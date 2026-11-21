@@ -41,7 +41,13 @@ internal static class EventResultNumericPredicate
 
         internal Compiled(IReadOnlyList<EventResultSearchCondition> conditions, Beta111EventResultAuthority? authority)
         {
-            CanReject = authority is { IsBeta111: true, StaticCatalogAuthorityExact: true };
+            CanReject = authority is { IsBeta111: true } && conditions.All(condition => condition.Kind switch
+            {
+                EventResultConditionKind.TrashHeapGrabCard => authority.HasCatalog(EventResultCatalogParts.TrashGrab),
+                EventResultConditionKind.TrashHeapDiveRelic => authority.HasCatalog(EventResultCatalogParts.TrashDive),
+                EventResultConditionKind.FakeMerchantOfferedFakeRelic => authority.HasCatalog(EventResultCatalogParts.FakeMerchant),
+                _ => true
+            });
             ColorfulPoolKnown = authority?.ColorfulPoolAuthorityExact == true;
             RngSemantics = authority?.RngSemantics ?? RngSemanticProfileId.Modern110;
             var colors = Beta111EventResultCatalog.ColorfulOrder(RngSemantics);
@@ -74,8 +80,7 @@ internal static class EventResultNumericPredicate
             TrashTargets = trash.ToArray();
             InventoryTargets = inventory.ToArray();
             ColorfulPool = NeedsColorful && CanReject && ColorfulPoolKnown
-                ? Beta111EventRules.ColorfulCandidates(authority!.OwnerCharacterKey,
-                        authority.UnlockedCharacterCardPoolKeys, RngSemantics)
+                ? authority!.ColorfulCandidates()
                     .Select(key => IndexOf(colors, key)).ToArray()
                 : [];
         }
@@ -115,7 +120,7 @@ internal static class EventResultNumericPredicate
 
         int grab = -1, dive = -1;
         Span<int> fakeOrder = stackalloc int[9];
-        Span<int> colorfulOrder = stackalloc int[5];
+        Span<int> colorfulOrder = stackalloc int[compiled.ColorfulPool.Length];
         int colorfulCount = 0;
 
         if (compiled.NeedsTrashGrab || compiled.NeedsTrashDive)

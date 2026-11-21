@@ -209,7 +209,8 @@ internal sealed partial class AppShellHostRoot : Control
         {
             Name = "RolltheSpire2_LauncherVersion",
             Text = $"RT2 v{typeof(ModRuntime).Assembly.GetName().Version?.ToString(3)}\n" +
-                text.Format("shell.target_game_versions", ModEntry.TargetStableGameVersion, ModEntry.TargetBetaGameVersion),
+                text.Format("shell.target_game_versions", RuntimeVersionCompatibility.SupportedStableVersion,
+                    RuntimeVersionCompatibility.SupportedBetaVersion),
             Position = new Vector2(68, 5),
             MouseFilter = MouseFilterEnum.Ignore
         };

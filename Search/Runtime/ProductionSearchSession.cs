@@ -31,6 +31,7 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
     private readonly FamilyExecutionPlan _executionPlan;
     internal FamilyExecutionPlan ExecutionPlan => Volatile.Read(ref _gpuCreationCpuRecovery)?.Plan ?? _executionPlan;
     private readonly FamilySearchEtaProjectionV1 _etaProjection;
+    private readonly bool _logWorkload;
     private readonly IRuntimeProfile _profile;
     private readonly IReadOnlyList<IFilterExecution> _families;
     private readonly SmallCandidateExactPolicy? _smallCandidateExactPolicy;
@@ -47,8 +48,12 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
     private long _scanned;
     private int _reservedMatches;
     private int _matches;
+    private int _targetCandidates;
     private int _confirmedCandidates;
     private int _unverifiedCandidates;
+    private long _modeledNonHits;
+    private int _modeledNonHitSampleCount;
+    private string? _replayAssumptions;
     private int _state = (int)SearchRunState.Running;
     private int _lastDisposition = (int)SearchDisposition.NoMatch;
     private int _userCancellationRequested;
@@ -98,7 +103,9 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
         Func<SearchPendingCandidate, long>? measurePendingPayload = null,
         Action? recoveryReceiptWaitStarted = null,
         bool allowInitialGpuCreationFallback = false,
-        Action<CancellationToken>? beforeExactEvaluate = null)
+        Action<CancellationToken>? beforeExactEvaluate = null,
+        bool enableGpuPowerDiagnostics = false,
+        bool logWorkload = false)
     {
         if (executionWindowSize <= 0) throw new ArgumentOutOfRangeException(nameof(executionWindowSize));
         if (queueCapacity <= 0) throw new ArgumentOutOfRangeException(nameof(queueCapacity));
@@ -117,6 +124,7 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
             !plan.RunOptions.SkipExactValidation && executionPlan.RankingAuthority != FamilyPlannerRankingAuthority.UnpricedPhysicalTrial &&
             !executionPlan.DecisionEvidence.Contains("ExplicitPhysicalSelection=true", StringComparer.Ordinal);
         _etaProjection = etaProjection ?? throw new ArgumentNullException(nameof(etaProjection));
+        _logWorkload = logWorkload;
         _profile = RuntimeProfileRegistry.Select(plan.Model.Detection);
         _recovery = new(plan, _profile, continuation, measurePendingPayload);
         _executionWindowSize = executionWindowSize;
@@ -157,6 +165,8 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
             }
             _families = selectedExecutions;
             _completion = startRun is null ? Task.Run(RunAsync) : startRun(RunAsync);
+            if (enableGpuPowerDiagnostics && executionPlan.OrderedFamilies.Any(body => body.UsesGpu))
+                TryDiagnostic(() => { _ = Task.Run(LogGpuPowerAsync); }, "GpuPowerDiagnostics.Start");
         }
         catch (Exception failure)
         {
@@ -214,6 +224,10 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
             Volatile.Read(ref _userCancellationRequested) != 0)
         {
             UnverifiedCandidateCount = Volatile.Read(ref _unverifiedCandidates),
+            ModeledNonHitCount = Interlocked.Read(ref _modeledNonHits),
+            ModeledNonHitSampleCount = Volatile.Read(ref _modeledNonHitSampleCount),
+            ModeledNonHitSampleReceived = _recovery.ModeledNonHitSampleReceived,
+            ReplayAssumptions = Volatile.Read(ref _replayAssumptions) ?? string.Empty,
             PendingCandidateCount = _recovery.PendingCount,
             CleanupIssue = Volatile.Read(ref _cleanupIssue),
             ExecutionWarnings = CaptureExecutionWarnings(),
@@ -236,6 +250,7 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
 
     private async Task RunAsync()
     {
+        bool workloadLogged = false;
         try
         {
             if (!VisibleSeedCandidateCodec.TryParseOrdinal(_profile, _plan.CanonicalStartSeed, out ulong startOrdinal, out _, out string issue))
@@ -246,10 +261,18 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
             // Retry does not advance the ordinary scan frontier.
             await RetryPendingCandidatesAsync(_lifetime.Token).ConfigureAwait(false);
             await RecoverUnreceivedCandidatesAsync(_lifetime.Token).ConfigureAwait(false);
-            LogStartEvidence();
-
             Task exactConsumer = ConsumeExactBatchesAsync(_lifetime.Token);
             Task familyProducer = ProduceFamilyBatchesAsync(startOrdinal, _lifetime.Token);
+            // Once the workers have started, record the frozen request and
+            // selected plan while the first batch is in flight.
+            long evidenceStarted = Stopwatch.GetTimestamp();
+            if (_logWorkload)
+            {
+                workloadLogged = true;
+                LogWorkloadEvidence();
+            }
+            TryDiagnostic(LogStartEvidence, "SessionStartEvidence");
+            RuntimeLog.TryBackgroundInfo($"searchStartup=true;phase=SessionStartEvidence;elapsedMs={Stopwatch.GetElapsedTime(evidenceStarted).TotalMilliseconds:F4}");
             await Task.WhenAll(familyProducer, exactConsumer).ConfigureAwait(false);
             if (Volatile.Read(ref _recoveryCapacityFailure) is not null)
                 throw new OperationCanceledException(_lifetime.Token);
@@ -282,6 +305,7 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
         }
         finally
         {
+            if (_logWorkload && !workloadLogged) LogWorkloadEvidence();
             _terminalHandoff.Writer.TryComplete();
             bool physicalRecoveryContaminated = Volatile.Read(ref _initialGpuCreationRecoveryAttempted) != 0;
             bool performanceEvidenceUnavailable = false;
@@ -638,11 +662,10 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
         finally { _executionContext.ExitCpu(); }
         if (_plan.RunOptions.SkipExactValidation)
         {
-            var candidate = CreateCandidate(input, batch);
             if (!retrying) Interlocked.Increment(ref _scanned);
             Volatile.Write(ref _lastDisposition, (int)SearchDisposition.NotEvaluatedByPolicy);
             RecordOutcome(seed, SearchDisposition.NotEvaluatedByPolicy, string.Empty);
-            return await PublishCandidateAsync(candidate, globalCandidate, cancellationToken).ConfigureAwait(false);
+            return await PublishCandidateAsync(input, batch, globalCandidate, cancellationToken).ConfigureAwait(false);
         }
         SearchQueryEvaluation evaluation;
         ProductionExactSearchResult exact;
@@ -656,7 +679,7 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
             // Parallel.ForEachAsync owns a child token whose propagation may lag
             // session cancellation. Exact and its consumer must use the same token.
             exact = _exactEvaluator is null
-                ? ProductionExactSearchEvaluator.Evaluate(_model, input, cancellationToken)
+                ? ProductionExactSearchEvaluator.EvaluateCandidate(_model, input, cancellationToken)
                 : _exactEvaluator(_model, input);
             if (exact.Facts is { } facts) ProductionExactSearchEvaluator.ThrowIfPredictionFailed(facts);
             evaluation = exact.Evaluation;
@@ -689,10 +712,22 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
         if (!exact.IsMatch)
         {
             RecordRejectedCandidate(seed, exact);
+            if (evaluation.ReplayEstimate is { } estimate)
+            {
+                Interlocked.CompareExchange(ref _replayAssumptions, estimate.Assumptions, null);
+                if (estimate.Disposition == SearchDisposition.NoMatch)
+                {
+                    Interlocked.Increment(ref _modeledNonHits);
+                    bool sampled = await PublishCandidateAsync(input, batch, globalCandidate,
+                        cancellationToken, exact, modeledNonHitSample: true).ConfigureAwait(false);
+                    _recovery.ResolveCandidate(globalCandidate, published: sampled);
+                    return true;
+                }
+            }
             if (evaluation.Disposition is SearchDisposition.Unknown or SearchDisposition.Unsupported)
             {
-                bool published = await PublishCandidateAsync(CreateCandidate(input, batch, exact),
-                    globalCandidate, cancellationToken).ConfigureAwait(false);
+                bool published = await PublishCandidateAsync(input, batch, globalCandidate,
+                    cancellationToken, exact).ConfigureAwait(false);
                 if (published) _recovery.ResolveCandidate(globalCandidate, published: true);
                 return published;
             }
@@ -700,8 +735,8 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
             return true;
         }
 
-        var output = CreateCandidate(input, batch, exact);
-        if (!await PublishCandidateAsync(output, globalCandidate, cancellationToken).ConfigureAwait(false)) return false;
+        if (!await PublishCandidateAsync(input, batch, globalCandidate, cancellationToken, exact).ConfigureAwait(false))
+            return false;
         _recovery.ResolveCandidate(globalCandidate, published: true);
 
         TraceCandidate(seed, exact);

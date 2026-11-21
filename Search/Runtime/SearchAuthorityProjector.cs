@@ -123,7 +123,7 @@ public static class SearchAuthorityProjector
         return true;
     }
 
-    private static bool RequiresPerSeedRelicBagProjection(ExactSearchEvaluationProjection filter)
+    internal static bool RequiresPerSeedRelicBagProjection(ExactSearchEvaluationProjection filter)
     {
         bool bones =
             filter.RequireNeowsBones ||

@@ -37,9 +37,10 @@ internal sealed partial class PredictorRun
                 var rarity = Context.Operation != null && _operationFuturePotionRarities.TryGetValue(potionId, out var actualRarity)
                     ? actualRarity : Context.PotionPool.Single(p => p.Key == potion.Key).Rarity switch
                 {
-                    PredictorPotionRarity.Common => EffectCardRarity.Common,
+                    PredictorPotionRarity.Common or PredictorPotionRarity.Token => EffectCardRarity.Common,
                     PredictorPotionRarity.Uncommon => EffectCardRarity.Uncommon,
-                    _ => EffectCardRarity.Rare
+                    PredictorPotionRarity.Rare or PredictorPotionRarity.Event => EffectCardRarity.Rare,
+                    _ => throw new InvalidOperationException("PredictorFuturePotionRarityInvalid:" + potion.Key)
                 };
                 var cardType = _futurePotionTypes[potionId];
                 SetEventPotionSlot(potionSlot, null);
@@ -106,7 +107,7 @@ internal sealed partial class PredictorRun
         var keys = Context.PotionPool.ToDictionary(p => p.Key);
         foreach (var potion in occupied)
         {
-            var types = keys[potion.Key].Rarity == PredictorPotionRarity.Common
+            var types = keys[potion.Key].Rarity is PredictorPotionRarity.Common or PredictorPotionRarity.Token
                 ? new[] { EffectCardType.Attack, EffectCardType.Skill }
                 : new[] { EffectCardType.Attack, EffectCardType.Skill, EffectCardType.Power };
             _futurePotionTypes = _futurePotionTypes.Add(potion.Id, types[_eventRng!.NextInt(types.Length)]);

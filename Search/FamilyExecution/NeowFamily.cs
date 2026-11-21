@@ -178,6 +178,9 @@ internal sealed partial class NeowFamily
             revision += NeowFamilyGpuPlan.PairMaskRevision;
         if (!compactAbi1Input && UsesDenseFirstDraw)
             revision += NeowFamilyGpuPlan.DirectFirstDrawRevision;
+        if (!compactAbi1Input && (UsesDenseFirstDraw || _gpuPlan.UsePartyDensePrefix ||
+            _composite is null && _transformations is null && _gpuPlan.DensePrefixRequested && _gpuPlan.CanShareTrackedPositive))
+            revision += NeowFamilyGpuPlan.DenseDirectPrefixRevision;
         if (!_gpuPlan.IsMultiplayer) revision += ".PackedPublicOrdinals.20260930.v1";
         if (_gpuPlan.PartyDirectDraw is not null && _composite is null && _transformations is null)
             revision += NeowPartyDirectDraw.Revision;
@@ -197,6 +200,8 @@ internal sealed partial class NeowFamily
         revision += _gpuPlan.LocalObservationRevision;
         if (_composite is null)
             revision += _gpuPlan.LocalSourceRevision(!compactAbi1Input && _gpuPlan.UsesStagedDense ? 2 : 3);
+        if (!compactAbi1Input && _composite is null && _gpuPlan.UseStagedLeafyKaleidoscope)
+            revision += NeowFamilyGpuPlan.StagedLeafyKaleidoscopeRevision;
         revision += OptimizationsFor(compactAbi1Input).Revision;
         revision += _gpuPlan.EntryIdentityRevision;
         revision += NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision;

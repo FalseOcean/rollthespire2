@@ -30,41 +30,38 @@ internal sealed class RelicReferencePlan(ExactSearchEvaluationProjection evaluat
     internal bool Matches(ulong root, Action<string>? onUnresolved = null)
     {
         var prediction = RelicSequencePredictor.PredictFromRootHash(profile, root, "CpuReference", world, _preview);
-        if (prediction.Status != SeedDomainEvaluationStatus.Evaluated || prediction.Lanes.Any(l => l.Precision != PredictionPrecision.Exact))
-        {
-            onUnresolved?.Invoke($"R.CpuReferenceNotExact;status={prediction.Status}");
-            return true;
-        }
-        return MatchesPrediction(prediction);
+        var match = MatchesPrediction(prediction);
+        if (match is null) onUnresolved?.Invoke($"R.CpuReferenceNotExact;status={prediction.Status}");
+        return match ?? true;
     }
 
     internal bool Reference(ulong root)
     {
         var prediction = RelicSequencePredictor.PredictFromRootHash(profile, root, "CpuReference", world, _preview);
-        if (prediction.Status != SeedDomainEvaluationStatus.Evaluated || prediction.Lanes.Any(l => l.Precision != PredictionPrecision.Exact))
-            throw new InvalidDataException("R.ReferenceNotExact:" + prediction.Status);
-        return MatchesPrediction(prediction);
+        return MatchesPrediction(prediction) ?? throw new InvalidDataException("R.ReferenceNotExact:" + prediction.Status);
     }
 
-    private bool MatchesPrediction(RelicSequencePredictionResult prediction)
+    private bool? MatchesPrediction(RelicSequencePredictionResult prediction)
     {
+        if (prediction.Status != SeedDomainEvaluationStatus.Evaluated) return null;
+        bool? result = true;
         foreach (var condition in evaluation.RelicSequenceConditions.Where(c => !c.IsEmpty))
         {
-            var lane = prediction.Lanes.FirstOrDefault(item => item.Kind == condition.Lane);
-            if (lane is null) return false;
+            var lane = prediction.GetPlayerLane(condition.Lane);
+            if (lane?.Precision != PredictionPrecision.Exact) { result = null; continue; }
             var range = condition.RangeMode == SearchSequenceRangeMode.FirstN
                 ? lane.Entries.Where(item => item.Position <= condition.RangeValue).Select(item => item.RelicKey).ToArray()
                 : lane.Entries.Where(item => item.Position == condition.RangeValue).Select(item => item.RelicKey).ToArray();
             if (condition.RangeMode == SearchSequenceRangeMode.ExactSlot && range.Length != 1) return false;
             if (!QueryKeySetPredicate.MatchesKeySet(range, condition.Keys)) return false;
         }
-        var shop = prediction.Lanes.FirstOrDefault(item => item.Kind == RelicSequenceKind.Shop);
+        var shop = prediction.GetPlayerLane(RelicSequenceKind.Shop);
         foreach (var condition in evaluation.RelicShopSequenceConditions.Where(c => !c.IsEmpty))
         {
-            if (shop is null) return false;
+            if (shop?.Precision != PredictionPrecision.Exact) { result = null; continue; }
             var actual = shop.Entries.Where(item => item.Position <= condition.Count).OrderBy(item => item.Position).Select(item => item.RelicKey).ToArray();
             if (actual.Length < condition.Count || !ShopSequenceSemantics.Matches(actual, condition.Count, condition.OrderMode, condition.Slots)) return false;
         }
-        return true;
+        return result;
     }
 }

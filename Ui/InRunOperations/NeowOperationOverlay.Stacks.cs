@@ -199,6 +199,7 @@ internal sealed partial class NeowOperationOverlay
         _cardsArea = new Control { Name = "Rt2NeowCardDock", MouseFilter = MouseFilterEnum.Ignore };
         AddChild(_cardsArea);
         BuildHuntTrees();
+        bool stage = StageCardFaces && _stacks.Sum(stack => stack.Cards.Length) > 1;
         for (int i = 0; i < _stacks.Count; i++)
         {
             var stack = _stacks[i];
@@ -226,7 +227,7 @@ internal sealed partial class NeowOperationOverlay
             if (stack.Highlighted) stack.Label.AddThemeColorOverride("font_color", GoldInk);
             foreach (var snapshot in stack.Cards)
             {
-                var tile = NativeCard(snapshot, 1);
+                var tile = CardSlot(snapshot, stage);
                 stack.Tiles.Add(tile); stack.Host.AddChild(tile);
             }
             if (stack.Price is { } price)

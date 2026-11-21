@@ -22,8 +22,7 @@ internal static class NeowOfferWhitelist
         projected = original;
         if (condition is null) return true;
         if (!ModernNeowIdentityRules.TryGetEligibleCursePool(authority, out var curses)) return false;
-        var preparation = ModernNeowIdentityRules.Prepare(authority.PlayersCount,
-            authority.AllCharacterCardPoolsUnlocked, authority.IsScrollBoxesAllowed);
+        var preparation = authority.NeowPreparation;
         var universe = curses.Concat(curses.SelectMany(curse =>
         {
             var pool = preparation.ForCurse(curse);

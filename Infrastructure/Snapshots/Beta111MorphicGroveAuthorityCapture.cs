@@ -27,7 +27,7 @@ public static class Beta111MorphicGroveAuthorityCapture
     internal static MorphicGroveScenario CaptureAuthoredEventResult(RuntimeContextAuthoritySnapshot authority,
         RolltheSpire2.Search.Contracts.EventResultConditionKind kind, MegaCrit.Sts2.Core.Unlocks.UnlockState? explicitUnlocks = null)
     {
-        var source = CaptureAuthoredBasics(authority, Search.Semantics.EventResultTransformSemantics.DrawCount(kind), explicitUnlocks);
+        var source = ObserveAuthoredBasics(authority, Search.Semantics.EventResultTransformSemantics.DrawCount(kind), explicitUnlocks);
         return new(source.Authority, source.Premises with { EventOccurrenceBasis =
             "Authored E entry: " + Search.Semantics.EventResultTransformSemantics.Entry(kind) +
             "; select the whitelisted transform option and legal initial Basics; unchanged local pool/RNG premise. " +
@@ -37,27 +37,68 @@ public static class Beta111MorphicGroveAuthorityCapture
     internal static MorphicGroveScenario CaptureAuthoredBasics(RuntimeContextAuthoritySnapshot authority, int count,
         MegaCrit.Sts2.Core.Unlocks.UnlockState? explicitUnlocks = null)
     {
-        RuntimeSnapshotThreadGuard.RequireMainThread();
-        if (count is < 1 or > 2) throw new ArgumentOutOfRangeException(nameof(count));
-        if (authority.ProfileId != RolltheSpire2.Compatibility.RuntimeProfileId.Beta111)
-            throw new InvalidOperationException("MorphicGrove.Beta111Required");
-        var character = ModelDb.GetById<CharacterModel>(new ModelId("CHARACTER", authority.Character.CharacterKey.Entry));
-        var basics = character.StartingDeck.Where(c => c.Rarity == CardRarity.Basic && c.IsRemovable &&
-            c.Type != CardType.Quest && (c.Tags.Contains(CardTag.Strike) || c.Tags.Contains(CardTag.Defend))).Take(count).ToArray();
-        if (basics.Length != count) throw new InvalidOperationException("EventTransform.LegalInitialBasicsRequired:" + count);
-        var unlocks = explicitUnlocks ?? MegaCrit.Sts2.Core.Saves.SaveManager.Instance.GenerateUnlockStateFromProgress();
-        // CardFactory.GetDefaultTransformationOptions for a Basic out of combat:
-        // original.Pool, actual unlock/player constraint, C/U/R, exclude original.
-        // Basic originals cannot themselves occur in this C/U/R replacement pool.
-        var targets = basics.Select((c, i) => new MorphicGroveTarget($"basic:{i}", Snapshot(c),
-            c.Pool.GetUnlockedCards(unlocks, authority.PlayersCount > 1 ? CardMultiplayerConstraint.MultiplayerOnly : CardMultiplayerConstraint.SingleplayerOnly)
-                .Where(x => x.Rarity is CardRarity.Common or CardRarity.Uncommon or CardRarity.Rare)
-                .Where(x => x.Id != c.Id).Select(Snapshot).ToArray())).ToArray();
-        if (targets.Any(t => t.OrderedSourceCandidates!.Count == 0) ||
-            targets.Skip(1).Any(t => !targets[0].OrderedSourceCandidates!.SequenceEqual(t.OrderedSourceCandidates!)))
-            throw new InvalidOperationException("MorphicGrove.InitialBasicPoolsUnavailableOrDifferent");
+        var targets = CaptureAuthoredTargets(authority.ProfileId, authority.Character.CharacterKey, authority.PlayersCount, count, explicitUnlocks);
+        if (count == 1)
+            return new(authority, new("Authored event transform: one legal initial Strike/Defend target at entry; unchanged local pool and RNG. Event occurrence and deck history are premises.",
+                true, false, null), targets);
         return new(authority, new("Fragile E: authored event order [Morphic Grove / Group] occurs; no extra relevant RNG perturbation before the result. Two legal initial Strike/Defend targets at entry. Canonical internal draws replay normally; occurrence/route/deck-survival are premises, not proof obligations.",
             true, false, null), targets);
+    }
+
+    private sealed class InitialBasicsUnavailable(string reason, IReadOnlyList<MorphicGroveTarget> captured, Exception? cause = null)
+        : InvalidOperationException(reason, cause)
+    {
+        internal IReadOnlyList<MorphicGroveTarget> Captured { get; } = captured;
+    }
+
+    internal static MorphicGroveScenario ObserveAuthoredBasics(RuntimeContextAuthoritySnapshot authority, int count,
+        MegaCrit.Sts2.Core.Unlocks.UnlockState? explicitUnlocks = null)
+    {
+        try { return CaptureAuthoredBasics(authority, count, explicitUnlocks); }
+        catch (InitialBasicsUnavailable issue)
+        {
+            Diagnostics.RuntimeIssueLedger.Current.Record(issue, "InitialBasicCaptureUnavailable", "EventTransform",
+                "AuthoredEntry", "issues.capture_failed", Diagnostics.RuntimeIssueSeverity.Warning,
+                correlationId: $"character={authority.Character.CharacterKey.Serialized};slot={authority.PlayerSlotIndex};targets={count}");
+            return new(authority, new("Authored event transform with legal initial Strike/Defend targets at entry.",
+                true, false, null) { InitialBasicCaptureIssue = issue.Message }, issue.Captured);
+        }
+    }
+
+    internal static MorphicGroveTarget[] CaptureAuthoredTargets(Compatibility.RuntimeProfileId profileId, ModelKey characterKey,
+        int players, int count, MegaCrit.Sts2.Core.Unlocks.UnlockState? explicitUnlocks = null)
+    {
+        RuntimeSnapshotThreadGuard.RequireMainThread();
+        if (count is < 1 or > 2) throw new ArgumentOutOfRangeException(nameof(count));
+        if (profileId != RolltheSpire2.Compatibility.RuntimeProfileId.Beta111)
+            throw new InvalidOperationException("MorphicGrove.Beta111Required");
+        var targets = new List<MorphicGroveTarget>(count);
+        try
+        {
+            var character = ModelDb.GetById<CharacterModel>(new ModelId("CHARACTER", characterKey.Entry));
+            var unlocks = explicitUnlocks;
+            var constraint = players > 1 ? CardMultiplayerConstraint.MultiplayerOnly : CardMultiplayerConstraint.SingleplayerOnly;
+            foreach (var basic in character.StartingDeck.Where(c => c.Rarity == CardRarity.Basic && c.IsRemovable &&
+                c.Type != CardType.Quest && (c.Tags.Contains(CardTag.Strike) || c.Tags.Contains(CardTag.Defend))).Take(count))
+            {
+                unlocks ??= MegaCrit.Sts2.Core.Saves.SaveManager.Instance.GenerateUnlockStateFromProgress();
+                // Native out-of-combat Basic transformation, in source pool order.
+                var pool = basic.Pool.GetUnlockedCards(unlocks, constraint)
+                    .Where(c => c.Rarity is CardRarity.Common or CardRarity.Uncommon or CardRarity.Rare)
+                    .Where(c => c.Id != basic.Id).Select(Snapshot).ToArray();
+                if (pool.Length == 0 || targets.Count > 0 && !targets[0].OrderedSourceCandidates!.SequenceEqual(pool))
+                    throw new InitialBasicsUnavailable("MorphicGrove.InitialBasicPoolsUnavailableOrDifferent", targets);
+                targets.Add(new($"basic:{targets.Count}", Snapshot(basic), pool));
+            }
+        }
+        catch (Exception ex) when (ex is not (InitialBasicsUnavailable or OperationCanceledException or OutOfMemoryException))
+        {
+            // Only the native source read is unavailable. Retain targets already observed
+            // and the native exception for the request-correlated capture diagnostic.
+            throw new InitialBasicsUnavailable("EventTransform.InitialBasicSourceReadFailed:" + ex.GetType().Name + ":" + ex.Message, targets, ex);
+        }
+        if (targets.Count < count) throw new InitialBasicsUnavailable("EventTransform.LegalInitialBasicsRequired:" + count, targets);
+        return targets.ToArray();
     }
 
     /// <summary>

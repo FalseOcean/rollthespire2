@@ -42,7 +42,7 @@ internal static partial class CapsuleRelicFamily
                         "Filter.Construction", "issues.filter_incomplete", $"cause={issue};predicatesRetained=true;finalValidationSkipped={preferences.SkipExactValidation};matchClaimed=false");
                 return false;
             }
-            if (!RelicFamilyPlanCompiler.TryCompilePool(model, out _, out _, out _, out string poolIssue))
+            if (!RelicFamilyPlanCompiler.TryCompilePool(model, out _, out _, out _, out string poolIssue, requireOrdinaryLanes: true))
             {
                 RuntimeLog.TryBackgroundWarning("rCapsuleFamilyUnavailable=true;cause=" + poolIssue + ";predicatesRetained=true;replacementCompleteness=NotClaimed");
                 return false;

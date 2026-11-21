@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Reflection;
+using System.Text.Json;
 using MegaCrit.Sts2.Core.Entities.Ascension;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Players;
@@ -31,12 +32,24 @@ internal static class CrystalSeedCardChecks
 
     internal static int Run()
     {
+        CheckCardSnapshotSerialization();
         CheckSeparateRewardCopies();
         CheckOffsetOnlyReroll();
         CheckGeneratedBoards();
         if (Environment.GetEnvironmentVariable("RT2_AUTHORED_GODOT_RUNNER") == "1") CheckNativeKernel();
         Console.WriteLine("CRYSTAL_SEED_CARDS detached same-path acquisitions, repeated menus, ordered rerolls and cutoff PASS");
         return 0;
+    }
+
+    private static void CheckCardSnapshotSerialization()
+    {
+        var card = new PredictorCard(1, new ModelKey("CARD", "BASH"), EffectCardType.Attack, 0, 1, true, 1);
+        var ordinary = JsonSerializer.SerializeToElement(card);
+        Check(!ordinary.TryGetProperty(nameof(card.HasCustomStableComparison), out _) &&
+            !ordinary.TryGetProperty(nameof(card.ObservedSort), out _), "Default card sort data changed the snapshot");
+        var custom = ordinary.Deserialize<PredictorCard>()! with { HasCustomStableComparison = true };
+        Check(JsonSerializer.SerializeToElement(custom).GetProperty(nameof(card.HasCustomStableComparison)).GetBoolean(),
+            "Snapshot lost the custom card comparison");
     }
 
     private static void CheckSeparateRewardCopies()

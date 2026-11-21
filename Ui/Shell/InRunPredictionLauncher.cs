@@ -236,7 +236,10 @@ internal sealed partial class RunPredictionOverlay : Control
     {
         if (_retired || IsOpen) return;
         if (_openedBefore) _openedAt = System.Diagnostics.Stopwatch.GetTimestamp();
-        if (GetParent() is null) _stack.AddChild(this);
+        // In run.tscn the relic inventory and top bar are later siblings of the
+        // overlay stack. Keep its entry in the stack, and draw the full-screen
+        // workspace in front of the HUD so its header also receives input.
+        if (GetParent() is null) (_stack.GetParent() as NGlobalUi ?? (Control)_stack).AddChild(this);
         _entry = new RunPredictionOverlayStackEntry(this);
         _stack.Push(_entry);
     }
@@ -279,9 +282,7 @@ internal sealed partial class RunPredictionOverlay : Control
     internal void AfterOverlayShown()
     {
         if (_retired || !IsOpen) return;
-        // Native Push owns the logical stack/backstop. Keep the retained scene
-        // immediately above its current entry without detaching any controls.
-        _stack.MoveChild(this, _stack.GetChildCount() - 1);
+        GetParent().MoveChild(this, -1);
         Show();
         if (!_hotkeysBlocked && NHotkeyManager.Instance is { } hotkeys)
         { hotkeys.AddBlockingScreen(this); _hotkeysBlocked = true; }

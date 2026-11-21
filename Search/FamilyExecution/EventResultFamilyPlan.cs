@@ -63,9 +63,7 @@ internal sealed class EventResultFamilyPlan
         _morphic = morphic.Select(MorphicGroveContainsPlan.Compile).ToArray();
         _ordinaryNumeric = new(_ordinary, Authority);
         PlayerSlot = request.Authority.PlayerSlotIndex;
-        bool requiresStaticCatalog = _ordinary.Any(c => c.Kind is EventResultConditionKind.TrashHeapGrabCard or
-            EventResultConditionKind.TrashHeapDiveRelic or EventResultConditionKind.FakeMerchantOfferedFakeRelic);
-        bool numericalSupported = Authority.IsBeta111 && (!requiresStaticCatalog || Authority.StaticCatalogAuthorityExact) &&
+        bool numericalSupported = _ordinaryNumeric.CanReject &&
             PlayerSlot >= 0 && PlayerSlot < request.Authority.PlayersCount &&
             (!HasMorphic || _morphic.All(p => p is not null)) &&
             Conditions.All(c => Enum.IsDefined(c.Kind)) &&
@@ -139,6 +137,11 @@ internal sealed class EventResultFamilyPlan
             if (c.Kind == EventResultConditionKind.MorphicGroveGroupInitialBasicsContains)
             {
                 var scenario = c.MorphicGroveScenario!;
+                if (EventResultTransformSemantics.IsIncompleteCapture(scenario, 2))
+                {
+                    onUnresolved?.Invoke(c.Kind, scenario.Premises.InitialBasicCaptureIssue!);
+                    continue;
+                }
                 var projection = Beta111MorphicGroveProjector.Project(root, MorphicGroveCommitment.InitialBasics,
                     scenario.Premises, scenario.Targets);
                 var match = c.MorphicGroveSecondCard is { } second
@@ -150,8 +153,8 @@ internal sealed class EventResultFamilyPlan
             p ??= Beta111EventResultProjector.Project(root, PlayerSlot, Authority);
             var (precision, pass) = c.Kind switch
             {
-                EventResultConditionKind.TrashHeapGrabCard => (p.TrashHeapPrecision, p.TrashHeapGrabCard == c.TargetKey),
-                EventResultConditionKind.TrashHeapDiveRelic => (p.TrashHeapPrecision, p.TrashHeapDiveRelic == c.TargetKey),
+                EventResultConditionKind.TrashHeapGrabCard => (p.TrashGrabPrecision, p.TrashHeapGrabCard == c.TargetKey),
+                EventResultConditionKind.TrashHeapDiveRelic => (p.TrashDivePrecision, p.TrashHeapDiveRelic == c.TargetKey),
                 EventResultConditionKind.FakeMerchantOfferedFakeRelic => (p.FakeMerchantPrecision, p.FakeMerchantInventory.Contains(c.TargetKey)),
                 EventResultConditionKind.ColorfulPhilosophersOfferedColor => (p.ColorfulPrecision, p.ColorfulOfferedColors.Contains(c.TargetKey)),
                 _ => throw new InvalidOperationException("E.UnknownPredicate")

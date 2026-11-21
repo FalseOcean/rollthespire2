@@ -30,7 +30,7 @@ internal sealed record PredictorCatalog(ImmutableArray<NeowEffectCardSnapshot> C
     public ImmutableArray<ModelKey> TradableRelicTypes { get; init; } = [];
 }
 
-internal sealed record PredictorCharacterPool(ModelKey Character, ImmutableArray<ModelKey> Cards);
+internal sealed record PredictorCharacterPool(ModelKey Character, ImmutableArray<ModelKey> Cards, ModelKey? PoolKey = null);
 
 internal sealed record PredictorCardDefinition(PredictorCard Prototype, string Rarity, ModelKey TransformationPool,
     bool IsQuest, bool IsStrike, bool IsDefend)

@@ -20,6 +20,7 @@ internal sealed partial class AnalysisPage
     private void BuildFavoriteSeed(Control rail)
     {
         _favoriteSeed = _palette.Button(""); _favoriteSeed.Name = "FavoritePredictionSeed";
+        _favoriteSeed.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         _favoriteSeed.Pressed += () => { if (CanFavoriteVisibleSeed) _favoriteSeedRequested?.Invoke(); };
         rail.AddChild(_favoriteSeed);
         _favoriteReceipt = WLabel(""); _favoriteReceipt.Visible = false; rail.AddChild(_favoriteReceipt);

@@ -7,6 +7,7 @@ using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Relics;
 using RolltheSpire2.Core.Merchant;
 using RolltheSpire2.Core.Prediction.Maps;
+using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Core.World;
 using RolltheSpire2.Infrastructure.Snapshots;
 using RolltheSpire2.Presentation.ContentNames;
@@ -204,10 +205,23 @@ internal sealed partial class AnalysisPage
         RefreshWorkbenchColumns();
         _wbRight.CustomMinimumSize = Vector2.Zero;
         ShowMapRail(true);
+        if (_wbPage == 3)
+            AddModelPremise(_wbCenter, SeedPredictionDomainSelection.RelicSequence);
+        else
+            AddModelPremise(_wbRight, SeedPredictionDomainSelection.World);
         // Partial/Unknown domains do not erase other known domains.
         if (_wbPage == 3) RenderShopOverview();
         else RenderActOverview(_wbPage + 1);
     }
+    private void AddModelPremise(Node parent, SeedPredictionDomainSelection domain)
+    {
+        if (LastFacts is null || !LastFacts.ModelAssumptions.TryGetValue(domain, out var causes)) return;
+        var reasons = RolltheSpire2.Presentation.Ui1.ReplayAssumptionPresentation.Describe(_uiText!, causes);
+        var note = WNote(_uiText!.Format("predictor.analysis.assumed." + domain, reasons));
+        note.Name = "AnalysisAssumption" + domain;
+        parent.AddChild(note);
+    }
+
     private Control WObject(ModelKey key, GameContentKind kind, string? name = null, int size = 36, IconVariant? iconVariant = null)
     {
         var row = new HBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
@@ -359,11 +373,32 @@ internal sealed partial class AnalysisPage
         bool showOrdinaryRelics = LastRequest?.PlayersCount == 1 &&
             LastRequest.Authority.VersionResolution.SemanticProfileId == RolltheSpire2.Compatibility.RngSemanticProfileId.Modern113;
         var ordinary = showOrdinaryRelics && LastFacts?.Relics is { } sequences && TryGetProjectionRoot(out ulong root)
-            ? NormalMerchantRelicProjector.Project(root, LastRequest!.Authority, sequences)
+            ? ObservePreview("ShopRelics", () => NormalMerchantRelicProjector.Project(root, LastRequest!.Authority, sequences))
             : null;
         _wbCenter.AddChild(WNote(Text(showOrdinaryRelics ? "predictor.shop_relics.scope" : "predictor.design.shop_scope")));
         var shop = _viewModel!.RelicSequenceDomain.Items.FirstOrDefault(l => l.Kind == RelicSequenceKind.Shop);
         var colorless = BuildMerchantColorlessProjection();
+        if (colorless is { ReplayAssumption.Length: > 0 })
+        {
+            var reason = ReplayAssumptionPresentation.Describe(_uiText!, colorless.ReplayAssumption);
+            var note = WNote(_uiText!.Format("predictor.analysis.assumed.MerchantColorless", reason));
+            note.Name = "AnalysisAssumptionMerchantColorless";
+            _wbCenter.AddChild(note);
+        }
+        if (colorless is { Merchants.Count: < Beta111NormalMerchantColorlessSequenceProjector.MerchantCount })
+        {
+            string reason = colorless.EvidenceCode.Split(':', 2)[0] switch
+            {
+                "MerchantColorlessPoolKnownEmpty" => "empty",
+                "MerchantColorlessPoolOrderUnobserved" => "order",
+                "MerchantColorlessRulesUnobserved" => "rules",
+                "MerchantColorlessProjectionFailed" => "failed",
+                "MerchantPotionStockExhausted" => "stock",
+                "MerchantPotionCloneRuleUnobserved" => "potion_rule",
+                _ => "inventory"
+            };
+            _wbCenter.AddChild(WNote(Text("predictor.shop_colorless.issue." + reason)));
+        }
         var grid = WResponsiveGrid(_wbCenter, "ShopPreviews", 238, 5);
         for (int i = 1; i <= 5; i++)
         {
@@ -426,8 +461,8 @@ internal sealed partial class AnalysisPage
         if (sequences is null || !TryGetProjectionRoot(out ulong rootHash)) { WEmpty(body); return section; }
         var profile = LastRequest!.Authority.ProfileId == RolltheSpire2.Compatibility.RuntimeProfileId.Beta111
             ? RolltheSpire2.Compatibility.Beta111Profile.Instance : _runtime.Profile;
-        var prediction = TreasureRelicPredictor.PredictInitialOrderPreview(profile, rootHash, sequences);
-        if (prediction.Status != SeedDomainEvaluationStatus.Evaluated) { WEmpty(body); return section; }
+        var prediction = ObservePreview("InitialTreasureOrder", () => TreasureRelicPredictor.PredictInitialOrderPreview(profile, rootHash, sequences));
+        if (prediction?.Status != SeedDomainEvaluationStatus.Evaluated) { WEmpty(body); return section; }
         var grid = new GridContainer { Name = "InitialTreasureRelicEntries", Columns = 3, SizeFlagsHorizontal = SizeFlags.ExpandFill };
         grid.AddThemeConstantOverride("h_separation", 10);
         grid.AddThemeConstantOverride("v_separation", 4);
@@ -526,7 +561,8 @@ internal sealed partial class AnalysisPage
             if (lane is null) { WEmpty(entries); continue; }
             foreach (var entry in lane.FullEntries.OrderBy(item => item.Position).Take(3))
                 entries.AddChild(WRelicPreviewTile(entry));
-            if (entries.GetChildCount() == 0) WEmpty(entries);
+            if (entries.GetChildCount() == 0) entries.AddChild(WNote(Text(lane.Precision == PredictionPrecision.Exact
+                ? "predictor.analysis.bag_empty" : "predictor.unavailable")));
         }
         return section;
     }
@@ -618,17 +654,37 @@ internal sealed partial class AnalysisPage
         // runtime for dedicated route checks and future entry restoration.
         if (_routeSubview) { RenderRouteRuntime(act); return; }
         var actInfo = _viewModel!.EventPoolSequenceDomain.Items.FirstOrDefault(a => a.Act == act);
+        var actKey = OverviewActKey(act);
+        bool mapSupported = LastRequest?.Authority.ProfileId == RolltheSpire2.Compatibility.RuntimeProfileId.Beta111;
         if (openingPage) RenderOpeningOverview();
+        else if (act > 1 && SharedRoomIssue is { Length: > 0 } roomIssue &&
+                 LastFacts!.World!.EventPoolSequencePrediction is null && actInfo is null &&
+                 !_viewModel.BossDomain.Items.Any(b => b.Act == act) &&
+                 !_viewModel.AncientDomain.Items.Any(a => a.Act == act) &&
+                 !_viewModel.EncounterSequences.Any(a => a.Act == act))
+        {
+            var section = WCard(_wbCenter, Text("predictor.world.missing_rooms"));
+            section.Name = "UnavailableActRooms";
+            section.AddChild(WNote(WorldIssueText(roomIssue, "predictor.world.rooms_unknown")));
+        }
         else
         {
             if (act > 1)
             {
                 var ancient = _viewModel.AncientDomain.Items.FirstOrDefault(a => a.Act == act);
-                if (ancient is not null) RenderAncientInspector(ancient);
-                else WEmpty(_wbCenter);
+                if (ancient?.AncientDisplay.ModelKey.IsValid == true) RenderAncientInspector(ancient);
+                else
+                {
+                    var section = WCard(_wbCenter, Text("predictor.ancient_options"));
+                    var message = ancient?.OptionIssueCode == "AncientIdentityPoolEmpty" ? Text("predictor.world.ancient_empty") :
+                        WorldIssueText(_viewModel.AncientDomain.IssueCode, "predictor.world.ancient_unknown");
+                    section.AddChild(WNote(message));
+                }
             }
             RenderEventInspector(act, actInfo);
-            RenderCombatDetails(act);
+            _combatSurface = WCard(_wbCenter, "");
+            _combatSurface.Name = "CombatDetails";
+            if (!mapSupported || !actKey.IsValid) PopulateCombatDetails(act, null);
         }
         ShowMapRail(true);
         var mapHeader = new HBoxContainer { Name = "PredictorMapHeader", CustomMinimumSize = new Vector2(0, WorkspaceLayout.HeaderHeight) };
@@ -638,9 +694,10 @@ internal sealed partial class AnalysisPage
             ? "predictor.live.map_reference" : "predictor.map", act), true));
         var clearRoute = WAction("ui1.map.route.clear"); clearRoute.Name = "ClearMapRoute"; clearRoute.Disabled = true;
         mapHeader.AddChild(clearRoute);
-        var actKey = OverviewActKey(act);
-        if (!actKey.IsValid || LastRequest is null || LastRequest.Authority.ProfileId != RolltheSpire2.Compatibility.RuntimeProfileId.Beta111)
-        { WEmpty(_wbRight); return; }
+        if (!mapSupported)
+        { _wbRight.AddChild(WNote(Text("ui1.map.unavailable"))); return; }
+        if (!actKey.IsValid)
+        { _wbRight.AddChild(WNote(Text("predictor.map_act_unknown"))); return; }
         var routeStatus = WNote(Text("predictor.design.map_draw")); routeStatus.Name = "MapRouteStatus";
         routeStatus.TooltipText = Text("predictor.design.map_ordinary"); _wbRight.AddChild(routeStatus);
         var mapStats = new GridContainer { Name = "MapMaximums", Columns = 4, CustomMinimumSize = new Vector2(0, 34) };
@@ -649,7 +706,14 @@ internal sealed partial class AnalysisPage
         _wbRight.AddChild(mapStats);
         var routeBrowser = new HBoxContainer { Name = "MapRouteBrowser", Visible = false };
         _wbRight.AddChild(routeBrowser);
-        var actModel = ModelDb.GetById<ActModel>(new ModelId(actKey.Category, actKey.Entry));
+        var actModel = ObservePreview("MapAppearance:" + actKey.Serialized,
+            () => ModelDb.GetById<ActModel>(new ModelId(actKey.Category, actKey.Entry)));
+        if (actModel is null)
+        {
+            _wbRight.AddChild(WNote(Text("ui1.map.unavailable")));
+            PopulateCombatDetails(act, null);
+            return;
+        }
         var mapPanel = new PanelContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, SizeFlagsVertical = SizeFlags.ExpandFill };
         mapPanel.AddThemeStyleboxOverride("panel", new StyleBoxFlat { BgColor = actModel.MapBgColor,
             CornerRadiusTopLeft = 6, CornerRadiusTopRight = 6, CornerRadiusBottomLeft = 6, CornerRadiusBottomRight = 6 });
@@ -666,7 +730,7 @@ internal sealed partial class AnalysisPage
         var ancient = _viewModel.AncientDomain.Items.FirstOrDefault(a => a.Act == act);
         try
         {
-            var map = await GetOverviewMap(act, actKey, bosses.Length > 1, cancellation);
+            var map = await GetOverviewMap(act, actKey, cancellation);
             // A premise-only request revision shares this map's authority and
             // lifetime. A new seed/context cancels the lifetime in ShowFacts.
             if (cancellation.IsCancellationRequested || !IsInstanceValid(surface) || !surface.IsInsideTree() ||
@@ -683,7 +747,10 @@ internal sealed partial class AnalysisPage
                 "PredictionOverviewMapFailed", nameof(AnalysisPage), "OverviewMap", "issues.capture_failed",
                 correlationId: $"seed={request.OriginalSeed};act={act}");
             if (!cancellation.IsCancellationRequested && IsInstanceValid(surface) && surface.IsInsideTree())
-            { _wbRight.AddChild(WLabel(Text("ui1.map.unavailable"))); }
+            {
+                _wbRight.AddChild(WLabel(Text("ui1.map.unavailable")));
+                PopulateCombatDetails(act, null);
+            }
         }
     }
     private void RenderMapStats(MapPrediction map, VerticalMapView surface, GridContainer row, Button clearRoute, Label routeStatus, HBoxContainer routeBrowser)

@@ -116,7 +116,8 @@ public sealed class Stable107PredictionProfile : ISeedPredictionProfile
                     request.Ascension,
                     choices,
                     request.Authority.EffectAuthority,
-                    request.Authority.WorldAuthority)
+                    request.Authority.WorldAuthority,
+                    request.CombatRewardProjectionRequest)
                 : null;
 
         return SeedPredictionFactsFactory.Create(

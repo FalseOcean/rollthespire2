@@ -46,7 +46,7 @@ internal static class Beta109EncounterSequenceProjection
             normalKeys = ApplyFirstRunOrder(normalKeys, false);
             eliteKeys = ApplyFirstRunOrder(eliteKeys, true);
         }
-        var precision = snapshot.HasExactReplayInputs && act.HasExactGenerationInputs && snapshot.UpFrontPrefix.PriorInputsExact &&
+        var precision = snapshot.HasExactReplayInputs && act.HasExactEncounterInputs && snapshot.UpFrontPrefix.PriorInputsExact &&
             SourceAuthorityRules.SupportsExactIdentity(world.SourceAuthority) && world.Completeness == SnapshotCompleteness.Complete
             ? PredictionPrecision.Exact : PredictionPrecision.Partial;
         return new(act.Act, act.ActKey,

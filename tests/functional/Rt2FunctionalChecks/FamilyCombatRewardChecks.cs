@@ -77,6 +77,17 @@ internal static class FamilyCombatRewardChecks
         var captured = context.Authority;
         var tress = BaseGameModelKeys.Relics.SilkenTress;
         var bonesKey = BaseGameModelKeys.Relics.NeowsBones;
+        var withoutCurse = captured.WithEffectAuthority(captured.EffectAuthority! with
+        {
+            BonesEligibleRelics = [tress, BaseGameModelKeys.Relics.HeftyTablet],
+            CursePoolExact = false,
+            GeneratedCursePool = null
+        });
+        var offerOnly = new NeowEffectProjectionEngine(profile, seed, root, withoutCurse, false).Project(bonesKey).BonesOutcome;
+        Check(offerOnly is not null && offerOnly.OfferedRelics.ToHashSet().SetEquals([tress, BaseGameModelKeys.Relics.HeftyTablet])
+              && offerOnly.OriginalRoutes.Count == 2 && offerOnly.OriginalRoutes.All(route =>
+                  route.SharedContinuation.FinalCurseKey is null && route.SharedContinuation.FinalCursePrecision != PredictionPrecision.Exact),
+            "Known Bones offers and pickup orders survive an unread final curse");
         foreach (bool complex in new[] { false, true })
         foreach (var companion in new[] { BaseGameModelKeys.Relics.LostCoffer,
                      BaseGameModelKeys.Relics.Kaleidoscope, BaseGameModelKeys.Relics.HeftyTablet })

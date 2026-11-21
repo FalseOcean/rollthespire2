@@ -70,7 +70,7 @@ internal sealed record VariantOpeningPreparation(
                         generation.EventAuthority, variant.OrderedEligibleEvents, out var prepared, out _) && prepared is not null)
                 {
                     var immutable = EventImmutableEligibilityContext.From(generation);
-                    var candidates = prepared.Candidates.Where(candidate => !EventStaticEligibilityCatalog.Evaluate(
+                    var candidates = prepared.GeneratedQueue.Where(candidate => !EventStaticEligibilityCatalog.Evaluate(
                         candidate.EventKey, act, compiled.Context.ProfileId, candidate.Source, immutable).ShouldReject).ToArray();
                     foreach (var condition in events)
                     {

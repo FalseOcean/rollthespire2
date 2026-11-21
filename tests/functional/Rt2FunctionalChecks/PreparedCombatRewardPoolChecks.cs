@@ -1,5 +1,6 @@
 using System.Text.Json;
 using RolltheSpire2.Compatibility;
+using RolltheSpire2.Core.Authority;
 using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Neow;
@@ -25,6 +26,7 @@ internal static class PreparedCombatRewardPoolChecks
         var source = context.Authority.EffectAuthority!;
         var world = context.Authority.WorldAuthority;
         var profile = RuntimeProfileRegistry.Select(context.Detection);
+        CheckRewardPrefix(context, Check);
         string? old = Environment.GetEnvironmentVariable("RT2_C_PREPARED_REWARD_POOLS");
         try
         {
@@ -129,8 +131,7 @@ internal static class PreparedCombatRewardPoolChecks
                 source with { CapturedProfileId = RuntimeProfileId.Unsupported },
                 source with { CharacterRewardPool = null }, source with { PotionPool = null },
                 source with { CharacterRewardPoolExact = false },
-                source with { CharacterRewardPool = source.CharacterRewardPool!.Concat([source.CharacterRewardPool![0]]).ToArray() },
-                source with { PotionPool = [] } })
+                source with { CharacterRewardPool = source.CharacterRewardPool!.Concat([source.CharacterRewardPool![0]]).ToArray() } })
             {
                 var rejectedPreparation = new CombatRewardPoolPreparation(true);
                 rejectedPreparation.Prepare(profile.ProfileId, invalid, world);
@@ -138,6 +139,13 @@ internal static class PreparedCombatRewardPoolChecks
                     JsonSerializer.Serialize(Predict(invalid, null)) == JsonSerializer.Serialize(Predict(invalid, rejectedPreparation)),
                     "missing/invalid source preserves the original failure result and precedence");
             }
+            var emptyPotions = source with { PotionPool = [] };
+            var emptyPreparation = new CombatRewardPoolPreparation(true);
+            emptyPreparation.Prepare(profile.ProfileId, emptyPotions, world);
+            Check(emptyPreparation.Pools is { Potions.Count: 0 } emptyPools &&
+                JsonSerializer.Serialize(Predict(emptyPotions, null)) ==
+                JsonSerializer.Serialize(Predict(emptyPools.OwnedAuthority, emptyPreparation)),
+                "A known empty potion pool can be prepared without changing the reward projection");
             var mismatched = new CombatRewardPoolPreparation(true);
             mismatched.Prepare(profile.ProfileId, source, world);
             Check(JsonSerializer.Serialize(Predict(source, null)) == JsonSerializer.Serialize(Predict(source, mismatched)) &&
@@ -194,5 +202,73 @@ internal static class PreparedCombatRewardPoolChecks
         finally { Environment.SetEnvironmentVariable("RT2_C_PREPARED_REWARD_POOLS", old); }
         Console.WriteLine($"PreparedCombatRewardPool checks={checks};projectedRoutes={projectedRoutes};PASS");
         return 0;
+    }
+
+    private static void CheckRewardPrefix(SearchContext context, Action<bool, string> check)
+    {
+        var profile = RuntimeProfileRegistry.Select(context.Detection);
+        var source = context.Authority.EffectAuthority!;
+        var world = context.Authority.WorldAuthority!;
+        // Find a real offered route with two no-drop fights followed by a known potion.
+        for (ulong ordinal = 0; ordinal < 128; ordinal++)
+        {
+            string seed = VisibleSeedCandidateCodec.FormatOrdinal(profile, ordinal);
+            var input = TrustedRootHashInput.FromCanonicalSeed(profile, seed);
+            if (!SeedPredictionRequest.TryCreateFromRootHash(input, context.Authority.Character, context.Ascension, 1, 0,
+                    context.Authority, null, SeedPredictionDomainSelection.Neow | SeedPredictionDomainSelection.NormalCombatRewards,
+                    10, false, out var request, out _)) throw new InvalidOperationException("RewardPrefix.Request");
+            var original = RuntimeProfileRegistry.ObserveFromRootHash(context.Detection, request!, input);
+            var route = original.CombatRewards!.Routes.FirstOrDefault(route =>
+                route.Battles.Count == 3 && !route.Battles[0].Potion.Generated && !route.Battles[1].Potion.Generated &&
+                route.Battles[2].Potion.Rarity.HasValue && route.EquivalentRoutes.Any(descriptor =>
+                    descriptor.RootRelicKey != BaseGameModelKeys.Relics.NeowsBones));
+            if (route is null) continue;
+
+            var pinned = route.EquivalentRoutes.First(descriptor => descriptor.RootRelicKey != BaseGameModelKeys.Relics.NeowsBones).RootRelicKey;
+            var effects = source with { PotionPool = source.PotionPool!.Where(p => p.Rarity != route.Battles[2].Potion.Rarity).ToArray() };
+            var generation = world.Beta109Generation!;
+            var partialWorld = world with { SourceAuthority = SourceAuthority.Incomplete, Completeness = SnapshotCompleteness.Partial,
+                Beta109Generation = generation with { EventAuthority = generation.EventAuthority with { SharedRawOrderExact = false } } };
+            var scoped = context with { Authority = context.Authority.WithWorldAuthority(partialWorld).WithEffectAuthority(effects) };
+            var projection = NormalCombatRewardSequencePredictor.PredictFromRootHash(profile, input.RootHash, seed, 0,
+                context.Ascension, original.Neow!.Choices, effects, partialWorld,
+                new(NormalCombatRewardProjectionScope.SearchExact, NormalCombatRewardRouteSelectionMode.PinnedRealRoute, pinned));
+            var prefix = projection.Routes.Single();
+            check(prefix.Battles.Count == 2 && prefix.Battles.All(b => !b.Potion.Generated) &&
+                prefix.IssueCode.StartsWith("PotionPoolEmptyForRolledRarity:Battle3:", StringComparison.Ordinal),
+                "A third-fight empty rarity preserves both completed fights and the actual failure");
+            if (!SeedPredictionRequest.TryCreate(seed, scoped.Authority.Character, context.Ascension, 1, 0,
+                scoped.Authority, null, SeedPredictionDomainSelection.NormalCombatRewards, false, out var visible, out _))
+                throw new InvalidOperationException("RewardPrefix.VisibleRequest");
+            var firstOnly = visible!.WithCombatRewardProjection(new(NormalCombatRewardProjectionScope.SearchExact,
+                NormalCombatRewardRouteSelectionMode.PinnedRealRoute, pinned) { BattleCount = 1 });
+            var firstRoute = RuntimeProfileRegistry.Observe(context.Detection, firstOnly).CombatRewards!.Routes.Single();
+            check(firstRoute.Battles.Count == 1 && string.IsNullOrEmpty(firstRoute.IssueCode) &&
+                JsonSerializer.Serialize(firstRoute.Battles[0]) == JsonSerializer.Serialize(prefix.Battles[0]),
+                "The visible-seed entry returns the requested first fight without consulting the missing third reward");
+
+            SearchDisposition Exact(CombatRewardSequenceOrderMode order, params CombatPotionRewardSlotSearchCondition[] slots)
+            {
+                var query = SearchQuery.Empty with { OpeningRoute = new(pinned),
+                    CombatPotionRewards = new(slots.Length, order, slots) };
+                var prepared = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, scoped), new(seed, 1, 1, 1));
+                var plan = prepared.Plan ?? throw new InvalidOperationException("RewardPrefix.Compile: " + prepared.Issue);
+                return ProductionExactSearchEvaluator.Evaluate(plan.Model, input).Evaluation.Disposition;
+            }
+            var noDrop = new CombatPotionRewardSlotSearchCondition(CombatPotionSlotRequirement.NoDrop, null);
+            var drop = new CombatPotionRewardSlotSearchCondition(CombatPotionSlotRequirement.DropAny, null);
+            var neutral = new CombatPotionRewardSlotSearchCondition(CombatPotionSlotRequirement.Neutral, null);
+            check(Exact(CombatRewardSequenceOrderMode.Ordered, noDrop) == SearchDisposition.Match,
+                "Exact evaluates a first-fight filter with partial world data");
+            check(Exact(CombatRewardSequenceOrderMode.Ordered, noDrop, noDrop, drop) == SearchDisposition.Unknown,
+                "A missing third potion never confirms all three fights");
+            check(Exact(CombatRewardSequenceOrderMode.Ordered, drop, neutral, noDrop) == SearchDisposition.NoMatch,
+                "A missing third fight does not hide a first-fight contradiction");
+            check(Exact(CombatRewardSequenceOrderMode.Unordered, noDrop, noDrop, neutral) == SearchDisposition.Match &&
+                  Exact(CombatRewardSequenceOrderMode.Unordered, drop, drop, neutral) == SearchDisposition.NoMatch,
+                "Two known no-drops already prove the unordered pair, and one unknown fight cannot supply two drops");
+            return;
+        }
+        throw new InvalidOperationException("Expected a two-no-drop opening in the captured reward fixture");
     }
 }

@@ -26,10 +26,8 @@ internal sealed partial class NeowEffectProjectionEngine
     {
         if (state is null ||
             !_analysisAuthority.HasExactModernNeowIdentityInputs ||
-            !state.Authority.BonesEligibilityExact ||
-            !state.Authority.CursePoolExact ||
-            state.Authority.BonesEligibleRelics is null ||
-            state.Authority.GeneratedCursePool is null)
+            !state.Authority.HasExactBonesOffer ||
+            state.Authority.BonesEligibleRelics is null)
         {
             return Unknown(relicKey, "bones-eligible-relic-pool-required");
         }
@@ -80,13 +78,15 @@ internal sealed partial class NeowEffectProjectionEngine
                 return NeowEffectProjection.Unknown(
                     relicKey,
                     PredictionWarningCode.EffectBranchBudgetExceeded,
-                    Evidence(relicKey, "bones-order-route-budget-exceeded"));
+                    Evidence(relicKey, "bones-order-route-budget-exceeded")) with
+                { BonesOutcome = BonesOrderImpactAnalyzer.Analyze(offered, originalRoutes) };
             }
         }
 
         if (originalRoutes.Count == 0)
         {
-            return Unknown(relicKey, "bones-no-complete-acquisition-routes");
+            return Unknown(relicKey, "bones-no-complete-acquisition-routes") with
+            { BonesOutcome = BonesOrderImpactAnalyzer.Analyze(offered, originalRoutes) };
         }
 
         BonesOutcomeAnalysis analyzed = BonesOrderImpactAnalyzer.Analyze(offered, originalRoutes);

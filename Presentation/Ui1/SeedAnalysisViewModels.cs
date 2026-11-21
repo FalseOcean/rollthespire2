@@ -288,7 +288,7 @@ public sealed record EventPoolActSequenceViewModel(
     int EligibleCount,
     int EffectiveCount,
     int FilteredOutCount,
-    int OpeningAncientCursorOffset,
+    int? OpeningAncientCursorOffset,
     int OpeningAncientSkippedCount,
     int StaticFilteredOutCount,
     int DuplicateFilteredOutCount,
@@ -327,6 +327,7 @@ public sealed record RelicSequenceLaneViewModel(
     int RngCallCount,
     string EvidenceCode)
 {
+    public string IssueCode { get; init; } = "";
     public IReadOnlyList<RelicSequenceEntryViewModel> FullEntries { get; init; } = [];
 }
 

@@ -31,13 +31,7 @@ public static class Beta109WorldRuntimeCaptureSealer
             throw new InvalidOperationException("ModernRuntimeCaptureFingerprintMissing");
         }
 
-        IReadOnlyList<WorldActGroupSnapshot> actGroups = generation.OrderedActCatalog
-            .GroupBy(act => act.Act)
-            .OrderBy(group => group.Key)
-            .Select(group => new WorldActGroupSnapshot(
-                group.Key,
-                group.Select(ToOuterActSnapshot).ToArray()))
-            .ToArray();
+        var actGroups = ProjectActGroups(generation.OrderedActCatalog);
 
         ModelKey[] optionCatalog = generation.AncientEventContexts
             .Where(context => context.Catalog is not null)
@@ -85,6 +79,10 @@ public static class Beta109WorldRuntimeCaptureSealer
             Beta109Generation: generation);
     }
 
+    internal static IReadOnlyList<WorldActGroupSnapshot> ProjectActGroups(IReadOnlyList<Beta109ActGenerationSnapshot> acts) =>
+        acts.GroupBy(act => act.Act).OrderBy(group => group.Key)
+            .Select(group => new WorldActGroupSnapshot(group.Key, group.Select(ToOuterActSnapshot).ToArray())).ToArray();
+
     private static WorldActSnapshot ToOuterActSnapshot(Beta109ActGenerationSnapshot act) => new(
         Act: act.Act,
         ActKey: act.ActKey,
@@ -96,7 +94,12 @@ public static class Beta109WorldRuntimeCaptureSealer
         EliteEncounters: act.EliteEncounters.Select(ToOuterEncounterSnapshot).ToArray(),
         Bosses: act.Bosses,
         Ancients: act.OrderedAncients,
-        GenerationInputsExact: act.HasExactGenerationInputs);
+        GenerationInputsExact: act.HasExactGenerationInputs)
+    {
+        OrderedRawEvents = act.OrderedRawEvents, OrderedEligibleEvents = act.OrderedEligibleEvents,
+        RawEventCatalogOrderExact = act.RawEventCatalogOrderExact, EligibleEventOrderExact = act.EligibleEventOrderExact,
+        EventEpochMembershipExact = act.EventEpochMembershipExact, EventEpochRevealFactsExact = act.EventEpochRevealFactsExact
+    };
 
     private static WorldEncounterSnapshot ToOuterEncounterSnapshot(
         Beta109EncounterEntrySnapshot encounter) => new(

@@ -4,6 +4,18 @@
   "Blocks": [
     {
       "Type": "Heading",
+      "ReleaseVersion": "1.4.7",
+      "Text": "RT2 1.4.7 更新说明"
+    },
+    {
+      "Type": "BulletList",
+      "Items": [
+        "优化了部分先古选项被错误阻断的情况。",
+        "缩短部分组合筛种首次启动的等待。测试版单人筛选星盘、潘多拉魔盒时，牌池和待变牌数已确定的组合也能使用 GPU 加速。"
+      ]
+    },
+    {
+      "Type": "Heading",
       "ReleaseVersion": "1.4.6",
       "Text": "RT2 1.4.6 更新说明"
     },

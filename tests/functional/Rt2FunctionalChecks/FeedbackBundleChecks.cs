@@ -30,7 +30,12 @@ internal static class FeedbackBundleChecks
         string native = Path.Combine(godot, "godot.log"); File.WriteAllText(native, "current godot");
         var request = new FeedbackBundleRequest(Path.Combine(root, "out"), rt2, current.Replace('\\', '/'), native.Replace('\\', '/'),
             JsonSerializer.Serialize(new { Path = home + "\\test", Build = "test" }), "{\"CurrentSeed\":\"BBB\"}",
-            new Dictionary<string, string> { [home] = "<USER_HOME>" }, []);
+            new Dictionary<string, string> { [home] = "<USER_HOME>" }, [])
+        {
+            SearchEvidenceJson = """{"Session":"original","Candidates":["AAA","CCC"]}""",
+            AnalysisEvidenceJson = """{"Seed":"AAA","PredictedOrder":["A","B"]}""",
+            PlayEvidenceJson = JsonSerializer.Serialize(new { Seed = "AAA", ActualOrder = new[] {"B", "A"}, Path = home })
+        };
         FeedbackBundleResult result = FeedbackBundle.Export(request);
         Check(result.Logs == 10 && result.Warnings == 0 && result.Bytes > 0, "5+5 complete logs including active writer");
         using (var archive = ZipFile.OpenRead(result.Path))
@@ -47,6 +52,14 @@ internal static class FeedbackBundleChecks
             Check(Text("current-editor.json").Contains("BBB") && Text("searches/rt2_6-latest-workload.json").Contains("AAA"), "current editor and historical search distinct");
             Check(Text("searches/rt2_6-provenance.txt").Contains("sessionId=original"), "search session provenance retained");
             using var manifest = JsonDocument.Parse(Text("manifest.json"));
+            var evidence = manifest.RootElement.GetProperty("Evidence");
+            Check(evidence.EnumerateObject().Count() == 3 && evidence.EnumerateObject().All(entry =>
+                entry.Value.GetString() == "included" && archive.GetEntry(entry.Name) is not null), "receipt identifies all three evidence sources");
+            Check(Text("search-evidence.json") == request.SearchEvidenceJson && Text("analysis-evidence.json") == request.AnalysisEvidenceJson,
+                "issued candidates and predicted order survive export independently");
+            using var observed = JsonDocument.Parse(Text("play-evidence.json"));
+            Check(observed.RootElement.GetProperty("ActualOrder")[0].GetString() == "B" &&
+                observed.RootElement.GetProperty("Path").GetString() == "<USER_HOME>", "actual order preserved and observed paths masked");
             Check(manifest.RootElement.GetProperty("Logs").GetArrayLength() == 10, "manifest accounts for every log");
             Check(!archive.Entries.Any(x => x.FullName.EndsWith(".save")), "only explicitly selected evidence collected");
             Check(Text("issue-zh.md") == result.ChineseIssue.Body && Text("issue-en.md") == result.EnglishIssue.Body,
@@ -70,8 +83,18 @@ internal static class FeedbackBundleChecks
             using var reader = new StreamReader(archive.GetEntry("manifest.json")!.Open());
             Check(reader.ReadToEnd().Contains("unavailable"), "partial result explicitly marked");
         }
-        var missing = FeedbackBundle.Export(request with { Rt2Directory = Path.Combine(root, "missing"), CurrentRt2Log = "", GodotLog = "" });
+        var missing = FeedbackBundle.Export(request with { Rt2Directory = Path.Combine(root, "missing"), CurrentRt2Log = "", GodotLog = "",
+            SearchEvidenceJson = null, PlayEvidenceJson = null, CaptureWarnings = ["SearchEvidence: read failure"] });
         Check(missing.Logs == 0 && missing.Warnings >= 2, "no evidence does not claim complete logs");
+        using (var archive = ZipFile.OpenRead(missing.Path))
+        using (var stream = archive.GetEntry("manifest.json")!.Open())
+        using (var manifest = JsonDocument.Parse(stream))
+        {
+            var evidence = manifest.RootElement.GetProperty("Evidence");
+            Check(evidence.GetProperty("search-evidence.json").GetString() == "capture-failed" &&
+                evidence.GetProperty("play-evidence.json").GetString() == "not-observed" &&
+                archive.GetEntry("analysis-evidence.json") is not null, "capture failure isolated from available and unobserved evidence");
+        }
         string blocked = Path.Combine(root, "not-a-directory"); File.WriteAllText(blocked, "keep");
         bool failed = false;
         try { FeedbackBundle.Export(request with { OutputDirectory = blocked }); } catch (IOException) { failed = true; }

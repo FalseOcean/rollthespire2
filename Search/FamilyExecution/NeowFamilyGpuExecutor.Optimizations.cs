@@ -13,7 +13,8 @@ internal sealed partial class NeowFamilyGpuExecutor
         ? _optimizations.ForStagedSharedPhial(_plan, compact || _privateInput)
         : _optimizations.Applicable(_plan, compact || _privateInput)).Revision + _plan.ModernTransformGateRevision +
         _plan.EntryIdentityRevision + NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision + _plan.CurseFirstDrawRevision +
-        (!compact && _directFirstDrawGate is not null ? NeowFamilyGpuPlan.DirectFirstDrawRevision : "");
+        (!compact && _directFirstDrawGate is not null ? NeowFamilyGpuPlan.DirectFirstDrawRevision : "") +
+        (!compact && _densePrefixTable ? NeowFamilyGpuPlan.DenseDirectPrefixRevision : "");
 
     internal static string TerminalCurseGateShader(NeowFamilyGpuPlan plan, NeowStaticDrawGateCompiler.Gate gate) =>
         FormattableString.Invariant($$"""

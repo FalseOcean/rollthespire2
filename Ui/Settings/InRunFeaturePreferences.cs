@@ -8,7 +8,7 @@ namespace RolltheSpire2.Ui.Settings;
 // game directory's memory snapshot, never a temporary workspace or a disk poll.
 internal static class InRunFeaturePreferences
 {
-    internal sealed record Snapshot(bool OperationPredictionEnabled, bool MapPredictionEnabled, string LanguageOverride,
+    internal sealed record Snapshot(bool OperationPredictionEnabled, bool MapPredictionEnabled, string LanguageOverride, string FontChoice,
         bool CrystalSphereAvoidCurse, bool CrystalSphereIncludeDriftwood,
         bool CrystalSphereIncludeEnchantments, bool CrystalSphereTransparentMask,
         OperationPredictionPreferences OperationPredictionModes);
@@ -26,6 +26,7 @@ internal static class InRunFeaturePreferences
         if (!ByDirectory.TryGetValue(directory, out var current))
         {
             current = new(preferences.OperationPredictionEnabled, preferences.MapPredictionEnabled, preferences.LanguageOverride,
+                SearchWorkspace.NormalizeFontChoice(preferences.FontChoice),
                 preferences.CrystalSphereAvoidCurse, preferences.CrystalSphereIncludeDriftwood,
                 preferences.CrystalSphereIncludeEnchantments, preferences.CrystalSphereTransparentMask,
                 (preferences.OperationPredictionModes ?? new()).Normalize());
@@ -52,7 +53,7 @@ internal static class InRunFeaturePreferences
             {
                 string userDirectory = OS.GetUserDataDir();
                 string directory = Key(Path.Combine(userDirectory, "RolltheSpire2", "state"));
-                if (!ByDirectory.ContainsKey(directory)) _ = new SearchWorkspace(userDirectory, false);
+                if (!ByDirectory.ContainsKey(directory)) Initialize(directory, SearchWorkspace.ReadFeaturePreferences(userDirectory));
                 _runtimeDirectory = directory;
             }
             return ByDirectory[_runtimeDirectory];
@@ -70,6 +71,7 @@ internal static class InRunFeaturePreferences
     internal static bool? CachedMapPredictionEnabled => _runtimeDirectory is { } directory &&
         ByDirectory.TryGetValue(directory, out var current) ? current.MapPredictionEnabled : null;
     internal static string LanguageOverride => Runtime.LanguageOverride;
+    internal static string FontChoice => Runtime.FontChoice;
     internal static bool CrystalSphereTransparentMask => Runtime.CrystalSphereTransparentMask;
 
     internal static void SetCrystalSphere(string directory, bool? avoidCurse, bool? includeDriftwood,
@@ -90,6 +92,12 @@ internal static class InRunFeaturePreferences
     {
         directory = Key(directory);
         ByDirectory[directory] = ByDirectory[directory] with { LanguageOverride = language };
+    }
+
+    internal static void SetFont(string directory, string choice)
+    {
+        directory = Key(directory);
+        ByDirectory[directory] = ByDirectory[directory] with { FontChoice = choice };
     }
 
     internal static void SetOperation(string directory, bool enabled)

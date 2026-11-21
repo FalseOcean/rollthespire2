@@ -62,6 +62,8 @@ internal sealed partial class QueryWorkbenchFrame
         content.AddChild(_fishingRodRows);
         _addFishingRodDraw = _p.CompactButton(_text.Get("query.ideas.fishing_rod.add"), 32, 15);
         _addFishingRodDraw.Name = "AddFishingRodDraw";
+        _addFishingRodDraw.ClipText = false;
+        _addFishingRodDraw.TextOverrunBehavior = TextServer.OverrunBehavior.NoTrimming;
         _addFishingRodDraw.SizeFlagsHorizontal = SizeFlags.ShrinkBegin;
         _addFishingRodDraw.Pressed += () =>
         {
@@ -117,6 +119,8 @@ internal sealed partial class QueryWorkbenchFrame
                 value => EditFishingRodDraw(index, FishingRodRows[index] with { PoolSize = value }));
             var remove = _p.CompactButton(_text.Get("query.ideas.fishing_rod.remove"), 32, 15);
             remove.Name = $"RemoveFishingRodDraw{index}";
+            remove.ClipText = false;
+            remove.TextOverrunBehavior = TextServer.OverrunBehavior.NoTrimming;
             remove.Pressed += () =>
             {
                 SetFishingRodDraws(FishingRodRows.Where((_, position) => position != index).ToArray());

@@ -37,8 +37,29 @@ internal static class CrystalSphereCatalogCapture
         }
     }
 
+    internal sealed record CardInputs(CardPoolModel Own, CardPoolModel Colorless,
+        CardPoolModel[] Unlocked, (ModelKey Character, CardPoolModel Pool)[] Characters, CardModel[] Definitions);
+
+    internal static CardInputs ReadCardInputs(Player player, CapturePools pools)
+    {
+        var own = player.Character.CardPool;
+        var colorless = ModelDb.CardPool<ColorlessCardPool>();
+        var unlocked = player.UnlockState.CharacterCardPools.ToArray();
+        var characters = ModelDb.AllCharacters.Append(player.Character).DistinctBy(c => c.Id)
+            .Where(c => unlocked.Contains(c.CardPool) || c.Id == player.Character.Id)
+            .Select(c => (Character: Key(c), Pool: c.CardPool)).ToArray();
+        foreach (var character in characters) pools.Read(character.Pool);
+        var poolCards = pools.Read(own).Concat(pools.Read(colorless)).Concat(unlocked.SelectMany(p => pools.Read(p))).ToArray();
+        var definitions = ModelDb.AllCards.Concat(poolCards
+                .Select(c => ModelDb.GetById<CardModel>(c.Id)))
+            .Concat(player.Deck.Cards.Select(c => ModelDb.GetById<CardModel>(c.Id)))
+            .DistinctBy(c => c.Id).ToArray();
+        return new(own, colorless, unlocked, characters, definitions);
+    }
+
     internal static (PredictorCatalog Catalog, ImmutableArray<ModelKey> Unmodeled) Capture(IRunState run, Player player,
-        CapturePools? pools = null, Func<CardModel, ImmutableArray<PredictorCardLevelMetadata>>? captureLevels = null)
+        CapturePools? pools = null, Func<CardModel, ImmutableArray<PredictorCardLevelMetadata>>? captureLevels = null,
+        CardInputs? inputs = null)
     {
         RuntimeSnapshotThreadGuard.RequireMainThread();
         pools ??= new(run, player);
@@ -73,14 +94,16 @@ internal static class CrystalSphereCatalogCapture
                 BehaviorMetadataExact: !Modded(c))).ToImmutableArray();
             projected.Add(pool, cards); return cards;
         }
-        var unlocked = player.UnlockState.CharacterCardPools.ToArray();
-        var characters = ModelDb.AllCharacters.Append(player.Character).DistinctBy(c => c.Id)
-            .Where(c => unlocked.Contains(c.CardPool) || c.Id == player.Character.Id).ToArray();
-        var characterPools = characters.Select(c => (Character: Key(c), Cards: Pool(c.CardPool))).ToArray();
-        var own = Pool(player.Character.CardPool);
-        var colorless = Pool(ModelDb.CardPool<ColorlessCardPool>());
+        var unlocked = inputs?.Unlocked ?? player.UnlockState.CharacterCardPools.ToArray();
+        var characters = inputs?.Characters ?? ModelDb.AllCharacters.Append(player.Character).DistinctBy(c => c.Id)
+            .Where(c => unlocked.Contains(c.CardPool) || c.Id == player.Character.Id)
+            .Select(c => (Character: Key(c), Pool: c.CardPool)).ToArray();
+        var characterPools = characters.Select(c => (c.Character, Cards: Pool(c.Pool), PoolKey: Key(c.Pool))).ToArray();
+        var own = Pool(inputs?.Own ?? player.Character.CardPool);
+        var colorless = Pool(inputs?.Colorless ?? ModelDb.CardPool<ColorlessCardPool>());
         var all = unlocked.SelectMany(p => Pool(p)).ToImmutableArray();
-        var cardModels = ModelDb.AllCards.Concat(own.Concat(colorless).Concat(all).Select(c=>ModelDb.GetById<CardModel>(new(c.CardKey.Category,c.CardKey.Entry))))
+        var cardModels = inputs?.Definitions ?? ModelDb.AllCards.Concat(own.Concat(colorless).Concat(all)
+                .Select(c => ModelDb.GetById<CardModel>(new(c.CardKey.Category, c.CardKey.Entry))))
             .Concat(player.Deck.Cards.Select(c => ModelDb.GetById<CardModel>(c.Id)))
             .DistinctBy(c => c.Id).ToArray();
         var definitions = cardModels.Select(c =>
@@ -92,7 +115,7 @@ internal static class CrystalSphereCatalogCapture
         var catalog = new PredictorCatalog(own, colorless)
         {
             AllCharacterCards = all, CardDefinitions = definitions,
-            CharacterPools = characterPools.Select(p => new PredictorCharacterPool(p.Character, p.Cards.Select(c => c.CardKey).ToImmutableArray())).ToImmutableArray(),
+            CharacterPools = characterPools.Select(p => new PredictorCharacterPool(p.Character, p.Cards.Select(c => c.CardKey).ToImmutableArray(), p.PoolKey)).ToImmutableArray(),
             ShopGainsBlock = cardModels.Where(c => c.Id.Entry is not ("SOVEREIGN_BLADE" or "MAD_SCIENCE") && c.GainsBlock).Select(Key).ToImmutableArray()
         };
         return (catalog, unmodeled.OrderBy(k => k.Serialized, StringComparer.Ordinal).ToImmutableArray());

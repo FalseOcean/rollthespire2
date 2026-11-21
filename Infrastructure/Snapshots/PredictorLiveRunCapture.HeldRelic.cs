@@ -107,7 +107,7 @@ internal static partial class PredictorLiveRunCapture
             Deck = seat.Deck.Cards.Select(card => new
             {
                 Id = Id(card), Value = card.ToSerializable(), Affliction = card.Affliction?.Id,
-                Sort = modern && !Modded(card) ? CardSortValues(card) : null
+                Sort = modern && UsesBaseCardComparison(card) ? CardSortValues(card) : null
             }).ToArray(),
             Relics = seat.Relics.Select(relic => new { Id = Id(relic), Value = relic.ToSerializable() }).ToArray(),
             Rewards = seat.PlayerRng.Rewards.ToSerializable(),

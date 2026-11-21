@@ -16,7 +16,7 @@ internal sealed class ReflectionGameIconResolver : IGameIconResolver
 {
     private readonly Dictionary<string, IconDescriptor> _cache = new(StringComparer.Ordinal);
     private readonly Assembly? _gameAssembly;
-    private readonly Type[] _gameTypes;
+    private Type[]? _gameTypes;
     private readonly Type? _modelDb;
     private readonly Type? _modelIdType;
     private readonly ConstructorInfo? _modelIdConstructor;
@@ -28,7 +28,6 @@ internal sealed class ReflectionGameIconResolver : IGameIconResolver
         _catalogFingerprint = catalogFingerprint ?? string.Empty;
         _gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
             .FirstOrDefault(assembly => string.Equals(assembly.GetName().Name, "sts2", StringComparison.OrdinalIgnoreCase));
-        _gameTypes = _gameAssembly is null ? Array.Empty<Type>() : GetLoadableTypes(_gameAssembly);
         _modelDb = _gameAssembly?.GetType("MegaCrit.Sts2.Core.Models.ModelDb", throwOnError: false, ignoreCase: false);
         _modelIdType = _gameAssembly?.GetType("MegaCrit.Sts2.Core.Models.ModelId", throwOnError: false, ignoreCase: false);
         _modelIdConstructor = _modelIdType?.GetConstructor(new[] { typeof(string), typeof(string) });
@@ -149,7 +148,7 @@ internal sealed class ReflectionGameIconResolver : IGameIconResolver
             }
 
             string normalizedEntry = NormalizeIdentityToken(key.Entry);
-            Type[] modelTypes = _gameTypes
+            Type[] modelTypes = (_gameTypes ??= GetLoadableTypes(_gameAssembly))
                 .Where(type =>
                     !type.IsAbstract &&
                     type.FullName?.Contains(".Models.", StringComparison.Ordinal) == true &&

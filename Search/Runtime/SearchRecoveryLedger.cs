@@ -22,6 +22,8 @@ internal sealed class SearchRecoveryLedger
     private readonly HashSet<ulong> _deliveryRecovery = [];
     private readonly HashSet<ulong> _handledOnResume = [];
     private ulong _safeNextOrdinal;
+    private ulong? _modeledNonHitSampleInDelivery;
+    private bool _modeledNonHitSampleReceived;
     private bool _initialized;
     private IReadOnlyList<SearchPendingCandidate>? _pendingSnapshot;
     private SearchContinuationSnapshot? _continuationSnapshot;
@@ -56,6 +58,7 @@ internal sealed class SearchRecoveryLedger
                 pending with { ContinuationFingerprint = _continuationFingerprint });
         }
         _acknowledged.UnionWith(continuation.PublishedOrdinals);
+        _modeledNonHitSampleReceived = continuation.ModeledNonHitSampleReceived;
         if (continuation.UnreceivedOrdinals is not { } unreceived) return;
         ulong spaceSize = VisibleSeedCandidateCodec.SpaceSize(profile);
         foreach (ulong ordinal in unreceived)
@@ -67,6 +70,7 @@ internal sealed class SearchRecoveryLedger
     }
 
     internal int PendingCount { get { lock (_gate) return _pending.Count; } }
+    internal bool ModeledNonHitSampleReceived { get { lock (_gate) return _modeledNonHitSampleReceived; } }
     // Canonical compact pending-record JSON only: not RAM or whole workspace size.
     internal (long Bytes, Exception? AccountingFailure) CapturePendingPayload()
     {
@@ -145,21 +149,33 @@ internal sealed class SearchRecoveryLedger
                 Array.AsReadOnly(_acknowledged.Where(o => o >= frontier).Order().ToArray()))
             {
                 ContinuationFingerprint = _continuationFingerprint,
+                ModeledNonHitSampleReceived = _modeledNonHitSampleReceived,
                 UnreceivedOrdinals = Array.AsReadOnly(_deliveryRecovery.Concat(_awaitingDelivery).Distinct().Order().ToArray())
             };
         }
     }
 
-    internal void BeginDelivery(ulong ordinal)
+    internal bool BeginDelivery(ulong ordinal, bool modeledNonHitSample = false)
     {
         lock (_gate)
+        {
+            if (modeledNonHitSample)
+            {
+                if (_modeledNonHitSampleReceived || _modeledNonHitSampleInDelivery is not null) return false;
+                _modeledNonHitSampleInDelivery = ordinal;
+            }
             if (_awaitingDelivery.Add(ordinal)) { _continuationSnapshot = null; PulseReceiptChange(); }
+            return true;
+        }
     }
 
     internal void AbandonDelivery(ulong ordinal)
     {
         lock (_gate)
+        {
+            if (_modeledNonHitSampleInDelivery == ordinal) _modeledNonHitSampleInDelivery = null;
             if (_awaitingDelivery.Remove(ordinal)) { _continuationSnapshot = null; PulseReceiptChange(); }
+        }
     }
 
     internal void AcknowledgeCandidate(string seed)
@@ -169,6 +185,11 @@ internal sealed class SearchRecoveryLedger
         lock (_gate)
         {
             if (!_awaitingDelivery.Remove(ordinal)) return;
+            if (_modeledNonHitSampleInDelivery == ordinal)
+            {
+                _modeledNonHitSampleInDelivery = null;
+                _modeledNonHitSampleReceived = true;
+            }
             _continuationSnapshot = null;
             _acknowledged.Add(ordinal);
             _deliveryRecovery.Remove(ordinal);

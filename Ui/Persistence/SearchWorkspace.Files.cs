@@ -9,6 +9,9 @@ namespace RolltheSpire2.Ui.Workspace;
 
 internal sealed partial class SearchWorkspace
 {
+    private const string WorkspaceFileName = "search_workspace.json";
+    private const string WorkspacePersistenceStage = "Persistence:" + WorkspaceFileName;
+    private const string WorkspaceWriteStage = "PersistenceWrite:" + WorkspaceFileName;
     private readonly string _directory;
     private readonly JsonSerializerOptions _json;
     private readonly Dictionary<string, Exception> _documentFailures = new(StringComparer.OrdinalIgnoreCase);
@@ -85,19 +88,7 @@ internal sealed partial class SearchWorkspace
         if (!File.Exists(path)) return null;
         try
         {
-            string json = File.ReadAllText(path);
-            // Inspect every occurrence before materializing enums or other current DTO fields.
-            // These DTOs use plain integer schema setters/defaults and no numeric converters,
-            // so deserialization cannot produce a future schema absent from this header.
-            using (var header = JsonDocument.Parse(json))
-                if (header.RootElement.ValueKind == JsonValueKind.Object)
-                    foreach (var field in header.RootElement.EnumerateObject())
-                        if (field.Name.Equals("SchemaVersion",StringComparison.OrdinalIgnoreCase) &&
-                            field.Value.ValueKind == JsonValueKind.Number && field.Value.TryGetInt32(out int version) && version > SchemaVersion)
-                            throw new InvalidDataException($"UnsupportedFutureSchema:{version}");
-            T value = JsonSerializer.Deserialize<T>(json, options ?? _json)
-                ?? throw new InvalidDataException("PersistenceDocumentNull");
-            return value;
+            return ReadDocument<T>(path, options ?? _json);
         }
         catch (Exception ex)
         {
@@ -109,6 +100,31 @@ internal sealed partial class SearchWorkspace
             RememberDocumentFailure(fileName, ex);
             return null;
         }
+    }
+
+    internal static UserPreferencesDocument ReadFeaturePreferences(string userDataDirectory)
+    {
+        string path = Path.Combine(userDataDirectory, "RolltheSpire2", "state", "user_preferences.json");
+        if (!File.Exists(path)) return new();
+        try { return ReadDocument<UserPreferencesDocument>(path, new() { PropertyNameCaseInsensitive = true }); }
+        catch (Exception error)
+        {
+            RuntimeLog.WarnException("inRunPreferencesReadFailed=true", error);
+            // The workspace owns quarantine and recovery of its persisted files.
+            return new();
+        }
+    }
+
+    private static T ReadDocument<T>(string path, JsonSerializerOptions options) where T : class
+    {
+        string json = File.ReadAllText(path);
+        using (var header = JsonDocument.Parse(json))
+            if (header.RootElement.ValueKind == JsonValueKind.Object)
+                foreach (var field in header.RootElement.EnumerateObject())
+                    if (field.Name.Equals("SchemaVersion", StringComparison.OrdinalIgnoreCase) &&
+                        field.Value.ValueKind == JsonValueKind.Number && field.Value.TryGetInt32(out int version) && version > SchemaVersion)
+                        throw new InvalidDataException($"UnsupportedFutureSchema:{version}");
+        return JsonSerializer.Deserialize<T>(json, options) ?? throw new InvalidDataException("PersistenceDocumentNull");
     }
 
     private void Quarantine(string path)
@@ -151,18 +167,29 @@ internal sealed partial class SearchWorkspace
         }
         catch (Exception ex)
         {
-            RememberDocumentFailure(fileName, ex);
+            RememberDocumentFailure(fileName, ex, fileName == WorkspaceFileName ? WorkspaceWriteStage : null);
             return false;
         }
     }
 
+    private static bool IsWorkspaceWriteIssue(string detail)
+    {
+        if (detail.StartsWith(WorkspaceWriteStage + ": ", StringComparison.Ordinal)) return true;
+        // Older builds recorded writes and reads under one stage. Only the
+        // outer call site identifies a write that this commit recovers.
+        if (!detail.StartsWith(WorkspacePersistenceStage + ": ", StringComparison.Ordinal)) return false;
+        var stack = detail.AsSpan().TrimEnd();
+        return stack[(stack.LastIndexOf('\n') + 1)..].Contains(
+            "RolltheSpire2.Ui.Workspace.SearchWorkspace.WriteNow[", StringComparison.Ordinal);
+    }
+
     private void PersistenceNotice(Action write)
     { try { write(); } catch (Exception exception) { RecordPresentationFailure(exception, "PersistenceDiagnostics"); } }
-    private void RememberDocumentFailure(string fileName, Exception exception)
+    private void RememberDocumentFailure(string fileName, Exception exception, string? stage = null)
     {
         _documentFailures[fileName] = exception;
         LastPersistenceFailure = exception;
-        RecordPresentationFailure(exception, "Persistence:" + fileName);
+        RecordPresentationFailure(exception, stage ?? "Persistence:" + fileName);
     }
     internal void RecordPresentationFailure(Exception exception, string stage, string? seed = null)
     {
@@ -175,7 +202,11 @@ internal sealed partial class SearchWorkspace
         catch { /* The original exception remains in memory below if diagnostics fail. */ }
         string detail = stage + ": " + exception;
         if (_workspace is { } workspace && !workspace.AuxiliaryIssues.Contains(detail, StringComparer.Ordinal))
-        { workspace.AuxiliaryIssues.Add(detail); MarkWorkspaceDirty(); }
+        {
+            workspace.AuxiliaryIssues.Add(detail);
+            ResultsRevision++;
+            MarkWorkspaceDirty();
+        }
         if (!_auxiliaryFailures.Contains(detail, StringComparer.Ordinal)) _auxiliaryFailures.Add(detail);
         try { RuntimeLog.Warn("searchWorkspaceAuxiliaryFailed=true;stage=" + stage + ";seed=" + seed + ";exception=" + exception); }
         catch { /* Logging cannot take ownership of a valid search. */ }

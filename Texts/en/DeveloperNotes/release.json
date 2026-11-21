@@ -4,6 +4,18 @@
   "Blocks": [
     {
       "Type": "Heading",
+      "ReleaseVersion": "1.4.7",
+      "Text": "RT2 1.4.7 Release Notes"
+    },
+    {
+      "Type": "BulletList",
+      "Items": [
+        "Fixed cases where RT2 incorrectly blocked predictions for some Ancient options.",
+        "Reduced startup time for some combinations of seed filters. In solo searches on the beta branch, Astrolabe and Pandora’s Box filters can now use GPU acceleration when the card pool and the number of cards to transform are known."
+      ]
+    },
+    {
+      "Type": "Heading",
       "ReleaseVersion": "1.4.6",
       "Text": "RT2 1.4.6 Release Notes"
     },

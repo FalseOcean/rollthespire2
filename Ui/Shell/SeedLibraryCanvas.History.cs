@@ -38,8 +38,11 @@ internal sealed partial class SeedLibraryCanvas
         bool busy = SearchBusy?.Invoke() == true;
         foreach (var button in _idleActions)
             button.Disabled = busy || button.GetMeta("unavailable").AsBool();
-        if (_section != LibrarySection.History || !IsPresentationReady || _historyRevision == _historyStore.ResultsRevision) return;
-        RefreshEntries();
+        if (_section != LibrarySection.History || !IsPresentationReady) return;
+        if (_historyRevision != _historyStore.ResultsRevision) RefreshEntries();
+        else if (_detail.GetNodeOrNull<Label>("HistorySeedCoverage") is { } label &&
+            _visibleQueries.FirstOrDefault(record => record.Id == _selectedHistory) is { } query)
+            label.Text = HistoryCoverageText(query);
     }
 
     private void BuildHistoryToolbar(VBoxContainer body)
@@ -120,6 +123,17 @@ internal sealed partial class SeedLibraryCanvas
         (query.Draft.Players.Count > 0 ? T($"{query.Draft.Players.Count} 人", $"{query.Draft.Players.Count} players") : T("单人", "Solo")) +
         $" · A{query.Draft.Ascension} · {query.LastUsedAtUtc.ToLocalTime():MM-dd HH:mm}";
 
+    private string HistoryCoverageText(QueryHistoryEntry query)
+    {
+        string runs = T($"已搜索 {query.RunCount} 次", query.RunCount == 1 ? "1 search" : $"{query.RunCount} searches");
+        if (query.SeedCoverage is not { } coverage)
+            return runs + T(" · 尚无种子覆盖记录", " · Seed coverage unrecorded");
+        ulong distinct = coverage.Count;
+        string count = distinct.ToString("N0", System.Globalization.CultureInfo.InvariantCulture);
+        return runs + T($" · 自启用统计以来，已完成的扫描区间覆盖 {count} 个不同种子",
+            $" · Completed scan ranges since tracking began cover {count} distinct " + (distinct == 1 ? "seed" : "seeds"));
+    }
+
     private SearchPresetDefinition? RenderQueryHistory()
     {
         if (_historyStore!.QueryHistoryIssue.Length > 0) ShowIssue(T("部分历史无法读取，原文件已保留。", "Some history could not be read; original files are preserved."));
@@ -140,6 +154,11 @@ internal sealed partial class SeedLibraryCanvas
         conditions.Name = "HistoryConditions"; _palette.SetActive(conditions, !_historyResults);
         var results = AddAction(actions, T($"结果（{selected?.Results.Count ?? 0}）", $"Results ({selected?.Results.Count ?? 0})"), () => { if (!_historyResults) { _historyResults = true; SelectDetail(); } });
         results.Name = "HistoryResults"; _palette.SetActive(results, _historyResults);
+        if (selected is not null)
+        {
+            var coverage = Text(HistoryCoverageText(selected), 17, true);
+            coverage.Name = "HistorySeedCoverage"; _detail.AddChild(coverage);
+        }
         if (!canUse) _detail.AddChild(Text(issue, 17, true));
         if (selected is not null) AddEnvironmentNotice(selected);
         if (selected is not null)

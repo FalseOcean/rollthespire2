@@ -24,12 +24,12 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         a with { ObservedAtUtc=b.ObservedAtUtc, SelectedCards=b.SelectedCards, ColorlessCards=b.ColorlessCards, CurseCards=b.CurseCards,
             CharacterPotions=b.CharacterPotions, SharedPotions=b.SharedPotions, CharacterRelics=b.CharacterRelics,
             SharedRelics=b.SharedRelics, OtherCharacterPools=b.OtherCharacterPools, Deck=b.Deck,
-            UnlockDescriptors=b.UnlockDescriptors, NativeCharacterPoolOrder=b.NativeCharacterPoolOrder } == b &&
+            UnlockDescriptors=b.UnlockDescriptors, NativeCharacterPoolOrder=b.NativeCharacterPoolOrder, ColorfulCandidateColors=b.ColorfulCandidateColors } == b &&
         PoolEqual(a.SelectedCards,b.SelectedCards) && PoolEqual(a.ColorlessCards,b.ColorlessCards) &&
         PoolEqual(a.CurseCards,b.CurseCards) && PoolEqual(a.CharacterPotions,b.CharacterPotions) &&
         PoolEqual(a.SharedPotions,b.SharedPotions) && PoolEqual(a.CharacterRelics,b.CharacterRelics) &&
         PoolEqual(a.SharedRelics,b.SharedRelics) && Same(a.Deck,b.Deck) && Same(a.UnlockDescriptors,b.UnlockDescriptors) &&
-        Same(a.NativeCharacterPoolOrder,b.NativeCharacterPoolOrder) &&
+        Same(a.NativeCharacterPoolOrder,b.NativeCharacterPoolOrder) && Same(a.ColorfulCandidateColors,b.ColorfulCandidateColors) &&
         Same(a.OtherCharacterPools,b.OtherCharacterPools,(x,y) => x with { Cards=y.Cards } == y && Same(x.Cards,y.Cards));
 
     internal static bool WorldInputsEqual(WorldObservedInputs a, WorldObservedInputs b) =>
@@ -41,7 +41,8 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         ModelsEqual(a.UnlockedCharacters,b.UnlockedCharacters) && ModelsEqual(a.RelicCatalog,b.RelicCatalog) &&
         EventsEqual(a.EventAuthority,b.EventAuthority) && ModernEqual(a.ModernAuthority,b.ModernAuthority) &&
         Same(a.Groups,b.Groups,(x,y) => x.Act == y.Act && Same(x.Acts,y.Acts,ActEqual));
-    private static bool ModelsEqual(ModelListCapture a, ModelListCapture b) => a.Exact == b.Exact && Same(a.Keys,b.Keys);
+    private static bool ModelsEqual(ModelListCapture a, ModelListCapture b) => a.Exact == b.Exact && Same(a.Keys,b.Keys) &&
+        Same(a.ReferenceIds,b.ReferenceIds) && Same(a.UnknownAncientGenerators,b.UnknownAncientGenerators);
     private static bool ActEqual(WorldActSnapshot a, WorldActSnapshot b) =>
         a with { Events=b.Events, WeakEncounters=b.WeakEncounters, RegularEncounters=b.RegularEncounters,
             EliteEncounters=b.EliteEncounters, Bosses=b.Bosses, Ancients=b.Ancients,
@@ -54,7 +55,10 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
     private static bool LegacyEncounterEqual(WorldEncounterSnapshot a, WorldEncounterSnapshot b) =>
         a.EncounterKey == b.EncounterKey && Same(a.Tags,b.Tags);
     private static bool EventsEqual(Beta109EventCatalogAuthoritySnapshot a, Beta109EventCatalogAuthoritySnapshot b) =>
-        a with { OrderedSharedEventsRaw=b.OrderedSharedEventsRaw, EpochsInFilterOrder=b.EpochsInFilterOrder } == b &&
+        a with { OrderedSharedEventsRaw=b.OrderedSharedEventsRaw, EpochsInFilterOrder=b.EpochsInFilterOrder,
+            LockedEventsAfterShuffle=b.LockedEventsAfterShuffle } == b &&
+        (a.LockedEventsAfterShuffle == null ? b.LockedEventsAfterShuffle == null :
+            b.LockedEventsAfterShuffle != null && Same(a.LockedEventsAfterShuffle,b.LockedEventsAfterShuffle)) &&
         Same(a.OrderedSharedEventsRaw,b.OrderedSharedEventsRaw) && Same(a.EpochsInFilterOrder,b.EpochsInFilterOrder,
             (x,y) => x with { OrderedMemberKeys=y.OrderedMemberKeys } == y && Same(x.OrderedMemberKeys,y.OrderedMemberKeys));
     private static bool ModernEqual(Beta109StaticAuthorityCapture? a, Beta109StaticAuthorityCapture? b)
@@ -65,13 +69,18 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             AllCharactersInSourceOrder=b.AllCharactersInSourceOrder, OrderedActs=b.OrderedActs,
             SharedEvents=b.SharedEvents, EventAuthority=b.EventAuthority, AllSharedAncients=b.AllSharedAncients,
             UnlockedSharedAncients=b.UnlockedSharedAncients, SharedRelicBuckets=b.SharedRelicBuckets,
-            PlayerRelicBuckets=b.PlayerRelicBuckets } == b &&
+            PlayerRelicBuckets=b.PlayerRelicBuckets, SharedAncientReferenceIds=b.SharedAncientReferenceIds, AncientRules=b.AncientRules } == b &&
+            Same(a.SharedAncientReferenceIds,b.SharedAncientReferenceIds) && AncientRulesEqual(a.AncientRules,b.AncientRules) &&
             Same(a.LobbyPlayers,b.LobbyPlayers) && Same(a.AllCharactersInSourceOrder,b.AllCharactersInSourceOrder) &&
             Same(a.SharedEvents,b.SharedEvents) && EventsEqual(a.EventAuthority,b.EventAuthority) &&
             Same(a.AllSharedAncients,b.AllSharedAncients) && Same(a.UnlockedSharedAncients,b.UnlockedSharedAncients) &&
             Same(a.SharedRelicBuckets,b.SharedRelicBuckets,BucketEqual) && Same(a.PlayerRelicBuckets,b.PlayerRelicBuckets,BucketEqual) &&
             Same(a.ActSelectionGroups,b.ActSelectionGroups,SelectionEqual) && Same(a.OrderedActs,b.OrderedActs,GenerationEqual);
     }
+    private static bool AncientRulesEqual(Beta109AncientRuleObservation? a, Beta109AncientRuleObservation? b) =>
+        ReferenceEquals(a,b) || a is not null && b is not null && a.StandardOptionWrapper == b.StandardOptionWrapper &&
+        Same(a.PaelRelics,b.PaelRelics) && Same(a.PatchedAncientGenerators,b.PatchedAncientGenerators) &&
+        Same(a.SharedAncientsWithUnknownGenerator,b.SharedAncientsWithUnknownGenerator);
     private static bool BucketEqual(Beta109RelicBucketSnapshot a, Beta109RelicBucketSnapshot b) =>
         a with { OrderedRelics=b.OrderedRelics, OrderedEntries=b.OrderedEntries } == b &&
         Same(a.OrderedRelics,b.OrderedRelics) && Same(a.OrderedEntries,b.OrderedEntries);
@@ -80,7 +89,8 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         Same(a.EligibleActsInSourceOrder,b.EligibleActsInSourceOrder) && Same(a.CandidatesInSourceOrder,b.CandidatesInSourceOrder);
     private static bool GenerationEqual(Beta109ActGenerationSnapshot a, Beta109ActGenerationSnapshot b) =>
         a with { OrderedEvents=b.OrderedEvents, OrderedGenerateAllEncounters=b.OrderedGenerateAllEncounters,
-            OrderedAncients=b.OrderedAncients, OrderedRawEvents=b.OrderedRawEvents, OrderedEligibleEvents=b.OrderedEligibleEvents } == b &&
+            OrderedAncients=b.OrderedAncients, OrderedRawEvents=b.OrderedRawEvents, OrderedEligibleEvents=b.OrderedEligibleEvents,
+            AncientsWithUnknownGenerator=b.AncientsWithUnknownGenerator } == b && Same(a.AncientsWithUnknownGenerator,b.AncientsWithUnknownGenerator) &&
         Same(a.OrderedEvents,b.OrderedEvents) && Same(a.OrderedAncients,b.OrderedAncients) &&
         Same(a.OrderedRawEvents,b.OrderedRawEvents) && Same(a.OrderedEligibleEvents,b.OrderedEligibleEvents) &&
         Same(a.OrderedGenerateAllEncounters,b.OrderedGenerateAllEncounters,EncounterEqual);

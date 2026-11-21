@@ -41,6 +41,7 @@ internal sealed class TransformationAggregateGpuPlan
         var mode => throw new InvalidOperationException("T.UnknownEntryIdentityExperiment:" + mode)
     };
     internal bool FullTarget { get; }
+    internal bool AncientFixedPool { get; }
     internal bool UsesModern113 { get; }
     internal bool PrefixReuse { get; }
     internal const string PrefixReuseRevision = ".DensePrefixReuse.20261027.v1";
@@ -52,7 +53,9 @@ internal sealed class TransformationAggregateGpuPlan
     internal GpuNumericalVariant NumericalVariant { get; }
     internal GpuNumericRequirements NumericRequirements => Supported ? GpuIntegerNumerics.Requirements(NumericalVariant) : GpuNumericRequirements.None;
     internal string NumericalRevision => NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "";
-    internal string Revision(bool compact) => (BonesOptimized ? "T.Gpu.BonesTracked."+(FullTarget?"TransformFirst.Carry8.AllRequired":"OpeningFirst.Generic")+".20261001.v1" :
+    internal string Revision(bool compact) => AncientFixedPool ?
+        "T.Gpu.Ancient.FixedPool.PrefixTable.20261121.v1." + (compact ? "CompactAbi1" : "Dense") + NumericalRevision + GpuRngRotation.Revision :
+        (BonesOptimized ? "T.Gpu.BonesTracked."+(FullTarget?"TransformFirst.Carry8.AllRequired":"OpeningFirst.Generic")+".20261001.v1" :
         FullTarget?FullTargetRevision:GenericRevision)+"."+(compact?"CompactAbi1":"Dense")+".CanonicalAbi1Ready" + NumericalRevision +
         (EntryIdentityTracked ? EntryIdentityRevision : "") + (PrefixReuse ? PrefixReuseRevision : "") +
         (UsesModern113 ? ".Modern113" : "") + NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision;
@@ -61,6 +64,18 @@ internal sealed class TransformationAggregateGpuPlan
     internal uint[][] Buffers { get; }
     internal bool Supported { get; }
     internal TransformationAggregateGpuPlan() { Buffers = []; }
+    internal TransformationAggregateGpuPlan(TransformationAncientNumericalPlan plan,
+        GpuNumericalVariant numericalVariant)
+    {
+        if (numericalVariant is not (GpuNumericalVariant.NativeFloat64 or GpuNumericalVariant.IntegerRne))
+            throw new ArgumentOutOfRangeException(nameof(numericalVariant));
+        NumericalVariant = numericalVariant;
+        AncientFixedPool = true;
+        PrefixReuse = true;
+        UsesModern113 = true;
+        Supported = true;
+        Buffers = plan.PackGpu();
+    }
     internal TransformationAggregateGpuPlan(TransformationAggregateNumericalPlan p,
         GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64, bool? prefixReuse = null, bool? entryIdentity = null)
     {
@@ -160,6 +175,14 @@ internal sealed class TransformationAggregateGpuPlan
             // visible-seed codec/xxHash instead of the loop-and-array codec.
             rng = rng[..rng.IndexOf("uint64_t prime1()",StringComparison.Ordinal)] +
                 FamilyGpuComputeUtility.LoadEmbeddedShader("VisibleSeedRootHashCommon.glsl");
+        }
+        if (AncientFixedPool)
+        {
+            string ancient = FamilyGpuComputeUtility.LoadEmbeddedShader("TransformationAncientFixedPool.comp.glsl")
+                .Replace("/*__RNG__*/", rng, StringComparison.Ordinal)
+                .Replace("/*__COUNTERS__*/", Buffers[0][7].ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal)
+                .Replace("/*__PREFIX__*/", FamilyGpuComputeUtility.LoadEmbeddedShader("NeowSeedPrefixTable.glsl"), StringComparison.Ordinal);
+            return NumericalVariant == GpuNumericalVariant.IntegerRne ? TransformationAggregateGpuNumericalSource.IntegerRne(ancient) : ancient;
         }
         string body=FamilyGpuComputeUtility.LoadEmbeddedShader("TransformationAggregate.comp.glsl");
         if (!FullTarget)

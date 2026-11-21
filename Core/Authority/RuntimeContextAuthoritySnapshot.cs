@@ -1,6 +1,7 @@
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Authority;
 using RolltheSpire2.Core.Identity;
+using RolltheSpire2.Core.Neow;
 using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.World.Snapshots;
 
@@ -43,7 +44,8 @@ public sealed class RuntimeContextAuthoritySnapshot
         WorldGameMode predictionGameMode = WorldGameMode.Unknown,
         PredictionGameModeAuthority predictionGameModeAuthority = PredictionGameModeAuthority.Unknown,
         RequestSupportEvidence? supportEvidence = null,
-        IReadOnlyList<ModelKey>? availableCardIdentities = null)
+        IReadOnlyList<ModelKey>? availableCardIdentities = null,
+        NeowOfferCatalog? capturedNeowOffers = null)
     {
         AvailableCardIdentities = CopyCardIdentities(availableCardIdentities);
         Character = character;
@@ -68,6 +70,11 @@ public sealed class RuntimeContextAuthoritySnapshot
         WorldAuthority = worldAuthority;
         PredictionGameMode = predictionGameMode;
         PredictionGameModeAuthority = predictionGameModeAuthority;
+        CapturedNeowOffers = capturedNeowOffers;
+        NeowPreparation = capturedNeowOffers != null
+            ? ModernNeowIdentityRules.PrepareCatalog(capturedNeowOffers.Positives, capturedNeowOffers.Curses,
+                playersCount, allCharacterCardPoolsUnlocked, IsScrollBoxesAllowed)
+            : ModernNeowIdentityRules.Prepare(playersCount, allCharacterCardPoolsUnlocked, IsScrollBoxesAllowed);
         SupportEvidence = supportEvidence ?? RequestSupportEvidence.Unknown;
         SupportScope = RequestSupportAssessment.Assess(this);
         UnlockSnapshotFingerprint = SnapshotFingerprint.BuildUnlockSnapshot(
@@ -87,6 +94,9 @@ public sealed class RuntimeContextAuthoritySnapshot
             isVanilla,
             SourceModId,
             SourceAssembly);
+        if (capturedNeowOffers != null)
+            CatalogFingerprint = OrderedPartyAuthority.Hash(CatalogFingerprint + "|" +
+                string.Join(",", capturedNeowOffers.Curses) + "|" + string.Join(",", capturedNeowOffers.Positives));
     }
 
     public CharacterIdentity Character { get; }
@@ -95,6 +105,8 @@ public sealed class RuntimeContextAuthoritySnapshot
     public int PlayersCount { get; }
     public bool? NoRunModifiers { get; }
     public bool? VanillaNeowCatalogExact { get; }
+    public NeowOfferCatalog? CapturedNeowOffers { get; }
+    internal ModernNeowIdentityPreparation NeowPreparation { get; }
     public bool? AllCharacterCardPoolsUnlocked { get; }
     public int? UnlockedCommonCards { get; }
     public int? UnlockedUncommonCards { get; }
@@ -137,15 +149,20 @@ public sealed class RuntimeContextAuthoritySnapshot
     // are shared internally; a public constructor cannot inject a different assessment.
     private RuntimeContextAuthoritySnapshot(RuntimeContextAuthoritySnapshot source,
         NeowEffectAuthoritySnapshot? effects, WorldAuthoritySnapshot? world,
-        IReadOnlyList<ModelKey>? availableCardIdentities = null, bool replaceCardIdentities = false)
+        IReadOnlyList<ModelKey>? availableCardIdentities = null, bool replaceCardIdentities = false,
+        bool assumeStandardOpening = false)
     {
         AvailableCardIdentities = replaceCardIdentities ? CopyCardIdentities(availableCardIdentities) : source.AvailableCardIdentities;
         Character = source.Character;
         Ascension = source.Ascension;
         PlayerSlotIndex = source.PlayerSlotIndex;
         PlayersCount = source.PlayersCount;
-        NoRunModifiers = source.NoRunModifiers;
-        VanillaNeowCatalogExact = source.VanillaNeowCatalogExact;
+        UsesStandardOpeningAssumption = source.UsesStandardOpeningAssumption || assumeStandardOpening;
+        NoRunModifiers = UsesStandardOpeningAssumption ? true : source.NoRunModifiers;
+        VanillaNeowCatalogExact = UsesStandardOpeningAssumption && source.CapturedNeowOffers is null
+            ? true : source.VanillaNeowCatalogExact;
+        CapturedNeowOffers = source.CapturedNeowOffers;
+        NeowPreparation = source.NeowPreparation;
         AllCharacterCardPoolsUnlocked = source.AllCharacterCardPoolsUnlocked;
         UnlockedCommonCards = source.UnlockedCommonCards;
         UnlockedUncommonCards = source.UnlockedUncommonCards;
@@ -177,6 +194,12 @@ public sealed class RuntimeContextAuthoritySnapshot
     public RuntimeContextAuthoritySnapshot WithWorldAuthority(WorldAuthoritySnapshot? worldAuthority) =>
         new(this, EffectAuthority, worldAuthority);
 
+    // This copy is used only inside a conditional replay. Keep observed unlocks, catalog
+    // order and player identity. Unknown eligibility stays represented in NeowPreparation.
+    internal bool UsesStandardOpeningAssumption { get; }
+    internal RuntimeContextAuthoritySnapshot AssumingStandardOpening() =>
+        new(this, EffectAuthority, WorldAuthority, assumeStandardOpening: true);
+
     public bool HasCoreNoModifierCatalogAuthority =>
         (ResolutionStatus == IdentityResolutionStatus.Exact || UsesBestEffortModel) &&
         NoRunModifiers == true &&
@@ -190,9 +213,9 @@ public sealed class RuntimeContextAuthoritySnapshot
     /// </summary>
     public bool HasExactModernNeowIdentityInputs =>
         NoRunModifiers == true &&
-        VanillaNeowCatalogExact == true &&
-        AllCharacterCardPoolsUnlocked.HasValue &&
-        IsScrollBoxesAllowed.HasValue;
+        (VanillaNeowCatalogExact == true && AllCharacterCardPoolsUnlocked.HasValue && IsScrollBoxesAllowed.HasValue ||
+         CapturedNeowOffers != null && VersionResolution.SemanticProfileId == RngSemanticProfileId.Modern113 &&
+         !NeowPreparation.UnknownEligibilityAffectedPool && !NeowPreparation.EligibleCurses.IsEmpty);
 
     public bool IsBeta110NeowIdentityAuthorityExact =>
         IsBeta110Context &&
@@ -354,10 +377,12 @@ public sealed class RuntimeContextAuthoritySnapshot
     {
         get
         {
-            RuntimeVersionResolution resolution = RuntimeVersionCompatibility.Resolve(GameVersion);
-            return resolution.IsAuditedCompatible
+            if (!VersionResolution.IsAuditedCompatible)
+                return $"unverified-game-version:{VersionResolution.GameVersionIdentity};reuse={VersionResolution.ReferenceVersion};semantic={VersionResolution.SemanticProfileId}";
+            // The adapter's source audit only covers its original RNG rules.
+            return VersionResolution.SemanticProfileId == RuntimeProfilePolicies.RngSemanticProfile(ProfileId)
                 ? RuntimeProfilePolicies.AuditFingerprint(ProfileId)
-                : $"unverified-game-version:{resolution.GameVersionIdentity};reuse={resolution.ReferenceVersion};semantic={resolution.SemanticProfileId}";
+                : VersionResolution.EvidenceCode;
         }
     }
     public string RuntimeCardCatalogFingerprint => EffectAuthority?.CatalogFingerprint ?? string.Empty;

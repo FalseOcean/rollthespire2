@@ -13,6 +13,7 @@ internal static class FamilyWorldChecks
 {
     internal static int Run(int count)
     {
+        CheckScopedWorldAuthority();
         CheckScalarBossBranches();
         CheckSharedAncientSlices();
         var world = Beta109WorldFixtureFactory.Create();
@@ -68,8 +69,27 @@ internal static class FamilyWorldChecks
         Add("OversizedFirstN",empty with {EventSequenceConditions=[new(1,null,SearchSequenceRangeMode.FirstN,300,Any(actOne.OrderedRawEvents[0]))]});
         int checks=0;var fixtures=new List<object>();
         string dir=Path.Combine(Environment.CurrentDirectory,".build-evidence","w-gpu");Directory.CreateDirectory(dir);
+        // Exercise the actual W GPU/CPU transport with both affected inputs, including a
+        // zero-draw Act 1 and Modern113 shuffles whose event identities cannot be inspected.
+        Add("FreshModern113Pael", empty with { AncientIdentityFilters = [new(2, Any(g.OrderedActCatalog[1].OrderedAncients[0]))] });
         foreach(var (name,q) in cases)
         {
+            if (name == "FreshModern113Pael")
+            {
+                g = g with
+                {
+                    RngSemantics = RngSemanticProfileId.Modern113,
+                    SharedEventCatalogExact = false, EventAuthority = g.EventAuthority with { SharedRawOrderExact = false },
+                    OrderedActCatalog = g.OrderedActCatalog.Select(a => a with
+                    {
+                        OrderedAncients = a.Act == 1 ? [] : a.OrderedAncients,
+                        OrderedEligibleEvents = [], EligibleEventOrderExact = false
+                    }).ToArray()
+                };
+                world = world with { Beta109Generation = g };
+                authority = authority.WithWorldAuthority(world);
+                context = context with { Authority = authority };
+            }
             var compiled=SearchCompiler.Compile(q,context);
             var request=new PreparedSearch(new SearchModel(compiled, CompiledSearchEvaluationProjector.Project(compiled).Evaluation, CombatRewardRoutePolicyContract.None, compiled.SemanticFingerprint), new("000000000000",10000,30,1), "000000000000", 10000, compiled.SemanticFingerprint);
             if (!WorldFamilyReplay.HasConditions(request.Model))
@@ -177,6 +197,213 @@ internal static class FamilyWorldChecks
         File.WriteAllText(Path.Combine(dir,"project.godot"),"config_version=5\n[application]\nconfig/name=\"W Family GPU parity\"\n[rendering]\nrenderer/rendering_method=\"mobile\"\n");
         File.Copy("tests/functional/Rt2FunctionalChecks/WorldGpuSanity.gd",Path.Combine(dir,"check.gd"),true);
         Console.WriteLine($"W_CPU_CORE_PASS checks={checks}; GPU fixtures={fixtures.Count}");return 0;
+    }
+    private static void CheckScopedWorldAuthority()
+    {
+        var fixture = Beta109WorldFixtureFactory.Create();
+        var source = fixture.Beta109Generation!;
+        var generation = source with
+        {
+            Profile = RuntimeProfileId.Beta111, RngSemantics = RngSemanticProfileId.Modern113,
+            WorldGenerationHooksExact = true,
+            FixtureValidationStatus = RolltheSpire2.Core.World.Snapshots.Beta109FixtureValidationStatus.VerifiedRealGame,
+            VerifiedRealGameFixtureIds = ["ancient-identity:synthetic", "ancient-option:PAEL:synthetic", "boss:synthetic"],
+            OrderedActCatalog = source.OrderedActCatalog.Select(a => a.Act == 1 ? a with { OrderedAncients = [] } : a).ToArray()
+        };
+        const string roomHook = "RoomGenerationMethodPatched:RunManager.GenerateRooms";
+        const string startHook = "RelicInitializationMethodPatched:RunManager.InitializeNewRun";
+        foreach (var rules in new[] { RngSemanticProfileId.Modern110, RngSemanticProfileId.Modern113 })
+        foreach (bool beforeBags in new[] { false, true })
+        {
+            var captured = fixture with
+            {
+                CapturedProfileId = RuntimeProfileId.Beta111,
+                Beta109Generation = generation with
+                {
+                    RngSemantics = rules,
+                    WorldGenerationHooksExact = false,
+                    RoomReplayAssumption = beforeBags ? string.Empty : roomHook,
+                    InitialRelicReplayAssumption = beforeBags ? startHook : string.Empty,
+                    RelicInitializationExact = !beforeBags,
+                    UpFrontPrefix = beforeBags
+                        ? RolltheSpire2.Core.World.Snapshots.Beta109UpFrontPrefixSnapshot.Missing("MissingRelicInitialization")
+                        : generation.UpFrontPrefix
+                }
+            };
+            if (!WorldReplayAssumptions.TryCreate(captured, out var modeled, out var issue) ||
+                issue != (beforeBags ? startHook : roomHook) ||
+                modeled.Beta109Generation!.InitialRelicReplayAssumption != (beforeBags ? startHook : string.Empty) ||
+                captured.Beta109Generation.WorldGenerationHooksExact)
+                throw new Exception("Conditional world replay lost the original hook or modified strict inputs");
+            WorldPredictionResult Project(RolltheSpire2.Core.World.Snapshots.WorldAuthoritySnapshot world) =>
+                Beta109WorldPredictionProvider.PredictFromRootHash(0, "root-hash:0", 10, 0,
+                    source.CharacterKey, world, AncientOptionConditionProfile.BroadDefault);
+            if (Project(captured).Ancients.Count != 0 || Project(modeled).Ancients.Count != 3)
+                throw new Exception("Normal room replay did not distinguish observed and conditional identities");
+            var missingRows = captured with { Beta109Generation = captured.Beta109Generation with
+                { UnlockFactsExact = false } };
+            if (!WorldReplayAssumptions.TryCreate(missingRows, out var missingModel, out _) ||
+                Project(missingModel).Ancients.Count != 0)
+                throw new Exception("A hook assumption supplied missing unlock data");
+        }
+        foreach (var rules in new[] { RngSemanticProfileId.Modern110, RngSemanticProfileId.Modern113 })
+        {
+            var hooked = fixture with
+            {
+                CapturedProfileId = RuntimeProfileId.Beta111,
+                Beta109Generation = generation with
+                {
+                    RngSemantics = rules,
+                    EventAuthority = generation.EventAuthority with { LockedEventsAfterShuffle = null },
+                    AncientEventContexts = generation.AncientEventContexts.Select(c => c.AncientKey.Entry == "PAEL" ? c with
+                    {
+                        HookDecision = RolltheSpire2.Core.World.Snapshots.Beta109HookDecision.Unknown,
+                        EventIsSharedAuthorityExact = true, OptionReplayAssumption = "StandardAncientOptionGenerator:PAEL"
+                    } : c).ToArray()
+                }
+            };
+            if (!WorldReplayAssumptions.TryCreate(hooked, out var normal, out string reason))
+                throw new Exception("Post-shuffle filter and registered option rules had no conditional model");
+            WorldPredictionResult ReplayLeaves(RolltheSpire2.Core.World.Snapshots.WorldAuthoritySnapshot world) =>
+                Beta109WorldPredictionProvider.PredictFromRootHash(0, "root-hash:0", 10, 0, source.CharacterKey, world,
+                    AncientOptionConditionProfile.BroadDefault);
+            var missingOptions = hooked with { Beta109Generation = hooked.Beta109Generation with
+            {
+                AncientEventContexts = hooked.Beta109Generation.AncientEventContexts.Select(c => c.AncientKey.Entry == "PAEL"
+                    ? c with { Catalog = null } : c).ToArray()
+            } };
+            if (!WorldReplayAssumptions.TryCreate(missingOptions, out var queueOnly, out string queueReason) ||
+                queueReason != "NoAdditionalEventRemovals" ||
+                ReplayLeaves(queueOnly).Ancients.Single(a => a.Act == 2).Options.Count != 0)
+                throw new Exception("A post-shuffle event assumption supplied a missing option catalog");
+            var strict = ReplayLeaves(hooked);
+            var estimated = ReplayLeaves(normal);
+            var expected = ReplayLeaves(fixture with { Beta109Generation = generation with { RngSemantics = rules } });
+            SeedPredictionFacts Facts(WorldPredictionResult w) => new() { World = w, PredictorId = "test",
+                OriginalSeed = "0", CanonicalSeed = "0", Context = null! };
+            var combined = SeedAnalysisModelResults.Combine(Facts(strict), Facts(estimated),
+                new Dictionary<SeedPredictionDomainSelection, string> { [SeedPredictionDomainSelection.World] = reason });
+            var merged = combined.World!;
+            var paelRow = merged.Ancients.Single(a => a.Act == 2);
+            if (strict.EventPoolSequencePrediction?.Acts.Count != 0 || strict.Ancients.Single(a => a.Act == 2).Options.Count != 0 ||
+                combined.ModelAssumptions.Count != 0 || merged.EventSequenceReplayAssumption != "NoAdditionalEventRemovals" ||
+                merged.EventPoolSequencePrediction?.RawEventOrderPrecision != PredictionPrecision.Partial ||
+                !merged.EventPoolSequencePrediction.Acts.SelectMany(a => a.RawEntries.Select(e => (a.Act, e.EventKey)))
+                    .SequenceEqual(expected.EventPoolSequencePrediction!.Acts.SelectMany(a => a.RawEntries.Select(e => (a.Act, e.EventKey)))) ||
+                !merged.Bosses.SequenceEqual(strict.Bosses) || !merged.EncounterSequences.SequenceEqual(strict.EncounterSequences) ||
+                paelRow.IdentityPrecision != PredictionPrecision.Exact || paelRow.OptionReplayAssumption != "StandardAncientOptionGenerator:PAEL" ||
+                paelRow.Options.Count == 0 || paelRow.Options.Any(o => o.OptionPrecision == PredictionPrecision.Exact) ||
+                !paelRow.Options.Select(o => o.OptionKey).SequenceEqual(expected.Ancients.Single(a => a.Act == 2).Options.Select(o => o.OptionKey)))
+                throw new Exception($"Conditional world {rules}: strict events={strict.EventPoolSequencePrediction?.Acts.Count}, " +
+                    $"strict options={strict.Ancients.Single(a => a.Act == 2).Options.Count}, domains={combined.ModelAssumptions.Count}, " +
+                    $"events={merged.EventSequenceReplayAssumption}/{merged.EventPoolSequencePrediction?.Precision}, " +
+                    $"bosses={merged.Bosses.SequenceEqual(strict.Bosses)}, encounters={merged.EncounterSequences.SequenceEqual(strict.EncounterSequences)}, " +
+                    $"options={paelRow.AncientKey}/{paelRow.IdentityPrecision}/{paelRow.OptionReplayAssumption}/{paelRow.Options.Count}, " +
+                    $"strict option issue={strict.Ancients.Single(a => a.Act == 2).OptionIssueCode}, estimated option issue={estimated.Ancients.Single(a => a.Act == 2).OptionIssueCode}, " +
+                    $"expected={string.Join(',', expected.Ancients.Single(a => a.Act == 2).Options.Select(o => o.OptionKey))}");
+        }
+        var missingEvents = generation with
+        {
+            SharedEventCatalogExact = false,
+            EventAuthority = generation.EventAuthority with { SharedRawOrderExact = false },
+            OrderedActCatalog = generation.OrderedActCatalog.Select(a => a with
+                { OrderedEligibleEvents = [], EligibleEventOrderExact = false }).ToArray()
+        };
+        var lateMissing = missingEvents with
+        {
+            OrderedActCatalog = missingEvents.OrderedActCatalog.Select(a => a.Act == 3
+                ? a with { EncounterTagComparerExact = false } : a).ToArray()
+        };
+        var pael = generation.AncientEventContexts.Single(c => c.Act == 2 && c.AncientKey.Entry == "PAEL");
+        var partialCatalog = pael.Catalog! with
+        {
+            Pools = pael.Catalog!.Pools.Select(p => p.PoolId == "pael.pool3.no-event-pet"
+                ? p with { FilterResultExact = false } : p).ToArray()
+        };
+        var partial = lateMissing with { AncientEventContexts = [pael with { Catalog = partialCatalog }] };
+        var emptyThird = pael.Catalog! with
+        {
+            Pools = pael.Catalog!.Pools.Select(p => p.PoolId.StartsWith("pael.pool3.", StringComparison.Ordinal)
+                ? p with { OrderedOptions = [] } : p).ToArray()
+        };
+        var refill = generation with { AncientEventContexts = [pael with { Catalog = emptyThird }] };
+        var countOnly = lateMissing with
+        {
+            InitialRelicShuffleCount = generation.SharedRelicBuckets.Count + generation.PlayerRelicBuckets.Count,
+            RelicInitializationExact = false, SharedRelicPoolOrderExact = false, PlayerRelicPoolCompositionExact = false,
+            PlayerRelicBuckets = [], SharedRelicBuckets = []
+        };
+        var moved = new ModelKey("EVENT", "MOVED_OR_NEW_ANCIENT");
+        var picker = RolltheSpire2.Ui.Pages.Search.Ancient.AncientSearchUiCatalog.FromAuthority(RuntimeProfileId.Beta111,
+            source.CharacterKey, fixture with { Beta109Generation = generation with { OrderedActCatalog =
+                generation.OrderedActCatalog.Select(a => a.Act == 2 ? a with { OrderedAncients = [moved] } : a).ToArray() } });
+        if (picker.Sections.Single(section => section.Act == 2).Rows.Single() is not
+            { IdentityAvailable: true, Options.Count: 0 } row || row.AncientKey != moved)
+            throw new Exception("Runtime Ancient identity unavailable without a modeled option generator");
+
+        for (ulong root = 0; root < 16; root++)
+        {
+            WorldPredictionResult Replay(RolltheSpire2.Core.World.Snapshots.Beta109WorldGenerationSnapshot snapshot) =>
+                Beta109WorldPredictionProvider.PredictFromRootHash(root, "root-hash:" + root, 10, 0, source.CharacterKey,
+                    fixture with { CapturedProfileId = RuntimeProfileId.Beta111, Beta109Generation = snapshot },
+                    AncientOptionConditionProfile.BroadDefault);
+            var baseline = Replay(generation).Ancients.Single(a => a.Act == 2);
+            foreach (var variant in new[] { missingEvents, lateMissing, countOnly, partial })
+            {
+                var observed = Replay(variant);
+                var actual = observed.Ancients.Single(a => a.Act == 2);
+                if (actual.IdentityPrecision != PredictionPrecision.Exact || actual.AncientKey != baseline.AncientKey ||
+                    actual.IdentityRngCallCount != baseline.IdentityRngCallCount ||
+                    !actual.Options.Take(2).Select(o => (o.OptionKey, o.OptionPrecision))
+                        .SequenceEqual(baseline.Options.Take(2).Select(o => (o.OptionKey, PredictionPrecision.Exact))))
+                    throw new Exception("Act2 Pael identity, option prefix or parent cursor changed with independent missing observations");
+                if (variant == lateMissing && observed.Ancients.Any(a => a.Act == 3))
+                    throw new Exception("Act3 encounter gap acquired downstream identity authority");
+                if (variant == partial && actual.Options[2].OptionPrecision == PredictionPrecision.Exact)
+                    throw new Exception("Unknown pet-pool eligibility confirmed the third option");
+            }
+            var filled = Replay(refill).Ancients.Single(a => a.Act == 2);
+            if (!filled.Options.Take(2).Select(o => o.OptionKey).SequenceEqual(baseline.Options.Take(2).Select(o => o.OptionKey)) ||
+                filled.Options.Count != 3 || filled.Options.Any(o => o.OptionPrecision != PredictionPrecision.Exact) ||
+                filled.OptionRngTrace.Last().SourceStage != "pael:empty-pool-refill" ||
+                !emptyThird.Pools.SelectMany(p => p.OrderedOptions).Contains(filled.Options[2].OptionKey))
+                throw new Exception("Pael's empty third pool must refill after keeping the independent first two draws");
+            var offers = Replay(partial).Ancients.Single(a => a.Act == 2);
+            var growth = new ModelKey("RELIC", "PAELS_GROWTH");
+            var disposition = QueryKeySetPredicate.MatchVisibleAncientOptions(offers.OptionsEvaluationStatus, offers.Options,
+                new([growth], [], []));
+            var expected = baseline.Options.Any(o => o.OptionKey == growth) ? SearchDisposition.Match : SearchDisposition.NoMatch;
+            if (disposition != expected)
+                throw new Exception("Unknown third-pool eligibility changed a decided second-pool condition");
+            var legacy = generation with { RngSemantics = RngSemanticProfileId.Modern110 };
+            var unfiltered = Replay(legacy);
+            var unknown = Replay(legacy with { EventAuthority = legacy.EventAuthority with { LockedEventsAfterShuffle = null } });
+            if (unknown.EventPoolSequencePrediction is not { Precision: PredictionPrecision.Unknown,
+                    IssueCode: "UnknownGeneratedRoomEventFilter", Acts.Count: 0 } ||
+                !unfiltered.EncounterSequences.Select(a => a.Act).SequenceEqual([1, 2, 3]) ||
+                !unknown.EncounterSequences.Select(a => a.Act).SequenceEqual([1, 2, 3]) ||
+                !unknown.Ancients.Any(a => a.Act == 3 && a.IdentityPrecision == PredictionPrecision.Exact) ||
+                !unknown.Ancients.Select(a => (a.Act, a.AncientKey, a.IdentityPrecision, a.IdentityRngCallCount))
+                    .SequenceEqual(unfiltered.Ancients.Select(a => (a.Act, a.AncientKey, a.IdentityPrecision, a.IdentityRngCallCount))) ||
+                !unknown.Bosses.Select(b => (b.Act, b.BossKey, b.IdentityPrecision, b.RngCallCount))
+                    .SequenceEqual(unfiltered.Bosses.Select(b => (b.Act, b.BossKey, b.IdentityPrecision, b.RngCallCount))) ||
+                unknown.EncounterSequences.Zip(unfiltered.EncounterSequences).Any(pair =>
+                    !pair.First.Normal.SequenceEqual(pair.Second.Normal) || !pair.First.Elite.SequenceEqual(pair.Second.Elite)))
+                throw new Exception("Unknown post-shuffle event removals changed the legacy world RNG or claimed an event queue");
+            var locked = legacy.EventAuthority.OrderedSharedEventsRaw[0];
+            var filtered = Replay(legacy with { EventAuthority = legacy.EventAuthority with { LockedEventsAfterShuffle = [locked] } });
+            foreach (var before in unfiltered.EventPoolSequencePrediction!.Acts)
+            {
+                var after = filtered.EventPoolSequencePrediction!.Acts.Single(a => a.Act == before.Act);
+                var keys = before.RawEntries.Select(e => e.EventKey).ToArray();
+                if (!keys.Contains(locked) || keys.All(k => k == locked) ||
+                    !after.RawEntries.Select(e => e.EventKey).SequenceEqual(keys.Where(k => k != locked)) ||
+                    (before.RngCallCountBefore, before.RngCallCountAfter) != (after.RngCallCountBefore, after.RngCallCountAfter))
+                    throw new Exception("A registered event was filtered before its legacy RNG shuffle");
+            }
+            if (Replay(missingEvents with { RngSemantics = RngSemanticProfileId.Modern110 }).Ancients.Count != 0)
+                throw new Exception("Pre-113 parent cursor advanced with unavailable event count");
+        }
     }
     private static void CheckSharedAncientSlices()
     {

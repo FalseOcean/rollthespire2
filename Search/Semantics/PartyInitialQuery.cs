@@ -250,14 +250,67 @@ internal static class PartyInitialQuery
         return (condition.Any.Count == 0 || condition.Any.Any(set.Contains)) && condition.All.All(set.Contains) && !condition.Ban.Any(set.Contains);
     }
     internal static bool MatchesWorld(SearchQuery query, PartySeedInformation observation) =>
-        query.LegacyWorld.BossFilters.All(c => Matches(c.Keys, observation.Bosses.Where(b => b.Act == c.Act).Select(b => b.BossKey))) &&
-        query.LegacyWorld.BossOrdinalFilters.All(c => observation.Bosses.Any(b => b.Act == c.Act && b.Ordinal == c.Ordinal) &&
-            Matches(c.Keys, observation.Bosses.Where(b => b.Act == c.Act && b.Ordinal == c.Ordinal).Select(b => b.BossKey))) &&
-        query.VariantBossBranches.GroupBy(b => b.Act).All(act =>
-        observation.Acts.Count >= act.Key && act.GroupBy(b => b.VariantKey).Any(variant => observation.Acts[act.Key - 1] == variant.Key &&
-            variant.Any(b => Matches(b.FirstBoss, observation.Bosses.Where(x => x.Act == b.Act && x.Ordinal == 1).Select(x => x.BossKey)) &&
-                (!b.IncludesSecondBoss || observation.Bosses.Any(x => x.Act == b.Act && x.Ordinal == 2) &&
-                    Matches(b.SecondBoss, observation.Bosses.Where(x => x.Act == b.Act && x.Ordinal == 2).Select(x => x.BossKey))))));
+        EvaluateWorld(query, observation).Disposition == SearchDisposition.Match;
+
+    internal static SearchQueryEvaluation EvaluateWorld(SearchQuery query, PartySeedInformation observation)
+    {
+        SearchQueryEvaluation? unresolved = null;
+        SearchQueryEvaluation MissingBoss(int act, int? ordinal = null)
+        {
+            string slot = ordinal.HasValue ? $":Ordinal{ordinal}" : string.Empty;
+            string reason = $"Party.BossIdentityMissing:Act{act}{slot}:{observation.BossIssueCode}";
+            return observation.BossStatus == Core.World.SeedDomainEvaluationStatus.Unsupported
+                ? SearchQueryEvaluation.Unsupported(reason) : SearchQueryEvaluation.Unknown(reason);
+        }
+        SearchQueryEvaluation Slot(int act, int ordinal, ModelKeySetFilter keys)
+        {
+            if (ordinal == 2 && (act != 3 || observation.Ascension < 10))
+                return SearchQueryEvaluation.NoMatch("Party.SecondBossAbsent");
+            var boss = observation.Bosses.FirstOrDefault(b => b.Act == act && b.Ordinal == ordinal);
+            if (boss is null || (!boss.SearchIdentityReplayable && boss.IdentityPrecision != PredictionPrecision.Exact)) return MissingBoss(act, ordinal);
+            return Matches(keys, [boss.BossKey]) ? SearchQueryEvaluation.Match()
+                : SearchQueryEvaluation.NoMatch("Party.InitialWorldPredicate");
+        }
+        foreach (var filter in query.LegacyWorld.BossFilters)
+        {
+            var result = QueryKeySetPredicate.MatchActBosses(observation.Bosses, filter.Act, observation.Ascension, filter.Keys);
+            if (result == SearchDisposition.NoMatch) return SearchQueryEvaluation.NoMatch("Party.InitialWorldPredicate");
+            if (result == SearchDisposition.Unknown)
+                unresolved ??= MissingBoss(filter.Act);
+        }
+        foreach (var filter in query.LegacyWorld.BossOrdinalFilters)
+        {
+            var result = Slot(filter.Act, filter.Ordinal, filter.Keys);
+            if (result.Disposition == SearchDisposition.NoMatch) return result;
+            if (result.Disposition != SearchDisposition.Match) unresolved ??= result;
+        }
+        foreach (var group in query.VariantBossBranches.GroupBy(b => b.Act))
+        {
+            if (observation.ActIdentityPrecision != PredictionPrecision.Exact || observation.Acts.Count < group.Key)
+            {
+                unresolved ??= SearchQueryEvaluation.Unknown("Party.SelectedActMissing");
+                continue;
+            }
+            SearchQueryEvaluation? possible = null;
+            bool matched = false;
+            foreach (var branch in group.Where(b => b.VariantKey == observation.Acts[group.Key - 1]))
+            {
+                var first = branch.FirstBoss.IsEmpty ? SearchQueryEvaluation.Match() : Slot(branch.Act, 1, branch.FirstBoss);
+                var second = branch.IncludesSecondBoss ? Slot(branch.Act, 2, branch.SecondBoss) : SearchQueryEvaluation.Match();
+                if (first.Disposition == SearchDisposition.NoMatch || second.Disposition == SearchDisposition.NoMatch) continue;
+                if (first.Disposition == SearchDisposition.Match && second.Disposition == SearchDisposition.Match)
+                {
+                    matched = true;
+                    break;
+                }
+                possible ??= first.Disposition != SearchDisposition.Match ? first : second;
+            }
+            if (matched) continue;
+            if (possible == null) return SearchQueryEvaluation.NoMatch("Party.InitialWorldPredicate");
+            unresolved ??= possible;
+        }
+        return unresolved ?? SearchQueryEvaluation.Match();
+    }
     internal static bool MatchesOffers(SearchQuery query, PartySeedInformation observation) => query.Players.All(p =>
         Matches(p.Offers, observation.Players.Single(o => o.Slot == p.Slot).Offers));
 }

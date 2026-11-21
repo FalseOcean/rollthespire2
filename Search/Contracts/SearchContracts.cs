@@ -303,7 +303,9 @@ public sealed record EventResultSearchCondition(
         EventResultConditionKind.WhisperingHollowInitialBasicTransform or EventResultConditionKind.TrialNondescriptInitialBasicsContains =>
             TargetKey.IsValid && TargetKey.Category == BaseGameModelKeys.Categories.Card &&
             (MorphicGroveSecondCard is null || MorphicGroveSecondCard is { IsValid: true, Category: BaseGameModelKeys.Categories.Card }) &&
-            RolltheSpire2.Search.Semantics.EventResultTransformSemantics.IsInitialBasics(this),
+            (RolltheSpire2.Search.Semantics.EventResultTransformSemantics.IsInitialBasics(this) ||
+             RolltheSpire2.Search.Semantics.EventResultTransformSemantics.IsIncompleteCapture(MorphicGroveScenario,
+                 RolltheSpire2.Search.Semantics.EventResultTransformSemantics.DrawCount(Kind))),
         EventResultConditionKind.TrialCase => TargetKey == new ModelKey("EVENT", "TRIAL") && TrialCase is { } trial && Enum.IsDefined(trial),
         EventResultConditionKind.TinkerTimeTypeAndRider => TargetKey == new ModelKey("CARD", "MAD_SCIENCE") &&
             TinkerCardType is { } type && Enum.IsDefined(type) &&
@@ -311,7 +313,8 @@ public sealed record EventResultSearchCondition(
         EventResultConditionKind.MorphicGroveGroupInitialBasicsContains =>
             TargetKey.IsValid && TargetKey.Category == BaseGameModelKeys.Categories.Card &&
             (MorphicGroveSecondCard is null || MorphicGroveSecondCard is { IsValid: true, Category: BaseGameModelKeys.Categories.Card }) &&
-            RolltheSpire2.Search.Semantics.MorphicGroveQuerySemantics.IsInitialBasics(MorphicGroveScenario),
+            (RolltheSpire2.Search.Semantics.MorphicGroveQuerySemantics.IsInitialBasics(MorphicGroveScenario) ||
+             RolltheSpire2.Search.Semantics.EventResultTransformSemantics.IsIncompleteCapture(MorphicGroveScenario, 2)),
         EventResultConditionKind.TrashHeapGrabCard =>
             TargetKey.IsValid && TargetKey.Category == BaseGameModelKeys.Categories.Card,
         EventResultConditionKind.TrashHeapDiveRelic or EventResultConditionKind.FakeMerchantOfferedFakeRelic =>

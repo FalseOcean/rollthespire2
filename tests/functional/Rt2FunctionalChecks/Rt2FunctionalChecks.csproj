@@ -29,6 +29,7 @@
     <Compile Include="CrystalSeedCardChecks.cs" />
     <Compile Include="CrystalSearchIntegrationChecks.cs" />
     <Compile Include="CrystalNativePoolChecks.cs" />
+    <Compile Include="EventOperationAuthorityChecks.cs" />
     <Compile Include="CrystalSeedGoalChecks.cs" />
     <Compile Include="EventOpportunityEditorChecks.cs" />
     <Compile Include="NeowEntryIdentityChecks.cs" />
@@ -66,12 +67,14 @@
     <Compile Include="FamilyPrivateCompleteCallCostChecks.cs" />
     <Compile Include="InitialRoomNumericalChecks.cs" />
     <Compile Include="FeedbackBundleChecks.cs" />
+    <Compile Include="SearchFeedbackChecks.cs" />
     <Compile Include="CombinationRegressionChecks.cs" />
     <Compile Include="CombinationRegressionChecks.Party.cs" />
     <Compile Include="PersistenceChecks.cs" />
     <Compile Include="DeveloperNotesArchiveChecks.cs" />
     <Compile Include="PresetWorkbenchChecks.cs" />
     <Compile Include="NativeWorkbenchCheckEnvironment.cs" />
+    <Compile Include="SaveStatusVersionChecks.cs" />
     <Compile Include="SeedLibraryWorkflowChecks.cs" />
     <Compile Include="SeedLibraryPersistenceChecks.cs" />
     <Compile Include="CardCollectionStoreChecks.cs" />

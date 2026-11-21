@@ -92,7 +92,7 @@ internal sealed partial class TransformationAggregateNumericalPlan
         if (_condition.EventScenario is { } scenario)
         {
             int[][] Pool(int count) => Enumerable.Range(0, count).Select(i =>
-                scenario.Premises.VanillaLocalDependenciesBound && scenario.Targets[i].OrderedSourceCandidates is { } pool
+                scenario.Targets.Count >= count && scenario.Premises.VanillaLocalDependenciesBound && scenario.Targets[i].OrderedSourceCandidates is { } pool
                     ? pool.Select(c => Key(c.CardKey, c.Rarity == "Rare")).ToArray() : []).ToArray();
             if (_condition.MorphicGrove) events.Add((XxHash64.Hash("MORPHIC_GROVE"u8, 0), 0, Pool(2)));
             if (_condition.AromaOfChaos) events.Add((XxHash64.Hash("AROMA_OF_CHAOS"u8, 0), 0, Pool(1)));

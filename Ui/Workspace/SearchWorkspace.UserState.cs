@@ -56,6 +56,12 @@ internal sealed partial class SearchWorkspace
         MarkPreferencesDirty(); FlushPreferences();
     }
 
+    internal void SetGpuPowerDiagnosticsEnabled(bool enabled)
+    {
+        _preferences.EnableGpuPowerDiagnostics = enabled;
+        MarkPreferencesDirty(); FlushPreferences();
+    }
+
     internal MapLossyOptions MapLossyPreferences =>
         new MapLossyOptions(_preferences.MapLossyEnabled, _preferences.MapLossyGpuBatchSize).Normalize();
 
@@ -143,6 +149,7 @@ internal sealed partial class SearchWorkspace
     internal void SetFontChoice(string choice)
     {
         _preferences.FontChoice = NormalizeFontChoice(choice);
+        InRunFeaturePreferences.SetFont(_directory, _preferences.FontChoice);
         MarkPreferencesDirty(); FlushPreferences();
     }
 

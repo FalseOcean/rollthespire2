@@ -111,6 +111,8 @@ internal sealed record FilterCostDescription
     internal string PublicBoundaryToken { get; init; } = "";
     internal string PublicBoundaryMeasuredMarker { get; init; } = "";
     internal bool ComposedPopulationReference { get; init; }
+    // Compact CPU work depends on the candidates left in its bounded public root window.
+    internal bool UsesBoundedPrefixPopulation { get; init; }
     internal bool PrivateCanonicalScope { get; init; } = true;
     internal Func<bool, string>? PrivatePhysicalRevision { get; init; }
     internal string PrivateTransportPath { get; init; } = "CurrentFamilyBinding";

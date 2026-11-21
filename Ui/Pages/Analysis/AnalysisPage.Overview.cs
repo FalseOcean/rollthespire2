@@ -16,7 +16,34 @@ internal sealed partial class AnalysisPage
     private readonly EventThumbnailProvider _eventThumbnails = new();
     private readonly EncounterPortraitProvider _encounterPortraits = new();
 
+    private string WorldIssueText(string? issue, string fallback)
+    {
+        string key = issue?.Split(':', 2)[0] switch
+        {
+            "AnalysisDomainFailed" => "predictor.analysis.domain_failed",
+            "UnknownWorldGenerationHookOrModifier" or "UnsupportedModdedWorldGeneration" => "predictor.world.rules_unknown",
+            "MissingActSelectionAuthority" or "MissingSelectedActs" or "MissingActSelectionReplayInputs" or
+                "MissingActsByIndexOrder" or "MissingDiscoveredActs" or "ActSelectionGroupIncomplete" => "predictor.world.act_unknown",
+            "MissingUnlockedSharedAncientCatalog" or "MissingSharedAncientReferenceIdentity" or
+                "MissingUnlockedAncientPool" => "predictor.world.ancient_pool_unknown",
+            "MissingRelicInitialization" or "MissingSharedRelicPoolOrder" or "MissingCharacterRelicPoolOrder" or
+                "MissingPriorUpFront" => "predictor.world.start_rng_unknown",
+            "EncounterDiscoveryContextMissing" => "predictor.encounter_context_missing",
+            "MissingEventEpochAuthority" or "MissingEventEpochMembership" => "predictor.world.event_unlock_unknown",
+            "UnknownGeneratedRoomEventFilter" => "predictor.world.event_filter_unknown",
+            "MissingOpeningAncientCursorAuthority" => "predictor.world.event_start_unknown",
+            "MissingActEventSequenceAuthority" or "MissingEventCatalog" or "MissingSharedEventCatalog" or
+                "MissingActEventCatalogOrder" or "EventEligibleOrderAlignmentMismatch" or
+                "SharedEventCatalogAlignmentMismatch" => "predictor.world.event_order_unknown",
+            _ => fallback
+        };
+        return Text(key);
+    }
+
+    private string? SharedRoomIssue => LastFacts?.World?.RoomGenerationIssueCode;
+
     private ModelKey OverviewActKey(int act) =>
+        LastFacts?.World?.SelectedActs.ElementAtOrDefault(act - 1) is { IsValid: true } selected ? selected :
         _viewModel?.EncounterSequences.FirstOrDefault(a => a.Act == act)?.ActKey ??
         _viewModel?.EventPoolSequenceDomain.Items.FirstOrDefault(a => a.Act == act)?.ActKey ?? default;
 
@@ -70,7 +97,7 @@ internal sealed partial class AnalysisPage
         else
         {
             var ancient = _viewModel.AncientDomain.Items.FirstOrDefault(a => a.Act == index + 1);
-            if (ancient is not null) Icon(ancient.AncientDisplay.ModelKey, GameContentKind.Ancient, IconVariant.WorldCompendiumAncientIcon);
+            if (ancient?.AncientDisplay.ModelKey is { IsValid: true } key) Icon(key, GameContentKind.Ancient, IconVariant.WorldCompendiumAncientIcon);
         }
         foreach (var boss in _viewModel.BossDomain.Items.Where(b => b.Act == index + 1).OrderBy(b => b.Ordinal))
             Icon(boss.BossDisplay.ModelKey, GameContentKind.Encounter, IconVariant.WorldCompendiumBossIcon);
@@ -150,11 +177,6 @@ internal sealed partial class AnalysisPage
         if (IsInstanceValid(_normalQueueSurface)) _normalQueueSurface!.Visible = visible;
     }
 
-    private void RenderCombatDetails(int act)
-    {
-        _combatSurface = WCard(_wbCenter, ""); _combatSurface.Name = "CombatDetails";
-        PopulateCombatDetails(act, null);
-    }
     private void PopulateCombatDetails(int act, MapPrediction? map)
     {
         if (_combatSurface is null || !IsInstanceValid(_combatSurface) || !_combatSurface.IsInsideTree()) return;
@@ -164,8 +186,9 @@ internal sealed partial class AnalysisPage
         var bosses = WColumn(); bosses.SizeFlagsHorizontal = SizeFlags.Fill;
         bosses.CustomMinimumSize = new Vector2(actBosses.Length > 1 ? 340 : 220, 0); header.AddChild(bosses);
         WTitle(bosses, "predictor.boss");
-        if (_viewModel.BossDomain.Status != RolltheSpire2.Core.World.SeedDomainEvaluationStatus.Evaluated)
-            bosses.AddChild(WNote(Text("predictor.unavailable") + "\n" + _viewModel.BossDomain.IssueCode));
+        if (actBosses.Length == 0 || LastRequest?.Ascension >= 10 && LastFacts?.World?.SelectedActs.Count == act && actBosses.Length == 1)
+            bosses.AddChild(WNote(WorldIssueText(_viewModel.BossDomain.IssueCode, actBosses.Length == 0
+                ? "predictor.world.boss_unknown" : "predictor.world.second_boss_unknown")));
         var bossIdentities = new HBoxContainer { Name = "BossIdentities" };
         bossIdentities.AddThemeConstantOverride("separation", 16); bosses.AddChild(bossIdentities);
         for (int index = 0; index < actBosses.Length; index++)
@@ -187,17 +210,18 @@ internal sealed partial class AnalysisPage
         var normalColumn = WColumn(); normalColumn.Name = "NormalQueueSection"; body.AddChild(normalColumn);
         _eliteQueueSurface = eliteColumn; _normalQueueSurface = normalColumn;
         UpdateCombatQueueVisibility(act);
-        if (map is null) { WEmpty(normalColumn); return; }
         var sequence = _viewModel.EncounterSequences.FirstOrDefault(a => a.Act == act);
-        if (sequence is null || sequence.Normal.Count == 0)
+        if (sequence is null || sequence.Normal.Count == 0 && sequence.Elite.Count == 0 &&
+            !string.IsNullOrEmpty(sequence.IssueCode))
         {
-            normalColumn.AddChild(WLabel(Text(sequence?.IssueCode == "EncounterDiscoveryContextMissing" ? "predictor.encounter_context_missing" : "predictor.unavailable")));
+            WTitle(normalColumn, "predictor.world.encounters");
+            normalColumn.AddChild(WNote(WorldIssueText(sequence?.IssueCode ?? SharedRoomIssue, "predictor.world.encounters_unknown")));
             return;
         }
         if (sequence.Precision != RolltheSpire2.Core.Prediction.PredictionPrecision.Exact)
             normalColumn.AddChild(WLabel(Text("predictor.encounter_partial")));
-        int elites = new MapRouteSet(map, MapPointType.Elite).Value + 1;
-        int monsters = new MapRouteSet(map, MapPointType.Monster).Value;
+        int elites = map is null ? sequence.Elite.Count : new MapRouteSet(map, MapPointType.Elite).Value + 1;
+        int monsters = map is null ? sequence.Normal.Count : new MapRouteSet(map, MapPointType.Monster).Value;
         WTitle(eliteColumn, "predictor.elite_sequence");
         var eliteRow = WIconStrip(eliteColumn, "ElitePreview");
         ((ScrollContainer)eliteRow.GetParent()).CustomMinimumSize = new Vector2(0, 70);
@@ -207,9 +231,11 @@ internal sealed partial class AnalysisPage
                 row.AddChild(WQueueTile(entry.EncounterDisplay.ModelKey, elite, entry.Ordinal, entry.EncounterDisplay.DisplayName));
         }
         Add(eliteRow, sequence.Elite.Take(elites), true);
+        if (sequence.Elite.Count == 0) eliteColumn.AddChild(WNote(Text("predictor.world.queue_empty")));
         WTitle(normalColumn, "predictor.combat_sequence");
         var normalRow = WIconStrip(normalColumn, "NormalPreview");
         ((ScrollContainer)normalRow.GetParent()).CustomMinimumSize = new Vector2(0, 70);
         Add(normalRow, sequence.Normal.Take(monsters), false);
+        if (sequence.Normal.Count == 0) normalColumn.AddChild(WNote(Text("predictor.world.queue_empty")));
     }
 }

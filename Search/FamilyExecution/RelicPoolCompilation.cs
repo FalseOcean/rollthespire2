@@ -79,6 +79,8 @@ internal sealed record CompiledRelicPoolSnapshot(
     Beta110RelicPoolAuthorityKind AuthorityKind,
     string AuthorityIssue)
 {
+    internal const short AbsentLane = -1;
+    internal const short UnreadableLane = -3;
     public int BucketCount => BucketOffsets.Length;
     public int TotalEntryCount => DenseRelicIds.Length;
     public bool Available =>
@@ -172,14 +174,11 @@ internal static class RelicPoolCompilation
             return false;
         }
 
-        bool exactRelicInputs = generation.RelicInitializationExact &&
+        bool exactRelicInputs = generation.InitialRelicReplayAssumption.Length == 0 && generation.RelicInitializationExact &&
                                 generation.SharedRelicPoolOrderExact &&
                                 generation.CharacterRelicPoolOrderExact &&
                                 generation.RelicRarityAuthorityExact &&
-                                generation.RelicShopEligibilityAuthorityExact &&
                                 generation.PlayerRelicPoolCompositionExact &&
-                                generation.SharedRelicBuckets.Count > 0 &&
-                                generation.PlayerRelicBuckets.Count > 0 &&
                                 generation.SharedRelicBuckets.All(IsBucketExact) &&
                                 generation.PlayerRelicBuckets.All(IsBucketExact);
         if (!exactRelicInputs)
@@ -195,7 +194,7 @@ internal static class RelicPoolCompilation
         int totalEntries = prefixBuckets.Sum(bucket => bucket.OrderedEntries.Count) +
                            generation.PlayerRelicBuckets.Sum(bucket => bucket.OrderedEntries.Count);
         int maxBucketLength = prefixBuckets.Concat(generation.PlayerRelicBuckets)
-            .Max(bucket => bucket.OrderedEntries.Count);
+            .Select(bucket => bucket.OrderedEntries.Count).DefaultIfEmpty().Max();
         if (bucketCount > MaximumBucketCount ||
             totalEntries > MaximumTotalRelicEntries ||
             maxBucketLength > MaximumRelicsPerBucket)
@@ -247,13 +246,17 @@ internal static class RelicPoolCompilation
             bucketIndex++;
         }
 
-        if (entryOffset != totalEntries || laneBucketIndexes.Any(index => index < 0))
+        if (entryOffset != totalEntries || laneBucketIndexes.Any(index => index == -2))
         {
             snapshot = Missing("RelicPoolLaneOrEntryAlignmentMismatch");
             issue = snapshot.AuthorityIssue;
             return false;
         }
 
+        short shopIndex = laneBucketIndexes[3];
+        if (shopIndex >= 0 &&
+            !generation.PlayerRelicBuckets[shopIndex - prefixBuckets.Length].HasExactShopEligibility)
+            laneBucketIndexes[3] = CompiledRelicPoolSnapshot.UnreadableLane;
         Beta110RelicPoolAuthorityKind authorityKind = generation.IsVanilla && generation.NoUnknownHooksOrModifiers
             ? Beta110RelicPoolAuthorityKind.StandardRuntimeSnapshot
             : Beta110RelicPoolAuthorityKind.BestEffortRuntimeSnapshot;
@@ -322,7 +325,7 @@ internal static class RelicPoolCompilation
 
         if (scope == Beta110RelicBucketScope.Player && lane >= 0)
         {
-            laneBucketIndexes[lane] = laneBucketIndexes[lane] >= 0
+            laneBucketIndexes[lane] = laneBucketIndexes[lane] != -1
                 ? (short)-2
                 : checked((short)bucketIndex);
         }
@@ -402,7 +405,6 @@ internal static class RelicPoolCompilation
     private static bool IsBucketExact(Beta109RelicBucketSnapshot bucket) =>
         bucket.OrderExact &&
         bucket.OrderedEntries.Count == bucket.OrderedRelics.Count &&
-        bucket.HasExactShopEligibility &&
         bucket.OrderedEntries.Select(entry => entry.RelicKey).SequenceEqual(bucket.OrderedRelics);
 
 }

@@ -25,6 +25,7 @@ internal readonly record struct RelicFamilyGpuBatchMetrics(
     long ReadbackBytes,
     double CanonicalAbi1ReadyMs)
 {
+    internal FamilyCandidateSet? SmallOutput { get; init; }
     public double CompactPackMs => CompactPackAllocationMs + CompactPackConvertValidateMs;
     public double CompactUploadMs => CompactUploadStagingMs + CompactBufferUpdateMs;
     public double UploadMs => MetadataUploadMs + CompactPackMs + CompactUploadMs;
@@ -72,11 +73,13 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
     internal uint LastEarlyHeavy { get; private set; }
     internal uint LastLateHeavy { get; private set; }
     private PrivateOrdinalBuffer? _privateInput, _privateOutput;
+    internal const string SmallHeaderRevision = ".QueuedPrivateSmallHeader8.20261120.v1";
+    private bool _smallHeader;
     private bool _bonesKBoundary;
     internal GpuNumericalVariant NumericalVariant { get; }
     internal uint LastEarlyPass { get; private set; }
     internal uint LastLatePass { get; private set; }
-    private int ActiveHeaderUIntCount => _bonesKBoundary ? 12 : HeaderUIntCount;
+    private int ActiveHeaderUIntCount => _smallHeader ? HeaderUIntCount + SmallCandidateExactPolicy.MaximumCandidates : _bonesKBoundary ? 12 : HeaderUIntCount;
 
     private RelicFamilyGpuExecutor(
         RenderingDevice rd,
@@ -117,7 +120,7 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
             if (_privateOutput is not null) ExecutePrivateStage(batch, count, token, out m);
             else result = _privateInput is null ? Execute(FamilyCandidateSet.Dense(batch), token, out m) : ExecutePrivate(batch, count, token, out m);
             return new(m.Survivors, result, m.CommandMs + m.SubmitMs + m.SyncMs,
-                m.ReadbackMs, m.ReadbackBytes, m.CanonicalAbi1ReadyMs, count == 0 ? 0 : 1);
+                m.ReadbackMs, m.ReadbackBytes, m.CanonicalAbi1ReadyMs, count == 0 ? 0 : 1) { SmallOutput = m.SmallOutput };
         });
     public long WorkspaceBytes { get; }
     public static long InputWorkspaceBytes => (long)CompactInputCapacity * sizeof(uint);
@@ -170,10 +173,12 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
         try
         {
             Rid Add(Rid rid) { owned.Add(rid); return rid; }
+            // Exact can take a small survivor set directly from this dispatch's count readback.
+            bool smallHeader = modernCapsule is not null && privateOutput is not null;
             uint planTag = StableTag(
                 inputIdentity + "|" +
                 (modernCapsule?.Revision(false) ?? fullPlan?.ActualAlgorithmRevision ?? FamilyPhysicalImplementationRevisions.Relic) +
-                (shopFirstTail ? ShopFirstTailRevision : ""));
+                (shopFirstTail ? ShopFirstTailRevision : "") + (smallHeader ? SmallHeaderRevision : ""));
             uint[] planMeta = PackPlanMeta(plan);
             uint[] bucketMeta = PackBuckets(plan.Pool);
             uint[] predicates = PackPredicates(plan.Predicates);
@@ -201,7 +206,7 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
             Rid trackedInitialPositions = Add(FamilyGpuComputeUtility.CreateStorageBuffer(rd,
                 FamilyGpuComputeUtility.ToBytesNonEmpty(plan.TrackedInitialPositions.Select(value => (uint)value).ToArray())));
             Rid outputHeader = Add(FamilyGpuComputeUtility.CreateStorageBuffer(rd,
-                FamilyGpuComputeUtility.ToBytes(CreateHeader(planTag, fullPlan?.UsesBonesKBoundary == true))));
+                FamilyGpuComputeUtility.ToBytes(CreateHeader(planTag, fullPlan?.UsesBonesKBoundary == true, smallHeader))));
             Rid outputOrdinals = privateOutput?.Buffer ?? Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, checked((int)outputBytes)));
             Rid shopPredicateBuffer = Add(FamilyGpuComputeUtility.CreateStorageBuffer(rd,
                 FamilyGpuComputeUtility.ToBytesNonEmpty(shopPredicates)));
@@ -221,6 +226,8 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
                 ShaderSource(fullPlan is not null, fullPlan?.UsesBonesKBoundary == true, bonesKRouteMask,
                 fullPlan?.GenericReplay == true, plan.LocalStateCapacity, numerical,
                 fullPlan?.UsesOpeningPrefix == true, plan.Pool.UsesChildShuffle, shopFirstTail);
+            if (smallHeader)
+                source = source.Replace("#version 450", $"#version 450\n#define RT2_R_SMALL_HEADER_CAPACITY {SmallCandidateExactPolicy.MaximumCandidates}u\n#define RT2_R_SMALL_HEADER_OFFSET {HeaderUIntCount}u", StringComparison.Ordinal);
             if (fullPlan?.GenericReplay == true)
                 source = source.Replace("#version 450", "#version 450\n#define RT2_R_GENERIC_BAG_CAPACITY " +
                     fullPlan.ConfiguredGenericBagCapacity.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
@@ -247,6 +254,7 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
                 rd.GetDeviceName()?.Trim() ?? "unknown", workspaceBytes,
                 numerical);
             result._privateInput = privateInput; result._privateOutput = privateOutput;
+            result._smallHeader = smallHeader;
             result._bonesKBoundary = fullPlan?.UsesBonesKBoundary == true;
             result._owned.AddRange(owned);
             owned.Clear();
@@ -364,7 +372,7 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
         meta[2] = checked((uint)input.Batch.BatchCandidateCount); meta[3] = checked((uint)inputCount);
         meta[4] = input.IsDense && _privateInput is null ? 0u : 1u; meta[5] = OutputCapacity;
         FamilyGpuComputeUtility.UpdateBytes(_rd, _batchMeta, _metadataBytes, "RFamilyBatchMeta");
-        _headerResetBytes ??= FamilyGpuComputeUtility.ToBytes(CreateHeader(_planTag, _bonesKBoundary));
+        _headerResetBytes ??= FamilyGpuComputeUtility.ToBytes(CreateHeader(_planTag, _bonesKBoundary, _smallHeader));
         FamilyGpuComputeUtility.UpdateBytes(_rd, _outputHeader, _headerResetBytes, "RFamilyOutputHeader");
         timer.Stop();
         double metadataUploadMs = timer.Elapsed.TotalMilliseconds;
@@ -401,13 +409,15 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
             _rd.ComputeListDispatch(list, groups, 1u, 1u);
         }
         finally { _rd.ComputeListEnd(); }
+        uint headerBytes = checked((uint)ActiveHeaderUIntCount * sizeof(uint));
+        var pendingHeader = _smallHeader ? FamilyGpuReadback.Queue(_rd, _outputHeader, 0u, headerBytes, "R.PrivateSmallHeader") : null;
         timer.Stop();
         double commandMs = timer.Elapsed.TotalMilliseconds;
         (double submitMs, double syncMs) = FamilyGpuComputeUtility.SubmitAndSync(_rd, "R.Relic");
         cancellationToken.ThrowIfCancellationRequested();
 
         timer.Restart();
-        byte[] rawHeader = _rd.BufferGetData(_outputHeader, 0u, checked((uint)ActiveHeaderUIntCount * sizeof(uint)));
+        byte[] rawHeader = pendingHeader?.GetData() ?? _rd.BufferGetData(_outputHeader, 0u, headerBytes);
         ReadOnlySpan<uint> header = FamilyGpuComputeUtility.UInt32Span(rawHeader);
         int processedCount = ValidateHeader(header, inputCount);
         LastEarlyHeavy = header[6]; LastLateHeavy = header[7];
@@ -429,6 +439,9 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
             if (survivors.Length > 1) Array.Sort(survivors);
             result = FamilyCandidateSet.FromSortedAbi1(input.Batch, survivors);
         }
+        FamilyCandidateSet? smallOutput = null;
+        if (_smallHeader && SmallCandidateExactPolicy.ShouldHandoff(survivorCount))
+            smallOutput = PrivateOrdinalBuffer.FromGpuOrdinals(input.Batch, header.Slice(HeaderUIntCount, survivorCount));
         canonicalTimer.Stop();
         metrics = new RelicFamilyGpuBatchMetrics(
             inputCount, processedCount, survivorCount, groups,
@@ -437,7 +450,7 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
             compactUploadStagingMs, compactUploadStagingAllocatedBytes, compactBufferUpdateMs,
             commandMs, submitMs, syncMs,
             timer.Elapsed.TotalMilliseconds, rawHeader.LongLength + rawOrdinals.LongLength,
-            canonicalTimer.Elapsed.TotalMilliseconds);
+            canonicalTimer.Elapsed.TotalMilliseconds) { SmallOutput = smallOutput };
         return result;
     }
 
@@ -473,8 +486,9 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
         return processed;
     }
 
-    private static uint[] CreateHeader(uint planTag, bool bonesKBoundary = false) => bonesKBoundary
-        ? [HeaderMagic, HeaderAbi, 0u, 0u, 0u, planTag, 0u, 0u, 0u, 0u, 0u, 0u]
+    private static uint[] CreateHeader(uint planTag, bool bonesKBoundary = false, bool smallHeader = false) => smallHeader
+        ? [HeaderMagic, HeaderAbi, 0u, 0u, 0u, planTag, 0u, 0u, .. new uint[SmallCandidateExactPolicy.MaximumCandidates]]
+        : bonesKBoundary ? [HeaderMagic, HeaderAbi, 0u, 0u, 0u, planTag, 0u, 0u, 0u, 0u, 0u, 0u]
         : [HeaderMagic, HeaderAbi, 0u, 0u, 0u, planTag, 0u, 0u];
 
     private static uint[] PackPlanMeta(RelicFamilyPlan plan) =>

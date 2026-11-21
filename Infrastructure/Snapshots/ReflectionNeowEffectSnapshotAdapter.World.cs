@@ -226,7 +226,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             OrderedRawEvents = rawEventsCapture.Keys,
             OrderedEligibleEvents = eligibleEvents,
             RawEventCatalogOrderExact = rawEventsCapture.Exact,
-            EventEpochMembershipExact = eventAuthority.EpochMembershipExact,
+            EventEpochMembershipExact = eventAuthority.RequiredEpochMembershipExact,
             EventEpochRevealFactsExact = eventAuthority.EpochRevealFactsExact,
             EligibleEventOrderExact = rawEventsCapture.Exact && eventAuthority.HasExactFilteringAuthority
         };
@@ -254,11 +254,11 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                     // An empty unlocked result is a valid exact catalog. The old
                     // helper treated every empty enumerable as missing and forced
                     // a fallback to the unfiltered backing collection.
-                    return CapturePossiblyEmptyModelListWorld(value);
+                    return CapturePossiblyEmptyModelListWorld(value, captureAncientTypes: exactMethodName == "GetUnlockedAncients");
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // Fail closed into the diagnostic fallback below.
+                    RecordCaptureFailure(ex, owner.GetType().FullName + "." + exactMethodName);
                 }
             }
         }
@@ -371,22 +371,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
 
     private static ModelListCapture CaptureRuntimeModelKeyListWorld(object? value)
     {
-        List<object> models = Enumerate(value).ToList();
-        if (models.Count == 0) return new ModelListCapture(Array.Empty<ModelKey>(), false);
-
-        var keys = new List<ModelKey>(models.Count);
-        bool exact = true;
-        foreach (object model in models)
-        {
-            if (!TryModelKey(model, out ModelKey key))
-            {
-                exact = false;
-                continue;
-            }
-            keys.Add(key);
-        }
-
-        return new ModelListCapture(keys, exact && keys.Count == models.Count);
+        return CapturePossiblyEmptyModelListWorld(value);
     }
 
     private static ModelListCapture CaptureModelListWorld(object? value)
@@ -586,7 +571,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                 playerSlotIndex,
                 noRunModifiers,
                 unlockedCharacters,
-                unlockedCharactersExact);
+                unlockedCharactersExact, authority.AncientRules);
 
         string catalogFingerprint = Fingerprint(
             profile.ProfileId switch
@@ -614,18 +599,21 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                     "ancients:" + string.Join(",", act.OrderedAncients.Select(key => key.Serialized))
                 })
                 .Concat(authority.SharedEvents.Select(key => "shared-event:" + key.Serialized))
+                .Concat(authority.EventAuthority.LockedEventsAfterShuffle?.Select(key => "locked-generated-event:" + key.Serialized)
+                    ?? ["generated-event-filter-unobserved"])
                 .Concat(authority.EventAuthority.EpochsInFilterOrder.Select(epoch =>
                     "event-epoch:" + epoch.EpochId + ":" + epoch.IsRevealed + ":" +
                     epoch.MembershipExact + ":" + epoch.RevealFactExact + ":" +
                     string.Join(",", epoch.OrderedMemberKeys.Select(key => key.Serialized))))
                 .Concat(authority.AllSharedAncients.Select(key => "all-shared-ancient:" + key.Serialized))
+                .Append(authority.RelicAuthorityEvidenceCode)
                 .Concat(authority.UnlockedSharedAncients.Select(key => "unlocked-shared-ancient:" + key.Serialized))
                 .Concat(authority.SharedRelicBuckets.Select(bucket =>
                     "shared-relic-bucket:" + bucket.BucketId + ":" + string.Join(",", bucket.OrderedEntries.Select(entry =>
-                        $"{entry.RelicKey.Serialized}/{entry.IsAllowedInShops}/{entry.ShopEligibilityExact}"))))
+                        $"{entry.RelicKey.Serialized}/{entry.IsAllowedInShops}/{entry.ShopEligibilityExact}/{entry.UnmodeledRunEligibility}"))))
                 .Concat(authority.PlayerRelicBuckets.Select(bucket =>
                     "player-relic-bucket:" + bucket.BucketId + ":" + string.Join(",", bucket.OrderedEntries.Select(entry =>
-                        $"{entry.RelicKey.Serialized}/{entry.IsAllowedInShops}/{entry.ShopEligibilityExact}"))))
+                        $"{entry.RelicKey.Serialized}/{entry.IsAllowedInShops}/{entry.ShopEligibilityExact}/{entry.UnmodeledRunEligibility}"))))
                 .Concat(ancientEventContexts.Select(context =>
                     "ancient-option-catalog:" + context.Act + ":" + context.AncientKey.Serialized + ":" +
                     context.IsShared + ":" + (context.Catalog?.CatalogFingerprint ?? "missing")))
@@ -681,7 +669,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             "relic-bags:donor-first-first-seen-rarity-order",
             "relic-bags:shared-all-rarities",
             "relic-bags:player-shared-plus-character-filter-normal-shop",
-            "shared-ancients:unlock-state-subset",
+            "shared-ancients:unlock-state-subset-except:" + string.Join(",", authority.SharedAncientReferenceIds ?? []),
             "events:act-all-events+shared-events",
             "events:epoch-filter-event1>event2>event3",
             childShuffle ? "up-front:unstable-shuffle-child-stream" : "events:unstable-shuffle-n-minus-one",
@@ -698,7 +686,8 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             "accepted-runtime-validation:" + acceptedValidation.EvidenceCode,
             "accepted-runtime-fixtures:" + string.Join(",", acceptedFixtureIds)
         });
-        Beta109UpFrontPrefixSnapshot prefix = authority.RelicInitializationExact &&
+        Beta109UpFrontPrefixSnapshot prefix = (authority.RelicInitializationExact ||
+                                                childShuffle && authority.InitialRelicShuffleCount is >= 0) &&
                                                 authority.ModeFactsExact &&
                                                 authority.IsVanilla &&
                                                 noRunModifiers == true &&
@@ -741,7 +730,9 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             GameVersionDetector.NormalizeVersion(gameVersion),
             acceptedFixtureStatus.ToString(),
             string.Join(",", acceptedFixtureIds),
-            authority.DiagnosticCode
+            authority.DiagnosticCode,
+            authority.InitialRelicReplayAssumption, authority.RoomReplayAssumption,
+            noRunModifiers.ToString() ?? string.Empty
         });
 
         return new Beta109WorldGenerationSnapshot(
@@ -809,8 +800,15 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             EventAuthority = authority.EventAuthority,
             SharedRelicPoolOrderExact = authority.SharedRelicPoolOrderExact,
             CharacterRelicPoolOrderExact = authority.CharacterRelicPoolOrderExact,
-            WorldGenerationHooksExact = noRunModifiers == true && authority.IsVanilla,
+            SharedAncientReferenceIds = authority.SharedAncientReferenceIds,
+            AncientRules = authority.AncientRules,
+            WorldGenerationHooksExact = noRunModifiers == true && authority.WorldMethodsExact,
+            RoomReplayAssumption = authority.RoomReplayAssumption,
+            InitialRelicReplayAssumption = string.Join("|", new[] { authority.InitialRelicReplayAssumption,
+                noRunModifiers == true ? string.Empty : "UnknownHookOrModifier" }.Where(s => s.Length > 0)),
+            ObservedInitialRelicShuffleCount = authority.ObservedInitialRelicShuffleCount,
             RelicRarityAuthorityExact = authority.RelicRarityAuthorityExact,
+            InitialRelicShuffleCount = authority.InitialRelicShuffleCount,
             RelicShopEligibilityAuthorityExact = authority.RelicShopEligibilityAuthorityExact,
             PlayerRelicPoolCompositionExact = authority.PlayerRelicPoolCompositionExact,
             RelicAuthorityEvidenceCode = authority.RelicAuthorityEvidenceCode
@@ -844,6 +842,11 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         null,
         issue);
 
-    internal sealed record ModelListCapture(IReadOnlyList<ModelKey> Keys, bool Exact);
+    internal sealed record ModelListCapture(IReadOnlyList<ModelKey> Keys, bool Exact)
+    {
+        public IReadOnlyCollection<Type>? AncientTypes { get; init; }
+        public IReadOnlyList<int>? ReferenceIds { get; init; }
+        public IReadOnlyList<ModelKey> UnknownAncientGenerators { get; init; } = [];
+    }
     private sealed record EncounterListCapture(IReadOnlyList<WorldEncounterSnapshot> Items, bool Exact);
 }

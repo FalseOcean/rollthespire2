@@ -1,6 +1,11 @@
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Events;
 using RolltheSpire2.Core.Identity;
+using RolltheSpire2.Core.Prediction;
+using RolltheSpire2.Search.Contracts;
+using RolltheSpire2.Search.Runtime;
+using RolltheSpire2.Search.Semantics;
+using RolltheSpire2.Tests.FastSearch;
 using RolltheSpire2.Core.World.Snapshots;
 using RolltheSpire2.Ui.Pages.Search.Event;
 
@@ -56,6 +61,27 @@ internal static class EventEligibilityCatalogChecks
         Check(old.Find(3, Museum) is not null && !old.IsAudited(Museum),
             "Older semantic profiles do not attribute unaudited Modern113 event rules to their catalog");
 
+        var trash = Event("TRASH_HEAP");
+        var epochFacts = modern.EventAuthority with { SharedRawOrderExact = false,
+            EpochsInFilterOrder = [new("Event1Epoch", [trash], true, false, true)] };
+        SearchQueryEvaluation Evaluate(ModelKeySetFilter keys, bool exactReveal = true)
+        {
+            var epochs = epochFacts with { EpochsInFilterOrder = [epochFacts.EpochsInFilterOrder[0] with { RevealFactExact = exactReveal }] };
+            var variant = world with { EventAuthority = epochs, Beta109Generation = modern with
+                { EventAuthority = epochs, SharedEventCatalogExact = false, WorldGenerationHooksExact = true } };
+            var hero = BaseGameModelKeys.Characters.Ironclad;
+            var authority = Beta110FastSearchFixtureAuthority.CreateBeta111(hero, 10, 0, 1, "0.113.1").WithWorldAuthority(variant);
+            var compiled = SearchCompiler.Compile(SearchQuery.Empty with { EventSequenceConstraints =
+                [new(1, null, SearchSequenceRangeMode.FirstN, 1, keys)] }, new(RuntimeProfileId.Beta111, hero, 10,
+                    authority, new("0.113.1", "0.113.1", "beta", "epoch", true, ""), SearchEvaluationAssumptions.BroadDefault));
+            var model = new SearchModel(compiled, CompiledSearchEvaluationProjector.Project(compiled).Evaluation,
+                CombatRewardRoutePolicyContract.None, compiled.SemanticFingerprint);
+            return ProductionExactSearchEvaluator.Evaluate(model, TrustedRootHashInput.RootOnly(0)).Evaluation;
+        }
+        Check(Evaluate(new([trash], [], [])).Disposition == SearchDisposition.NoMatch, "unrevealed Epoch rules out required identity even with unknown queue");
+        Check(Evaluate(new([], [trash, Statue], [])).Disposition == SearchDisposition.NoMatch, "one known-absent ALL identity disproves the row");
+        Check(Evaluate(new([trash, Statue], [], [])).Disposition == SearchDisposition.Unknown, "another possible ANY identity remains unverified");
+        Check(Evaluate(new([trash], [], []), exactReveal: false).Disposition == SearchDisposition.Unknown, "unread Epoch preserves the candidate");
         Console.WriteLine($"EventEligibilityCatalogChecks passed: {checks}");
         return 0;
 

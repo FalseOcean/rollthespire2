@@ -15,6 +15,7 @@ public enum SeedPredictionDomainSelection
     World = 1 << 1,
     RelicSequence = 1 << 2,
     NormalCombatRewards = 1 << 3,
+    MerchantColorless = 1 << 4,
     All = Neow | World | RelicSequence | NormalCombatRewards
 }
 
@@ -116,7 +117,23 @@ public sealed class SeedPredictionRequest
         CombatRewardProjectionRequest) { PartyOpeningChoices = PartyOpeningChoices, NeowEffectRoots = NeowEffectRoots,
             RewardPoolPreparation = RewardPoolPreparation };
 
+    internal SeedPredictionRequest ForModelReplay(RuntimeContextAuthoritySnapshot authority, SeedPredictionDomainSelection domains) =>
+        new(RequestId, OriginalSeed, Character, Ascension, PlayersCount, PlayerSlotIndex,
+            authority, AncientOptionConditions, domains, RelicSequencePreviewCount,
+            IncludeDiagnostics, EnableComplexBonesDeckInteractions, TrustedRootHashInput, CombatRewardProjectionRequest)
+        { PartyOpeningChoices = PartyOpeningChoices, NeowEffectRoots = NeowEffectRoots, RewardPoolPreparation = RewardPoolPreparation };
+
     public bool Includes(SeedPredictionDomainSelection domain) => (Domains & domain) == domain;
+
+    public SeedPredictionRequest WithCombatRewardProjection(NormalCombatRewardProjectionRequest projection)
+    {
+        ArgumentNullException.ThrowIfNull(projection);
+        // A change of opening route can require effects excluded by the previous search plan.
+        return new(PredictionRequestId.Create(), OriginalSeed, Character, Ascension, PlayersCount, PlayerSlotIndex,
+            Authority, AncientOptionConditions, Domains, RelicSequencePreviewCount, IncludeDiagnostics,
+            EnableComplexBonesDeckInteractions, TrustedRootHashInput, projection)
+        { PartyOpeningChoices = PartyOpeningChoices, RewardPoolPreparation = RewardPoolPreparation };
+    }
 
     // Reuses immutable captured authority for a UI-only Ancient premise revision.
     // It is a new request, while the independent opening/world observations remain reusable.

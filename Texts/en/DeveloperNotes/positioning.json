@@ -36,11 +36,11 @@
     },
     {
       "Type": "Paragraph",
-      "Text": "This is RT2 1.4.6. It includes seed search, analysis, the Library and card collections, Crystal Sphere, in-run operation prediction and current-Act map routes (live route drawing remains limited to game version 0.111.0). Each capability has its own assumptions and settings. Prediction and search use model simulation without advancing the real run; explicit game actions in the Test Console do modify the real run."
+      "Text": "This is RT2 1.4.7. It includes seed search, analysis, the Library and card collections, Crystal Sphere, in-run operation prediction and current-Act map routes (live route drawing remains limited to game version 0.111.0). Each capability has its own assumptions and settings. Prediction and search use model simulation without advancing the real run; explicit game actions in the Test Console do modify the real run."
     },
     {
       "Type": "Paragraph",
-      "Text": "The main development and test environment is Windows with game Beta 0.111.0. The compatibility layer retains audited 0.110.1 semantics and accepted compatibility for 0.111.0; individual new features do not necessarily cover both. Newer versions that provisionally reuse a known model are marked unverified. Consult each feature’s explanation and result confirmation state for device, unlock and mod scope."
+      "Text": "Runtime Status lists the supported stable and beta game versions for this RT2 release and the prediction rules used by the current game. Newer game versions may reuse existing rules with unverified status. Consult each feature’s explanation and result status for device, unlock and mod requirements."
     },
     {
       "Type": "Heading",

@@ -24,7 +24,10 @@ public sealed record RelicSequenceEntryResult(
     int Position,
     ModelKey RelicKey,
     PredictionPrecision Precision,
-    EvidenceCode EvidenceCode);
+    EvidenceCode EvidenceCode)
+{
+    internal bool? ShopEligible { get; init; }
+}
 
 public sealed record RelicSequenceLaneResult(
     RelicSequenceKind Kind,
@@ -81,6 +84,10 @@ public sealed record RelicSequencePredictionResult(
     /// are not a prediction of the relic awarded by each Act's chest.
     /// </summary>
     public IReadOnlyList<RelicSequenceLaneResult> TreasureRoomLanes { get; init; } = [];
+    public RelicSequenceLaneResult? GetPlayerLane(RelicSequenceKind kind) =>
+        Lanes.FirstOrDefault(lane => lane.Kind == kind);
+
+    internal (int Certain, int Possible)? ShopStockCount { get; init; }
     internal bool? EarlyLastingCandyEligible { get; init; } = true;
     internal RngSemanticProfileId RngSemantics { get; init; } = RngSemanticProfileId.Modern110;
 

@@ -224,7 +224,7 @@ internal static class SearchSelectivityEstimator
     {
         NeowEffectAuthoritySnapshot? effects = plan.Authority.EffectAuthority;
         if (!ModernNeowIdentityRules.TryGetEligibleCursePool(plan.Authority, out IReadOnlyList<ModelKey> cursePool) ||
-            effects is null || !effects.HasExactBonesPools || effects.BonesEligibleRelics is null)
+            effects is null || !effects.HasExactBonesOffer || effects.BonesEligibleRelics is null)
         {
             return SearchSelectivityEstimate.Unpriced(
                 "P5.Neow.Bones.AuthorityMissing",
@@ -984,6 +984,11 @@ internal static class SearchSelectivityEstimator
             return false;
         }
         int bucket = pool.PlayerLaneBucketIndexes[laneIndex];
+        if (bucket == CompiledRelicPoolSnapshot.AbsentLane)
+        {
+            entries = [];
+            return true;
+        }
         if (bucket < 0 || bucket >= pool.BucketLengths.Length)
         {
             entries = Array.Empty<ushort>();

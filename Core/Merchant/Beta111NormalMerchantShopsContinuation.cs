@@ -1,4 +1,6 @@
 using RolltheSpire2.Core.Identity;
+using RolltheSpire2.Core.Effects.Snapshots;
+using RolltheSpire2.Core.Rng;
 using RolltheSpire2.Core.World.Beta109;
 using RolltheSpire2.Core.World.Snapshots;
 
@@ -32,6 +34,32 @@ public static class Beta111NormalMerchantShopsContinuation
 
     internal static Calls For(bool modern) => modern ? new(42, 35, 38) :
         new(CallsPerMerchant, UncommonCallWithinMerchant, RareCallWithinMerchant);
+
+    internal static bool HasUnconditionalPotionStock(IReadOnlyList<NeowEffectPotionSnapshot>? stock) =>
+        stock != null && new[] { EffectPotionRarity.Common, EffectPotionRarity.Uncommon, EffectPotionRarity.Rare }
+            .All(r => stock.Count(p => p.Rarity == r) >= 3 && stock.Where(p => p.Rarity == r).All(p => p.MerchantCloneRuleExact));
+
+    // The first two calls roll ordinary relic rarities, then all three relics receive prices.
+    // Each shop starts a fresh potion list even though Shops continues across visits.
+    internal static string? CheckPotionStock(IReadOnlyList<NeowEffectPotionSnapshot>? stock,
+        Xoshiro256StarStar shopStart, int ordinal)
+    {
+        if (stock == null) return $"MerchantInventoryShapeUnobserved:{ordinal}";
+        var rng = shopStart.Clone();
+        rng.Advance(5);
+        var remaining = stock.ToList();
+        for (int slot = 1; slot <= 3; slot++)
+        {
+            float roll = rng.NextFloat();
+            var rarity = roll <= .1f ? EffectPotionRarity.Rare : roll <= .35f ? EffectPotionRarity.Uncommon : EffectPotionRarity.Common;
+            var candidates = remaining.Where(p => p.Rarity == rarity).ToArray();
+            if (candidates.Length == 0) return $"MerchantPotionStockExhausted:{ordinal}:{slot}:{rarity}";
+            var selected = candidates[rng.NextInt(candidates.Length)];
+            if (!selected.MerchantCloneRuleExact) return $"MerchantPotionCloneRuleUnobserved:{ordinal}:{slot}:{selected.PotionKey}";
+            remaining.RemoveAt(remaining.FindIndex(p => p.PotionKey == selected.PotionKey));
+        }
+        return null;
+    }
 
     public static Beta111NormalMerchantProjection AdvanceOne(
         Beta109WorldRng shops,

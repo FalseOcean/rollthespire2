@@ -1,5 +1,6 @@
 #version 450
 #define N_PARTY_DIRECT_DRAW 0
+#define N_DENSE_PREFIX_TABLE 0
 #define BONES_K_MODE __RT2_BONES_K_MODE__
 #define N_STAGE __RT2_N_STAGE__
 #define N_DIRECT_NESTED __RT2_N_DIRECT_NESTED__
@@ -30,6 +31,10 @@ uint plan_value(uint i) { return plan_meta.values[i]; }
 uint64_t plan_u64(uint i) { return uint64_t(plan_value(i)) | (uint64_t(plan_value(i+1u)) << 32u); }
 uint n_arrival=0u;
 /*__RT2_NEOW_LOCAL_DONOR__*/
+#if N_DENSE_PREFIX_TABLE
+uint prefix_hash_cache_value(uint i) { return batch.values[8u+i]; }
+/*__RT2_N_PREFIX_TABLE_HELPERS__*/
+#endif
 /*__RT2_PARTY_DIRECT_DRAW__*/
 /*__RT2_CAPSULE_COMPOSITE__*/
 
@@ -384,16 +389,27 @@ void main() {
     uint count=batch.values[3u];
     uint64_t base=uint64_t(batch.values[0u])|(uint64_t(batch.values[1u])<<32u);
     uint64_t seed_first8; uint tail;
+#if N_DENSE_PREFIX_TABLE
+    uint prefix_row, suffix_ordinal;
+    uint64_t prefix_hash;
+    if (first<count && !prefix_hash_cache_initialize(first,prefix_row,suffix_ordinal,tail,prefix_hash)) {
+        atomicExchange(header.values[3u],1u);
+        return;
+    }
+#else
     if (batch.values[4u]==0u && first<count) encode_seed12_packed(base+uint64_t(first),seed_first8,tail);
 #if N_PARTY_DIRECT_DRAW
     uint64_t prefix_hash = uint64_t(0u);
     if (batch.values[4u]==0u && first<count) prefix_hash = party_seed12_prefix(seed_first8);
 #endif
+#endif
     // Donor dispatch accounting: no globally contended atomic per eight roots.
     if (first==0u) header.values[4u]=count;
     for (uint lane=0u;lane<8u && first+lane<count;lane++) {
         uint ordinal=batch.values[4u]==0u ? first+lane : input_ordinals.values[first+lane];
-#if N_PARTY_DIRECT_DRAW
+#if N_DENSE_PREFIX_TABLE
+        uint64_t root=party_seed12_tail(prefix_hash,tail);
+#elif N_PARTY_DIRECT_DRAW
         uint64_t root=batch.values[4u]==0u ? party_seed12_tail(prefix_hash,tail) : root_hash_for_ordinal(base+uint64_t(ordinal));
 #else
         uint64_t root=batch.values[4u]==0u ? xxhash64_seed12_packed(seed_first8,tail) : root_hash_for_ordinal(base+uint64_t(ordinal));
@@ -415,6 +431,12 @@ void main() {
 #else
         if (matches(root)) append_ordinal(ordinal);
 #endif
+#if N_DENSE_PREFIX_TABLE
+        if (lane<7u && first+lane+1u<count && !prefix_hash_cache_advance(prefix_row,suffix_ordinal,tail,prefix_hash)) {
+            atomicExchange(header.values[3u],1u);
+            return;
+        }
+#else
         if(batch.values[4u]==0u && lane<7u) {
 #if N_PARTY_DIRECT_DRAW
             bool carry = tail == 0x5a5a5a5au;
@@ -424,6 +446,7 @@ void main() {
             if (carry) prefix_hash = party_seed12_prefix(seed_first8);
 #endif
         }
+#endif
     }
 }
 #endif

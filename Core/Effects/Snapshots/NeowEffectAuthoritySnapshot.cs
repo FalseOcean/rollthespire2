@@ -14,7 +14,11 @@ public enum EffectCardRarity
     Curse,
     Ancient,
     Status,
-    Special
+    Special,
+    None,
+    Event,
+    Token,
+    Quest
 }
 
 public enum EffectCardType
@@ -41,7 +45,10 @@ public enum EffectPotionRarity
     Common,
     Uncommon,
     Rare,
-    Other
+    Other,
+    Event,
+    Token,
+    None
 }
 
 public enum NestedRelicEffectKind
@@ -94,7 +101,10 @@ public sealed record NeowEffectPotionSnapshot(
     bool? AllowedOutOfCombat = null,
     string? SourceAssembly = null,
     string? SourceModId = null,
-    bool IsMultiplayerOnly = false);
+    bool IsMultiplayerOnly = false)
+{
+    public bool MerchantCloneRuleExact { get; init; }
+}
 
 public sealed record NeowEffectRelicSnapshot(
     ModelKey RelicKey,
@@ -180,6 +190,16 @@ public sealed record NeowEffectAuthoritySnapshot(
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyList<ModelKey>? NativeCharacterPoolOrder = null)
 {
+    public bool ColorlessRewardIdentityPoolExact { get; init; }
+    public bool OtherCharacterIdentityPoolsExact { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<ModelKey>? ColorfulCandidateColors { get; init; }
+    public Core.Events.EventResultCatalogParts EventCatalogParts { get; init; }
+    // Present only when the non-potion inventory stages have their audited shape.
+    // PotionFactory concatenates both pools in order, retaining repeated entries.
+    public IReadOnlyList<NeowEffectPotionSnapshot>? MerchantPotionStock { get; init; }
+    internal IReadOnlyList<NeowEffectPotionSnapshot>? ObservedMerchantPotionStock { get; init; }
+
     /// <summary>
     /// Immutable runtime-capture foundation. This proves that copied catalog inputs exist
     /// for the accepted profile; it deliberately does not claim that unknown Mod behavior
@@ -233,7 +253,8 @@ public sealed record NeowEffectAuthoritySnapshot(
         RelicBagSourcePoolsExact &&
         SharedRelicPoolSource is not null &&
         CharacterRelicPoolSource is not null;
-    public bool HasExactBonesPools => HasExactFoundation && BonesEligibilityExact && CursePoolExact && BonesEligibleRelics is not null && GeneratedCursePool is not null;
+    public bool HasExactBonesOffer => HasExactFoundation && BonesEligibilityExact && BonesEligibleRelics is not null;
+    public bool HasExactBonesPools => HasExactBonesOffer && CursePoolExact && GeneratedCursePool is not null;
 
     public bool HasExactMerchantColorlessV1Inputs =>
         HasCapturedIdentityFoundation &&
@@ -247,7 +268,6 @@ public sealed record NeowEffectAuthoritySnapshot(
     public bool HasExactColorfulEventResultInputs =>
         HasCapturedIdentityFoundation &&
         CapturedProfileId == RuntimeProfileId.Beta111 &&
-        EventResultStaticCatalogExact &&
         EventColorfulCharacterPoolsExact &&
         UnlockedCharacterCardPoolKeys is not null;
 }

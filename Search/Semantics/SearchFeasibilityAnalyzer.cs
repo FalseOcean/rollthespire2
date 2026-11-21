@@ -116,7 +116,7 @@ internal static class SearchFeasibilityAnalyzer
             return false;
 
         NeowEffectAuthoritySnapshot? authority = compiled.Context.Authority.EffectAuthority;
-        if (authority is null || !authority.HasExactBonesPools || authority.BonesEligibleRelics is null)
+        if (authority is null || !authority.HasExactBonesOffer || authority.BonesEligibleRelics is null)
             return false;
 
         HashSet<ModelKey> legal = authority.BonesEligibleRelics
@@ -263,7 +263,7 @@ internal static class SearchFeasibilityAnalyzer
             world.Completeness != SnapshotCompleteness.Complete ||
             !SourceAuthorityRules.SupportsExactIdentity(world.SourceAuthority) ||
             !generation.DirectSourceAudited || generation.NoUnknownHooksOrModifiers == false ||
-            !generation.RelicInitializationExact ||
+            generation.InitialRelicReplayAssumption.Length != 0 || !generation.RelicInitializationExact ||
             !generation.SharedRelicPoolOrderExact ||
             !generation.CharacterRelicPoolOrderExact ||
             !generation.RelicRarityAuthorityExact ||
@@ -547,7 +547,8 @@ internal static class SearchFeasibilityAnalyzer
 
                 Beta109ActGenerationSnapshot? variant = generation.OrderedActCatalog.FirstOrDefault(item =>
                     item.Act == branch.Act && item.ActKey == branch.VariantKey);
-                if (variant is null || !variant.HasExactGenerationInputs)
+                if (variant is null || !variant.HasExactGenerationInputs ||
+                    generation.RoomReplayAssumption.Length != 0 && (!branch.FirstBoss.IsEmpty || branch.IncludesSecondBoss))
                 {
                     allBranchAuthorityExact = false;
                     continue;

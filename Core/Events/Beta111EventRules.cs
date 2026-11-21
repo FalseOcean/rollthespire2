@@ -51,8 +51,11 @@ public static class Beta111EventRules
 
     public static ModelKey[] ColorfulOffers(Xoshiro256StarStar rng, ModelKey owner,
         IEnumerable<ModelKey> unlockedCharacters, RngSemanticProfileId semantics = RngSemanticProfileId.Modern110)
+        => ColorfulOffers(rng, ColorfulCandidates(owner, unlockedCharacters, semantics));
+
+    internal static ModelKey[] ColorfulOffers(Xoshiro256StarStar rng, IEnumerable<ModelKey> orderedCandidates)
     {
-        var candidates = ColorfulCandidates(owner, unlockedCharacters, semantics).ToList();
+        var candidates = orderedCandidates.ToList();
         while (candidates.Count > ColorfulOfferCount)
             candidates.RemoveAt(rng.NextInt(candidates.Count));
         return candidates.ToArray();

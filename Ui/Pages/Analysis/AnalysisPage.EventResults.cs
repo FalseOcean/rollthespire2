@@ -108,20 +108,14 @@ internal sealed partial class AnalysisPage
         IReadOnlyList<MorphicGroveCard>? result = null;
         if (_eventTransformUnlocks is not null && LastRequest is { } request)
         {
-            try
+            result = ObservePreview("EventTransform:" + entry, () =>
             {
-                // Main-thread, read-only pool capture; no live deck or RNG is touched.
-                var scenario = Beta111MorphicGroveAuthorityCapture.CaptureAuthoredBasics(
-                    request.Authority, Beta111EventTransformProjector.DrawCount(entry), _eventTransformUnlocks);
-                result = Beta111EventTransformProjector.Project(root, request.PlayerSlotIndex,
-                    entry, scenario.Targets[0].OrderedSourceCandidates!);
-            }
-            catch (Exception ex)
-            {
-                // A mod character without the agreed Basic targets must not break
-                // the rest of the predictor or acquire an invented replacement pool.
-                RuntimeLog.Warn($"predictorEventTransformUnavailable={entry};slot={request.PlayerSlotIndex};issue={ex.GetType().Name}:{ex.Message}");
-            }
+                var count = Beta111EventTransformProjector.DrawCount(entry);
+                var scenario = Beta111MorphicGroveAuthorityCapture.ObserveAuthoredBasics(request.Authority, count, _eventTransformUnlocks);
+                return scenario.Targets.Count == count
+                    ? Beta111EventTransformProjector.Project(root, request.PlayerSlotIndex, entry, scenario.Targets[0].OrderedSourceCandidates!)
+                    : null;
+            });
         }
         _eventTransformResults[entry] = result;
         return result;

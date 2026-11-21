@@ -91,15 +91,12 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                                            modernStaticAuthority.ActSelectionAuthorityExact &&
                                            modernStaticAuthority.ModeFactsExact &&
                                            modernStaticAuthority.OrderedActs.Count > 0 &&
-                                           modernStaticAuthority.OrderedActs.All(act => act.HasExactGenerationInputs) &&
-                                           modernStaticAuthority.SharedEventCatalogExact &&
-                                           modernStaticAuthority.AllSharedAncientCatalogExact &&
                                            modernStaticAuthority.UnlockedSharedAncientCatalogExact &&
                                            modernStaticAuthority.UnlockFactsExact &&
-                                           modernStaticAuthority.RelicInitializationExact &&
                                            modernStaticAuthority.IsVanilla;
         bool catalogOrderExact = RuntimeProfilePolicies.IsModernCore(profile.ProfileId)
-            ? modernStaticFoundationExact
+            ? modernStaticFoundationExact && modernStaticAuthority!.SharedEventCatalogExact &&
+              modernStaticAuthority.OrderedActs.All(act => act.HasExactGenerationInputs)
             : legacyCatalogOrderExact;
         bool relicSourceExact = RuntimeProfilePolicies.IsModernCore(profile.ProfileId)
             ? modernStaticAuthority?.RelicInitializationExact == true
@@ -107,10 +104,12 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         bool hasCatalog = RuntimeProfilePolicies.IsModernCore(profile.ProfileId)
             ? modernStaticAuthority?.OrderedActs.Count > 0
             : groups.Count > 0 && groups.All(group => group.Acts.Count > 0);
-        SourceAuthority authority = hasCatalog && catalogOrderExact && relicSourceExact
+        bool prefixSourcePresent = relicSourceExact || modernStaticAuthority?.InitialRelicShuffleCount is >= 0 &&
+            RuntimeVersionCompatibility.Resolve(gameVersion).SemanticProfileId == RngSemanticProfileId.Modern113;
+        SourceAuthority authority = hasCatalog && (RuntimeProfilePolicies.IsModernCore(profile.ProfileId) ? modernStaticFoundationExact : catalogOrderExact) && prefixSourcePresent
             ? SourceAuthority.OfficialRuntimeExact
             : SourceAuthority.Incomplete;
-        SnapshotCompleteness completeness = hasCatalog && relicSourceExact
+        SnapshotCompleteness completeness = hasCatalog && prefixSourcePresent
             ? SnapshotCompleteness.Complete
             : hasCatalog ? SnapshotCompleteness.Partial : SnapshotCompleteness.Missing;
 
@@ -236,18 +235,22 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             string unlockSource = "explicit-party-slot";
             var unlockState = explicitUnlockState ?? TryCaptureCurrentUnlockState(assembly,out unlockSource);
             await schedule.Checkpoint("WorldEvents").ConfigureAwait(false);
-            var sharedEvents = ReadStaticModelsWorld(modelDb,"AllSharedEvents","SharedEvents");
-            var events = CaptureBeta109EventAuthority(assembly,unlockState,sharedEvents);
-            var groups = await ObserveActGroups(modelDb,profile.ProfileId,unlockState,events,schedule).ConfigureAwait(false);
-            await schedule.Checkpoint("WorldSharedCatalogs").ConfigureAwait(false);
-            var ancients = ReadSharedAncientsWorld(modelDb,unlockState);
-            var characters = ReadUnlockedCharactersWorld(modelDb,unlockState);
-            var relics = ReadStaticRuntimeModelKeysWorld(modelDb,"AllRelics","Relics");
             var modern = RuntimeProfilePolicies.IsModernCore(profile.ProfileId)
                 ? await ObserveBeta109StaticAuthority(profile.ProfileId,assembly,modelDb,unlockState,
                     character,playersCount,playerSlotIndex,predictionGameMode,predictionGameModeAuthority,
                     act1OverrideRaw,orderedCharacters,explicitDiscoveredActs,schedule).ConfigureAwait(false)
                 : null;
+            var sharedEvents = modern is null ? ReadStaticModelsWorld(modelDb,"AllSharedEvents","SharedEvents")
+                : new ModelListCapture(modern.EventAuthority.OrderedSharedEventsRaw, modern.EventAuthority.SharedRawOrderExact);
+            var events = modern?.EventAuthority ?? CaptureBeta109EventAuthority(assembly,unlockState,sharedEvents);
+            var groups = modern is null
+                ? await ObserveActGroups(modelDb,profile.ProfileId,unlockState,events,schedule).ConfigureAwait(false)
+                : Beta109WorldRuntimeCaptureSealer.ProjectActGroups(modern.OrderedActs);
+            await schedule.Checkpoint("WorldSharedCatalogs").ConfigureAwait(false);
+            var ancients = modern is null ? ReadSharedAncientsWorld(modelDb,unlockState)
+                : new ModelListCapture(modern.UnlockedSharedAncients, modern.UnlockedSharedAncientCatalogExact);
+            var characters = ReadUnlockedCharactersWorld(modelDb,unlockState);
+            var relics = ReadStaticRuntimeModelKeysWorld(modelDb,"AllRelics","Relics");
             return new() { ObservedAtUtc=DateTimeOffset.UtcNow, Groups=groups, SharedEvents=sharedEvents, EventAuthority=events,
                 SharedAncients=ancients, UnlockedCharacters=characters, RelicCatalog=relics,
                 ModernAuthority=modern, UnlockStateExact=unlockState is not null, UnlockSource=unlockSource,

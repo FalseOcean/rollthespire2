@@ -68,6 +68,15 @@ internal static class Beta111CanonicalEventShopSearchEvaluator
                  plan.Evaluation.EventResultConditions.Select((condition, index) => (condition, index)))
         {
             if (condition.Kind == EventResultConditionKind.CrystalSphereRewards) continue;
+            if (EventResultTransformSemantics.IsTransform(condition.Kind) && condition.IsValid &&
+                EventResultTransformSemantics.IsIncompleteCapture(condition.MorphicGroveScenario, EventResultTransformSemantics.DrawCount(condition.Kind)))
+            {
+                if (condition.Kind == EventResultConditionKind.TrialNondescriptInitialBasicsContains &&
+                    Beta111TrialTinkerProjector.TrialCase(rootHash, authority.PlayerSlotIndex) != (int)TrialCaseTarget.Nondescript)
+                    return SearchQueryEvaluation.NoMatch("EventResult.TrialCaseNotNondescript");
+                unresolved ??= SearchQueryEvaluation.Unknown(condition.MorphicGroveScenario!.Premises.InitialBasicCaptureIssue!);
+                continue;
+            }
             if (EventOpportunitySemantics.IsEventLocalOpportunity(condition.Kind))
             {
                 if (!condition.IsValid || !EventOpportunitySemantics.SupportsProfile(condition.Kind,
@@ -175,12 +184,12 @@ internal static class Beta111CanonicalEventShopSearchEvaluator
             switch (condition.Kind)
             {
                 case EventResultConditionKind.TrashHeapGrabCard:
-                    precision = projection.TrashHeapPrecision;
+                    precision = projection.TrashGrabPrecision;
                     matched = projection.TrashHeapGrabCard == condition.TargetKey;
                     source = "event-result:trash-heap:grab";
                     break;
                 case EventResultConditionKind.TrashHeapDiveRelic:
-                    precision = projection.TrashHeapPrecision;
+                    precision = projection.TrashDivePrecision;
                     matched = projection.TrashHeapDiveRelic == condition.TargetKey;
                     source = "event-result:trash-heap:dive";
                     break;

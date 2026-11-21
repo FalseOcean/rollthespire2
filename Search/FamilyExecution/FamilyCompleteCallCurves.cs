@@ -16,15 +16,13 @@ internal sealed class FamilyCompleteCallSnapshot
 {
     private const string PublicRole = "PublicAbi1Canonical";
     private const double SourceSurvivalRelativeTolerance = 1e-10;
-    private readonly IReadOnlyDictionary<string, FamilyCompleteCallCurve> _curves;
-    private readonly IReadOnlyDictionary<string, FamilyCompleteCallCurve[]> _byShape;
+    private readonly IReadOnlyDictionary<FamilyCanonicalCostKey, FamilyCompleteCallCurve[]> _byShape;
     private readonly IReadOnlyDictionary<(string Family, bool Compact, int Workers), double> _cpuWorkerRatios;
-    internal bool IsEmpty => _curves.Count == 0;
-    private FamilyCompleteCallSnapshot(IReadOnlyDictionary<string, FamilyCompleteCallCurve> curves)
+    internal bool IsEmpty => _byShape.Count == 0;
+    private FamilyCompleteCallSnapshot(IReadOnlyList<FamilyCompleteCallCurve> curves)
     {
-        _curves = curves;
-        _byShape = curves.Values.GroupBy(c => Shape(c.Key)).ToDictionary(g => g.Key, g => g.ToArray(), StringComparer.Ordinal);
-        _cpuWorkerRatios = CpuWorkerRatios(curves.Values);
+        _byShape = curves.GroupBy(c => Shape(c.Key)).ToDictionary(g => g.Key, g => g.ToArray());
+        _cpuWorkerRatios = CpuWorkerRatios(curves);
     }
 
     // Relative scaling only, never an absolute price for another shape/body.
@@ -33,10 +31,10 @@ internal sealed class FamilyCompleteCallSnapshot
     private static IReadOnlyDictionary<(string Family, bool Compact, int Workers), double> CpuWorkerRatios(
         IEnumerable<FamilyCompleteCallCurve> curves)
     {
-        static string Group(FamilyCompleteCallCurve c) => (c.Key with {
+        static (FamilyCanonicalCostKey Key, string Survival) Group(FamilyCompleteCallCurve c) => (c.Key with {
             ConfiguredWorkers = 1,
             PhysicalRevision = System.Text.RegularExpressions.Regex.Replace(c.Key.PhysicalRevision, @"\.P\d+(?=\.)", ".P1")
-        }).StableKey + ";SourceSurvival=" + P(c.SourceSurvival);
+        }, P(c.SourceSurvival));
         var ratios = new List<(string Family, bool Compact, int Workers, double Ratio)>();
         foreach (var group in curves.Where(c => c.Key.ExecutionClass == "CPU" && c.Key.Players == 1 &&
             c.Key.OrderedChildBodies == "").GroupBy(Group))
@@ -71,14 +69,12 @@ internal sealed class FamilyCompleteCallSnapshot
             $"WorkerScale=SameFamilyHistoricalMedian;WorkerAnchors={left.Workers}..{right.Workers};" +
             "NotCurrentShapeMeasurement;AboveLastAnchorCapped");
     }
-    private static string Shape(FamilyCanonicalCostKey key) =>
-        (key.CompactInput ? key : key with { RootWindow = 0 }).PriceKey;
+    private static FamilyCanonicalCostKey Shape(FamilyCanonicalCostKey key) =>
+        (key.CompactInput ? key : key with { RootWindow = 0 }).PriceIdentity;
     private static bool Probability(double? value) => value is double p && double.IsFinite(p) && p is >= 0 and <= 1;
     // Admission retains exact round-trip identities, normalizing only +/-0.
     // Pricing selection below tolerates rounding from equivalent source sums;
     // it never merges distinct stored curves or changes model probabilities.
-    private static string Identity(FamilyCanonicalCostKey key, double? survival) => Shape(key) +
-        (key.FamilyId == "N.Neow" ? "\nSourceSurvival=" + (survival == 0 ? 0d : survival!.Value).ToString("R", CultureInfo.InvariantCulture) : "");
     internal bool HasShapeReference(FamilyCanonicalCostKey key, double? survival) =>
         SelectCurve(key, survival, false, out _) is not null;
     internal bool RequiresSourceSurvival(FamilyCanonicalCostKey key) =>
@@ -110,18 +106,18 @@ internal sealed class FamilyCompleteCallSnapshot
         // Raw JSON prevents a malformed optional curve's DTO from discarding
         // valid legacy rows during the outer document deserialization.
         if (optional is null || optional.Value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
-            return new(new Dictionary<string, FamilyCompleteCallCurve>());
+            return new([]);
         if (optional.Value.ValueKind != JsonValueKind.Array)
         {
             Report(new InvalidDataException("CompleteCallCurves.ArrayRequired"), "LoadCompleteCallCurves");
-            return new(new Dictionary<string, FamilyCompleteCallCurve>());
+            return new([]);
         }
         int index = 0;
         foreach (var value in optional.Value.EnumerateArray())
         {
             try
             {
-                var curve = value.Deserialize<FamilyCompleteCallCurve>();
+                var curve = value.Deserialize(FamilyCanonicalCostJsonContext.Default.FamilyCompleteCallCurve);
                 if (curve is null || !Valid(curve)) throw new InvalidDataException("CompleteCallCurves.InvalidTrainingCurve");
                 candidates.Add(curve with { Points = curve.Points.OrderBy(p => p.N).ToArray() });
             }
@@ -129,15 +125,15 @@ internal sealed class FamilyCompleteCallSnapshot
             { Report(error, "LoadCompleteCallCurve.Index" + index); }
             index++;
         }
-        var admitted = new Dictionary<string, FamilyCompleteCallCurve>(StringComparer.Ordinal);
-        foreach (var group in candidates.GroupBy(c => Identity(c.Key, c.SourceSurvival)))
+        var admitted = new List<FamilyCompleteCallCurve>();
+        foreach (var group in candidates.GroupBy(c => (Shape(c.Key), c.SourceSurvival)))
         {
             // No arbitrary winner or partial merging of independently authored
             // same-key evidence. The assembler must resolve duplicate sources.
             if (group.Count() != 1)
                 Report(new InvalidDataException("CompleteCallCurves.AmbiguousSourceShape:" + group.First().Key.FamilyId +
                     ";body=" + group.First().Key.PhysicalRevision), "LoadCompleteCallCurveIdentity");
-            else admitted.Add(group.Key, group.Single());
+            else admitted.Add(group.Single());
         }
         return new(admitted);
     }

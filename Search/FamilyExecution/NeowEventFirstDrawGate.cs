@@ -109,7 +109,11 @@ internal sealed record NeowEventFirstDrawGate(FamilyFirstDraw Event, FamilyFirst
         };
         string revisionSuffix = Revision(draw.Group) + (compactInput ? CompactSuffix : variant is not null ? VariantSuffix : "") +
             (trackedPositive ? TrackedPositiveSuffix : "");
-        string revision = n.PhysicalRevision + revisionSuffix;
+        // Compact input keeps its previous calibration key and decodes each supplied ordinal.
+        string neowRevision = compactInput
+            ? n.PhysicalRevision.Replace(NeowFamilyGpuPlan.DenseDirectPrefixRevision, "", StringComparison.Ordinal)
+            : n.PhysicalRevision;
+        string revision = neowRevision + revisionSuffix;
         var body = new FilterBodyDescription(prep, revision, n.ProfileId)
         {
             InputIdentity = n.InputIdentity, UsesGpu = true, InputModes = compactInput ? FilterInputModes.CompactAbi1 : FilterInputModes.Dense,

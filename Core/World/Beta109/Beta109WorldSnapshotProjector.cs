@@ -9,6 +9,42 @@ namespace RolltheSpire2.Core.World.Beta109;
 
 public static class Beta109WorldSnapshotProjector
 {
+    internal static bool TryGetStartingAct(
+        Beta109WorldGenerationSnapshot source, ulong rootHash, string seedIdentity, out ModelKey actKey)
+    {
+        actKey = default;
+        bool sameSeed = seedIdentity.StartsWith("root-hash:", StringComparison.Ordinal)
+            ? source.ActSelectionRootExact && source.ActSelectionRoot == rootHash
+            : string.Equals(source.CanonicalSeed, seedIdentity, StringComparison.Ordinal);
+        if (sameSeed && source.SelectedActsExact && source.SelectedActs.Count > 0)
+        {
+            actKey = source.SelectedActs[0];
+            return actKey.IsValid;
+        }
+
+        // The captured group includes the GetRandomList hook, source order and candidate predicates.
+        // Later groups use this stream after act one and cannot change its selection.
+        if (!source.ActSelectionRootExact || !source.IsMultiplayerExact ||
+            !source.TestModeFactExact || !source.Act1OverrideExact ||
+            (!source.RandomCharacterAuthorityExact && source.LobbyPlayers.Any(player => player.IsRandomCharacter)))
+            return false;
+        var first = source.ActSelectionGroups.FirstOrDefault(group => group.Act == 1);
+        if (first is not { EligibilityAndOrderExact: true, EligibleActsInSourceOrder.Count: > 0 } ||
+            first.SelectionMode == Beta109ActSelectionMode.Unsupported) return false;
+        var rng = Beta109WorldRng.CreateLobbyLocal(rootHash, "act_selection");
+        actKey = source.Act1OverrideResolvedKey is { IsValid: true } selected
+            ? selected : SelectAct(first, rng);
+        return actKey.IsValid;
+    }
+
+    private static ModelKey SelectAct(Beta109ActSelectionGroupSnapshot group, Beta109WorldRng rng) =>
+        group.SelectionMode switch
+        {
+            Beta109ActSelectionMode.DeterministicFirst => group.EligibleActsInSourceOrder[0],
+            Beta109ActSelectionMode.RandomNextItem => rng.NextModelKey(group.EligibleActsInSourceOrder, $"act-selection:act{group.Act}"),
+            _ => throw new InvalidOperationException("UnsupportedActSelectionMode:Act" + group.Act)
+        };
+
     public static Beta109WorldGenerationSnapshot ProjectForSeed(
         Beta109WorldGenerationSnapshot source,
         string canonicalSeed)
@@ -54,15 +90,7 @@ public static class Beta109WorldSnapshotProjector
                 var actSelection = Beta109WorldRng.CreateLobbyLocal(actSelectionRoot, "act_selection");
                 ModelKey[] projected = source.ActSelectionGroups
                     .OrderBy(group => group.Act)
-                    .Select(group => group.SelectionMode switch
-                    {
-                        Beta109ActSelectionMode.DeterministicFirst => group.EligibleActsInSourceOrder[0],
-                        Beta109ActSelectionMode.RandomNextItem => actSelection.NextModelKey(
-                            group.EligibleActsInSourceOrder,
-                            $"act-selection:act{group.Act}"),
-                        _ => throw new InvalidOperationException(
-                            "UnsupportedActSelectionMode:Act" + group.Act)
-                    })
+                    .Select(group => SelectAct(group, actSelection))
                     .ToArray();
 
                 // BeginRunLocally consumes the normal Act 1 selection first and only
@@ -87,15 +115,7 @@ public static class Beta109WorldSnapshotProjector
         Beta109UpFrontPrefixSnapshot projectedPrefix = source.UpFrontPrefix;
         if (projectionIdentityChanged && source.UpFrontPrefix.Kind == Beta109UpFrontPrefixAuthorityKind.ExactCheckpoint)
         {
-            bool canReplayFromRunStart = source.RelicInitializationExact &&
-                                         source.SharedRelicPoolOrderExact &&
-                                         source.CharacterRelicPoolOrderExact &&
-                                         source.RelicRarityAuthorityExact &&
-                                         source.PlayerRelicPoolCompositionExact &&
-                                         source.SharedRelicBuckets.Count > 0 &&
-                                         source.PlayerRelicBuckets.Count > 0 &&
-                                         source.SharedRelicBuckets.All(bucket => bucket.OrderExact) &&
-                                         source.PlayerRelicBuckets.All(bucket => bucket.OrderExact);
+            bool canReplayFromRunStart = source.CanReplayInitialRelicDraws;
             projectedPrefix = canReplayFromRunStart
                 ? new Beta109UpFrontPrefixSnapshot(
                     Beta109UpFrontPrefixAuthorityKind.ReplayFromRunStart,

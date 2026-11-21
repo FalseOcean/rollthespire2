@@ -21,7 +21,9 @@
 #define N_PAIR_MASK 0
 #define N_MODERN_TRANSFORM_GATE 0
 #define N_DIRECT_FIRST_DRAW 0
+#define N_DENSE_PREFIX_TABLE 0
 #define N_LOCAL_SOURCE_MASK -1
+#define N_LEAFY_KALEIDOSCOPE_TERMINAL 0
 #define N_SMALL_CAPSULE_RARE __RT2_N_SMALL_CAPSULE_RARE__
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_float64 : require
@@ -44,6 +46,8 @@ layout(set=0,binding=12,std430) restrict buffer PairSurvivors { uint values[]; }
 #if RT2_PREFIX_HASH_CACHE && N_STAGE == 0
 layout(set=0,binding=13,std430) readonly restrict buffer PrefixHashTable { uint values[]; } prefix_hash_cache;
 uint prefix_hash_cache_value(uint i) { return prefix_hash_cache.values[i]; }
+#elif N_DENSE_PREFIX_TABLE
+uint prefix_hash_cache_value(uint i) { return batch.values[8u+i]; }
 #endif
 uint plan_value(uint i) { return plan_meta.values[i]; }
 uint64_t plan_u64(uint i) { return uint64_t(plan_value(i)) | (uint64_t(plan_value(i+1u)) << 32u); }
@@ -387,6 +391,16 @@ bool modern_kaleidoscope_phial_route(RngState rewards, RngState non_combat, bool
 #endif
 /*__RT2_N_MODERN_LOCAL_CAPSULE__*/
 bool local_matches(uint64_t root, RngState rewards, uint a, uint b) {
+#if N_LEAFY_KALEIDOSCOPE_TERMINAL
+    // Stage 0 verified Leafy on the Transformations stream, and stage 1
+    // verified the pair. Leafy consumes neither of Kaleidoscope's streams,
+    // so both pickup orders present the same Rewards and NonCombat state.
+    RouteRngState state;
+    state.rewards = rewards;
+    state.non_combat = non_combat_rng(root);
+    next_u64(state.non_combat); // Bones already forked its shuffle.
+    return execute_kaleidoscope_route(1u, conditions.values[14u * 5u + 1u], 0u, true, state);
+#else
 #if N_SMALL_CAPSULE_RARE
     RngState capsule_rewards = rewards;
     if (next_float(capsule_rewards) < 0.83f) return false;
@@ -430,6 +444,7 @@ bool local_matches(uint64_t root, RngState rewards, uint a, uint b) {
 #endif
 #else
     return true;
+#endif
 #endif
 }
 #if N_DIRECT_NESTED == 5 || N_DIRECT_NESTED == 6
@@ -667,7 +682,7 @@ void main() {
     uint count=batch.values[3u];
     uint64_t base=uint64_t(batch.values[0u])|(uint64_t(batch.values[1u])<<32u);
     uint64_t seed_first8; uint tail;
-#if RT2_PREFIX_HASH_CACHE && N_STAGE == 0
+#if (RT2_PREFIX_HASH_CACHE && N_STAGE == 0) || N_DENSE_PREFIX_TABLE
     uint prefix_row, suffix_ordinal;
     uint64_t prefix_hash;
     if(batch.values[4u]==0u && first<count &&
@@ -686,7 +701,7 @@ void main() {
     if (first==0u) header.values[4u]=count;
     for (uint lane=0u;lane<8u && first+lane<count;lane++) {
         uint ordinal=batch.values[4u]==0u ? first+lane : input_ordinals.values[first+lane];
-#if RT2_PREFIX_HASH_CACHE && N_STAGE == 0
+#if (RT2_PREFIX_HASH_CACHE && N_STAGE == 0) || N_DENSE_PREFIX_TABLE
         uint64_t root=batch.values[4u]==0u ? xxhash64_seed12_from_prefix(prefix_hash,tail) : root_hash_for_ordinal(base+uint64_t(ordinal));
 #elif RT2_N_LEAFY_LOCAL_PREFIX && N_STAGE == 3
         uint64_t root=batch.values[4u]==0u ? xxhash64_seed12_from_prefix(local_prefix_hash,tail) : root_hash_for_ordinal(base+uint64_t(ordinal));
@@ -715,7 +730,7 @@ void main() {
 #endif
 #endif
         if(batch.values[4u]==0u && lane<7u) {
-#if RT2_PREFIX_HASH_CACHE && N_STAGE == 0
+#if (RT2_PREFIX_HASH_CACHE && N_STAGE == 0) || N_DENSE_PREFIX_TABLE
             if(first+lane+1u<count && !prefix_hash_cache_advance(prefix_row,suffix_ordinal,tail,prefix_hash)) {
                 atomicExchange(header.values[3u],1u);
                 return;

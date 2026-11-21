@@ -1,6 +1,7 @@
 using RolltheSpire2.Ui.Shell;
 using RolltheSpire2.Ui.Tooltips;
 using Godot;
+using System.Diagnostics;
 using System.Text.Json;
 using RolltheSpire2.Bootstrap;
 using RolltheSpire2.Core.Identity;
@@ -352,18 +353,23 @@ internal sealed partial class QueryWorkbenchFrame
                 TryAuxiliary(UpdateResultNavigation, "ResultNavigation");
             }
         }, "DraftPresentation");
-        if (recoveredCapture || _persistence.Workspace.AuxiliaryIssues.Count > 0 || _lastIssue.Length > 0) PresentSearchStatus(null);
+        if (recoveredCapture || _persistence.Workspace.AuxiliaryIssues.Count > 0 || _lastIssue.Length > 0 ||
+            (_displayedAuxiliaryStatus is not null && _status?.Text == _displayedAuxiliaryStatus))
+            PresentSearchStatus(null);
         _lastIssue = "";
     }
 
     private void StartSearch()
     {
         if (_presetBlocked.Count > 0 || _persistence.Runtime.HasSearchInFlight) return;
+        long requestedAt = Stopwatch.GetTimestamp();
+        using var startupLog = RuntimeLog.SearchScope(Guid.NewGuid().ToString("N"));
         try
         {
             if (_loadFailed) throw new InvalidOperationException(_restoreFailure.Length == 0 ? "integration.load_shape" : _restoreFailure);
             if (_editorContextIssue.Length > 0) throw new InvalidOperationException(_editorContextIssue);
-            var feasibility = _persistence.Runtime.Start(CaptureDraft(), _runtime, _target, SearchWorkers, IsInsideTree() ? GetTree() : null);
+            var feasibility = _persistence.Runtime.Start(CaptureDraft(), _runtime, _target, SearchWorkers,
+                IsInsideTree() ? GetTree() : null, requestedAt);
             if (feasibility.IsImpossible)
             {
                 ReceiptText(RolltheSpire2.Presentation.Ui1.SearchImpossibilityPresentation.Format(feasibility.Proof,
@@ -478,6 +484,8 @@ internal sealed partial class QueryWorkbenchFrame
             var warning = _p.Label(_text.Get(key), 16, true);
             warning.AutowrapMode = TextServer.AutowrapMode.WordSmart; _resultRows.AddChild(warning);
         }
+        if (_persistence.DisplayResults.Any(result => result.ReplayEstimate?.Disposition == SearchDisposition.NoMatch))
+            AddWarning("workflow.replay_non_hit_sample");
         if (_persistence.DisplaysPreviousRngRules) AddWarning("workflow.rng_history_warning");
         else if (_persistence.DisplaysPreviousTreasureRules) AddWarning("workflow.treasure_history_warning");
         if (_persistence.DisplayResults.Any(r => r.IsUnfiltered)) AddWarning("workflow.unfiltered_warning");

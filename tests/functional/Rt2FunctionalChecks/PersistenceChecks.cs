@@ -464,6 +464,9 @@ internal static class PersistenceChecks
         Case("query-history-merge-quota-preset", directory =>
         {
             var store = Workspace(directory);
+            store.SetQueryHistoryLimit(1000);
+            store = Workspace(directory);
+            Check(store.Preferences.QueryHistoryLimit == 999, "Expanded query history quota survives reopening");
             store.EnsureEnvironment(new() { CaptureComplete = true, Fingerprint = "fixture-environment" });
             var draft = Workbench();
             store.BindPreparedResultWorkspace(store.PrepareResultWorkspace("run-a", draft));
@@ -794,6 +797,17 @@ internal static class PersistenceChecks
             Check(!store.NeedsNotesAcknowledgement(release with { AcknowledgementVersion = "1.3.3" }), "Legacy release acknowledgement migrates even with explicit null map");
             Check(store.NeedsNotesAcknowledgement(release), "Legacy 1.3.3 confirmation leaves the current release unread");
             Check(store.NeedsNotesAcknowledgement(chapters.Single(c => c.Id == "positioning")), "Legacy global acknowledgement never marks positioning read");
+        });
+
+        Case("gpu-power-diagnostics-preference", directory =>
+        {
+            var store = Workspace(directory);
+            Check(!store.Preferences.EnableGpuPowerDiagnostics, "GPU power diagnostics default off");
+            store.SetGpuPowerDiagnosticsEnabled(true);
+            store = Workspace(directory);
+            Check(store.Preferences.EnableGpuPowerDiagnostics, "GPU power diagnostics opt-in survives reopening");
+            store.SetGpuPowerDiagnosticsEnabled(false);
+            Check(!Workspace(directory).Preferences.EnableGpuPowerDiagnostics, "GPU power diagnostics can be disabled again");
         });
 
         Case("in-run-console-preferences", directory =>
@@ -1172,6 +1186,46 @@ internal static class PersistenceChecks
                 "Only a successful result presentation acknowledgement recovers the final display failure");
         });
 
+        Case("workspace-write-notice-recovers-in-the-first-successful-checkpoint", directory =>
+        {
+            var store = Workspace(directory);
+            Check(store.TrySetPersistentOrigin("000000000003", out _, out _), "Create a committed workspace and cursor");
+            string path = Path.Combine(directory, "RolltheSpire2", "state", "search_workspace.json");
+            var saved = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+            const string legacy = "Persistence:search_workspace.json: System.UnauthorizedAccessException: Access to the path is denied.\r\n" +
+                "   at RolltheSpire2.Ui.Persistence.SearchPersistenceFile.WriteAtomic(String path, Byte[] payload)\r\n" +
+                "   at RolltheSpire2.Ui.Workspace.SearchWorkspace.WriteNow[T](String fileName, T document)";
+            const string readFailure = "Persistence:search_workspace.json: System.Text.Json.JsonException: original read failure";
+            const string otherFailure = "ResultPresentation: original display failure";
+            saved["AuxiliaryIssues"] = new JsonArray(legacy, readFailure, otherFailure);
+            saved["QueryFingerprint"] = "saved-query";
+            File.WriteAllText(path, saved.ToJsonString());
+
+            store = Workspace(directory);
+            Check(store.HasPendingWorkspaceCommit && store.Workspace.AuxiliaryIssues.Contains(legacy),
+                "Opening an old workspace schedules its write retry and keeps the notice until it succeeds");
+            string currentFailure;
+            using (var locked = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                store.Tick(SearchWorkspace.WorkspaceDebounceSeconds);
+                Check(store.HasUnsavedSearchState && store.LastPersistenceFailure is IOException or UnauthorizedAccessException &&
+                    store.Workspace.AuxiliaryIssues.Contains(legacy) && store.Workspace.AuxiliaryIssues.Count == 4,
+                    "A real failed replacement keeps both the legacy notice and the current write failure visible");
+                currentFailure = store.Workspace.AuxiliaryIssues.Last();
+            }
+            long revision = store.ResultsRevision;
+            store.Tick(SearchWorkspace.WorkspaceDebounceSeconds);
+            Check(!store.HasPendingWorkspaceCommit && !store.HasUnsavedSearchState && store.LastPersistenceFailure is null &&
+                store.ResultsRevision > revision && store.Workspace.AuxiliaryIssues.SequenceEqual([readFailure, otherFailure]),
+                "One successful retry refreshes the current notices and keeps unrelated failures in order");
+            Check(store.AuxiliaryFailures.Contains(legacy) && store.AuxiliaryFailures.Contains(currentFailure),
+                "Both original write failures remain available as diagnostics");
+            var reopened = Workspace(directory);
+            Check(reopened.Workspace.AuxiliaryIssues.SequenceEqual([readFailure, otherFailure]) &&
+                reopened.Workspace.QueryFingerprint == "saved-query" && reopened.CurrentNextCursorOrdinal == 3,
+                "The first successful checkpoint restores the query and cursor without reviving either write notice");
+        });
+
         Case("cleanup-without-progress-durable", directory =>
         {
             var store = Workspace(directory);
@@ -1180,6 +1234,76 @@ internal static class PersistenceChecks
             Check(!store.HasPendingWorkspaceCommit && Workspace(directory).Workspace.AuxiliaryIssues.Any(detail =>
                 detail.Contains("original-batch", StringComparison.Ordinal) && detail.EndsWith(failure.ToString(), StringComparison.Ordinal)),
                 "A final auxiliary cleanup cause commits without a page or previous progress snapshot");
+        });
+
+        Case("distinct-scanned-seeds-across-checkpoints-and-runs", directory =>
+        {
+            var store = Workspace(directory);
+            const string version = RuntimeVersionCompatibility.Beta113Version;
+            var authority = RolltheSpire2.Tests.FastSearch.Beta110FastSearchFixtureAuthority.CreateBeta111(Character, 10, 0, 1, version);
+            var context = SearchContextFactory.From(RuntimeProfileId.Beta111, Character, 10, authority,
+                new(version, version, "beta", "fixture", true, ""), AncientOptionConditionProfile.BroadDefault);
+            store.EnsureEnvironment(new() { Fingerprint = "coverage-env", GameVersionIdentity = version, CaptureComplete = true });
+            var draft = Workbench();
+            var compiled = SearchCompiler.Compile(draft.Query, context);
+            var prior = store.PrepareResultWorkspace(compiled.SemanticFingerprint, draft);
+            store.BindPreparedResultWorkspace(prior);
+            var progress = new SearchProgressSnapshot(SearchRunState.Completed, 50, 0, 50, 1, 1, 50, SearchDisposition.NoMatch, "", false);
+            store.SaveResultProgress(progress);
+            store.FlushAll();
+            store = Workspace(directory);
+            Check(store.RecentQueries.Single().SeedCoverage is null, "Historical progress without covered intervals remains uncounted");
+
+            const ulong first = 100;
+            SearchWorkspace.PreparedSearchResultWorkspace Start(ulong? explicitOrigin)
+            {
+                if (explicitOrigin is { } origin)
+                    Check(store.TrySetPersistentOrigin(Beta110SeedCodec.FormatOrdinal(origin), out _, out _), "Set fixture scan entrance");
+                var plan = SearchPreparationCompiler.Compile(compiled, new(store.CurrentNextCursorSeed, 50, 1, 1)).Plan!;
+                var run = store.PrepareSearchStart(draft, plan, null);
+                store.BindPreparedResultWorkspace(run);
+                return run;
+            }
+            void Checkpoint(SearchWorkspace.PreparedSearchResultWorkspace run, ulong entrance, ulong end,
+                SearchRunState state, ulong? awaitingReceipt = null, long scannedPastGap = 0)
+            {
+                var plan = run.Batch.Start!.Plan;
+                Check(plan.CanonicalStartSeed == Beta110SeedCodec.FormatOrdinal(entrance), "Checkpoint uses the resolved scan entrance");
+                var continuation = new SearchContinuationSnapshot(compiled.SemanticFingerprint, plan.SnapshotFingerprint,
+                    awaitingReceipt ?? end, [], [])
+                {
+                    ContinuationFingerprint = SearchContinuationIdentity.For(plan),
+                    UnreceivedOrdinals = awaitingReceipt is { } ordinal ? [ordinal] : []
+                };
+                store.SaveCheckpoint(progress with { ScannedCount = (long)(end - entrance) + scannedPastGap, State = state },
+                    continuation, continuation.NextOrdinal, targetHistory: run.History, targetBatch: run.Batch, scannedFrontier: end);
+            }
+            var run = Start(first);
+            Checkpoint(run, first, 105, SearchRunState.Running);
+            Checkpoint(run, first, 108, SearchRunState.Cancelled, awaitingReceipt: 105, scannedPastGap: 2);
+            Checkpoint(run, first, 108, SearchRunState.Cancelled, awaitingReceipt: 105, scannedPastGap: 2);
+            store.FlushAll();
+            store = Workspace(directory);
+            var cancelled = store.RecentQueries.Single();
+            Check(cancelled.SeedCoverage?.Count == 8 && cancelled.Progress?.ScannedCount == 10 &&
+                cancelled.Continuation?.NextOrdinal == 105, "Cancellation preserves the eight contiguous seeds independently of the held receipt and two out-of-order scans");
+            run = Start(null);
+            Checkpoint(run, 105, 110, SearchRunState.Completed);
+            run = Start(first);
+            Checkpoint(run, first, 108, SearchRunState.Completed);
+            Check(run.History!.SeedCoverage?.Count == 10, "Resuming from the held receipt fills the gap and an identical earlier scan adds zero");
+            run = Start(120);
+            Checkpoint(run, 120, 125, SearchRunState.Completed);
+            Check(run.History!.SeedCoverage?.Count == 15, "Changing origin leaves unscanned gaps out of the count");
+            run = Start(107);
+            Checkpoint(run, 107, 123, SearchRunState.Completed);
+            store.FlushAll();
+            store = Workspace(directory);
+            var coverage = store.RecentQueries.Single().SeedCoverage;
+            Check(coverage?.Count == 25 && coverage.Ranges.Count == 1, "A partially overlapping scan bridges the two covered intervals durably");
+            run = Start(125);
+            Checkpoint(run, 125, 128, SearchRunState.Completed);
+            Check(run.History!.SeedCoverage is { Count: 28 } joined && joined.Ranges.Count == 1, "An adjacent scan extends the existing interval");
         });
 
         Case("treasure-claim-rule-history-and-frontier", directory =>

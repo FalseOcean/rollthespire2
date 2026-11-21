@@ -8,6 +8,11 @@ using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.FamilyExecution;
 using RolltheSpire2.Search.Semantics;
 using RolltheSpire2.Tests.FastSearch;
+using MegaCrit.Sts2.Core.Extensions;
+using MegaCrit.Sts2.Core.Events;
+using HarmonyLib;
+using RolltheSpire2.Infrastructure.Snapshots;
+using NativeNeow = MegaCrit.Sts2.Core.Models.Events.Neow;
 using R = RolltheSpire2.Core.Identity.BaseGameModelKeys.Relics;
 
 internal static class NeowIdentityRulesChecks
@@ -44,6 +49,8 @@ internal static class NeowIdentityRulesChecks
         CheckImmutable(ModernNeowIdentityRules.PositiveCandidates, Check, "PositiveCandidates");
         CheckImmutable(ModernNeowIdentityRules.CurseCandidates, Check, "CurseCandidates");
         CheckImmutable(ModernNeowIdentityRules.BinaryChoices, Check, "BinaryChoices");
+        CheckCaptured113Catalog(Check);
+        CheckLiveGetterStability(Check);
 
         foreach (int players in Enumerable.Range(1, 4))
         foreach (int slot in Enumerable.Range(0, players))
@@ -154,6 +161,61 @@ internal static class NeowIdentityRulesChecks
         Check(capsuleOffers > 0, "LargeCapsuleExercised");
         Console.WriteLine($"NEOW_IDENTITY_RULES=PASS;checks={checks};coreOffers={offers};numericalOffers={numericalOffers};largeCapsuleOffers={capsuleOffers};oracle=da7f1ae5CompleteOffer;players=1..4;eligibility=true,false,unknown");
         return 0;
+    }
+
+    private static void ReverseOffers(ref IEnumerable<EventOption> __result) => __result = __result.Reverse();
+    private static void ReverseLiveOffers(NativeNeow __instance, ref IEnumerable<EventOption> __result)
+    {
+        if (__instance.IsMutable) __result = __result.Reverse();
+    }
+
+    private static void CheckLiveGetterStability(Action<bool, string> check)
+    {
+        var getter = AccessTools.PropertyGetter(typeof(NativeNeow), "PositiveOptions");
+        var harmony = new Harmony("rt2.tests.neow.getter-stability");
+        try
+        {
+            foreach (var (method, stable) in new[] { (nameof(ReverseOffers), true), (nameof(ReverseLiveOffers), false) })
+            {
+                harmony.Patch(getter, postfix: new HarmonyMethod(typeof(NeowIdentityRulesChecks), method));
+                var patches = Harmony.GetAllPatchedMethods().ToHashSet();
+                check(ReflectionNeowEffectSnapshotAdapter.HasStaticNeowList(typeof(NativeNeow), "PositiveOptions", patches) == stable,
+                    method + ".LiveOrderProof");
+                check(ReflectionNeowEffectSnapshotAdapter.HasStaticNeowList(typeof(NativeNeow), "CurseOptions", patches),
+                    method + ".OtherGetter");
+                harmony.Unpatch(getter, HarmonyPatchType.Postfix, harmony.Id);
+            }
+        }
+        finally { harmony.Unpatch(getter, HarmonyPatchType.Postfix, harmony.Id); }
+    }
+
+    private static void CheckCaptured113Catalog(Action<bool, string> check)
+    {
+        var baseline = Authority(1, 0, true, true);
+        var extra = new ModelKey("RELIC", "CUSTOM_OPTION");
+        var catalog = new NeowOfferCatalog([R.LavaRock, extra, R.NewLeaf, R.GoldenPearl],
+            [R.LeafyPoultice, R.LargeCapsule], null);
+        var changed = new RuntimeContextAuthoritySnapshot(baseline.Character, 0, 0, 1, true, false, null, null, null,
+            "0.113.1", baseline.ProfileId, true, null, "sts2", baseline.SourceAuthority, baseline.Completeness,
+            baseline.ResolutionStatus, baseline.EffectAuthority, capturedNeowOffers: catalog);
+        check(changed.HasExactModernNeowIdentityInputs && changed.IsBeta111NeowIdentityAuthorityExact, "ChangedCatalogAuthority");
+        var context = new SearchContext(changed.ProfileId, changed.Character.CharacterKey, 0, changed,
+            new("0.113.1", "0.113.1", "beta", "ChangedNeowCatalog", true, ""), SearchEvaluationAssumptions.BroadDefault);
+        var numeric = NeowNumericCompilation.BuildAuthority(context, Beta110FastEffectCatalogCompiler.Compile(changed.EffectAuthority, []), false);
+        check(!numeric.IdentityAuthorityExact && !numeric.CurseIdentityAuthorityExact, "StaticFastRetiresForChangedOrder");
+        for (ulong root = 0; root < 64; root++)
+        {
+            var native = new MegaCrit.Sts2.Core.Random.Rng(root, "NEOW");
+            var curse = catalog.Curses[native.NextInt(2)];
+            var positives = catalog.Positives.Where(k => curse != R.LeafyPoultice || k != R.NewLeaf).ToList();
+            if (curse != R.LargeCapsule) positives.Add(native.NextBool() ? R.LavaRock : R.SmallCapsule);
+            positives.Add(native.NextBool() ? R.NutritiousOyster : R.StoneHumidifier);
+            positives.Add(native.NextBool() ? R.NeowsTalisman : R.Pomander);
+            var expected = positives.UnstableShuffle(native).Take(2).Append(curse);
+            var actual = ModernNeowIdentityPredictor.PredictModernCore(root, changed, Beta111Profile.Instance, true);
+            check(actual.RelicKeys.SequenceEqual(expected) && native.ToSerializable().counter == actual.RngCalls,
+                "Native113ChangedNeowOrderAndDraws:" + root);
+        }
     }
 
     private static RuntimeContextAuthoritySnapshot Authority(int players, int slot, bool? unlocked, bool? scroll)

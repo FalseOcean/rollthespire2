@@ -45,6 +45,7 @@ internal sealed class UserPreferencesDocument
     public double InRunConsoleVerticalPercent { get; set; } = 50;
     public double InRunConsoleScalePercent { get; set; } = 100;
     public bool SkipExactValidation { get; set; }
+    public bool EnableGpuPowerDiagnostics { get; set; }
     public bool MapLossyEnabled { get; set; }
     public int MapLossyGpuBatchSize { get; set; } = MapLossyOptions.DefaultGpuBatchSize;
     public string ReadReleaseNotesVersion { get; set; } = string.Empty;
@@ -112,15 +113,26 @@ internal sealed class SearchWorkspaceDocument
     public SeedLibraryContext? ResultContext { get; set; }
     public bool ResultsSkipExactValidation { get; set; }
     public SearchProgressSnapshot? ResultProgress { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public SearchFeedbackAttempt? LatestSearchFeedback { get; set; }
     public SearchContinuationSnapshot? ResultContinuation { get; set; }
     public SearchCursorDocument? CommittedCursor { get; set; }
     public List<string> AuxiliaryIssues { get; set; } = [];
+
+    internal SearchWorkspaceDocument ForCheckpoint(Predicate<string> resolves)
+    {
+        if (!AuxiliaryIssues.Exists(resolves)) return this;
+        var checkpoint = (SearchWorkspaceDocument)MemberwiseClone();
+        checkpoint.AuxiliaryIssues = AuxiliaryIssues.FindAll(issue => !resolves(issue));
+        return checkpoint;
+    }
 }
 
 internal sealed record PersistedTreasureSource(string RelicKey, int TargetSlot, int? EncounterOrdinal, bool ObtainedAtOpening);
 
 internal sealed class PersistedSearchResult
 {
+    public SearchReplayEstimate? ReplayEstimate { get; set; }
     public MapSearchProvenance? MapSearch { get; set; }
     public SeedQueryAssociation? SourceAssociation { get; set; }
     private bool _legacyIsUnverified;

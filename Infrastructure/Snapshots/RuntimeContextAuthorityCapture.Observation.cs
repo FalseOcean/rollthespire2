@@ -2,6 +2,7 @@ using System.Diagnostics;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Authority;
 using RolltheSpire2.Core.Identity;
+using RolltheSpire2.Core.Neow;
 using RolltheSpire2.Core.World.Snapshots;
 
 namespace RolltheSpire2.Infrastructure.Snapshots;
@@ -117,11 +118,16 @@ internal sealed record RuntimeContextObservedInputs(
     ReflectionNeowEffectSnapshotAdapter.WorldObservedInputs World,
     bool? VanillaNeowCatalogExact, RequestSupportEvidence SupportEvidence)
 {
+    internal NeowOfferCatalog? CapturedNeowOffers { get; init; }
     internal bool SemanticEquals(RuntimeContextObservedInputs other) =>
-        this with { Effect=other.Effect, World=other.World, SupportEvidence=other.SupportEvidence } == other &&
+        this with { Effect=other.Effect, World=other.World, SupportEvidence=other.SupportEvidence,
+            CapturedNeowOffers=other.CapturedNeowOffers } == other && SameNeow(CapturedNeowOffers, other.CapturedNeowOffers) &&
         ReflectionNeowEffectSnapshotAdapter.EffectInputsEqual(Effect,other.Effect) &&
         ReflectionNeowEffectSnapshotAdapter.WorldInputsEqual(World,other.World) &&
         SameSupport(SupportEvidence,other.SupportEvidence);
+    private static bool SameNeow(NeowOfferCatalog? left, NeowOfferCatalog? right) => left == right ||
+        left != null && right != null && left.Positives.SequenceEqual(right.Positives) && left.Curses.SequenceEqual(right.Curses) &&
+        (left.AllPossibleRelics is { } a ? right.AllPossibleRelics is { } b && a.SequenceEqual(b) : !right.AllPossibleRelics.HasValue);
     private static bool SameSupport(RequestSupportEvidence a, RequestSupportEvidence b) =>
         a with { LoadedOtherMods=b.LoadedOtherMods, Unlock=b.Unlock, Discovery=b.Discovery } == b &&
         a.LoadedOtherMods.SequenceEqual(b.LoadedOtherMods) &&
@@ -136,6 +142,25 @@ internal sealed record RuntimeContextObservedInputs(
             throw new InvalidOperationException("RuntimeObservationDeriveProfileMismatch");
         var captured = ReflectionNeowEffectSnapshotAdapter.DeriveEffect(profile, RawSeed, Character,
             Ascension, PlayersCount, PlayerSlotIndex, GameVersion, Effect);
+        // Native Bones enumerates Neow.AllPossibleOptions, which in turn reads
+        // the same positive, curse and binary getters as the opening offer.
+        if (captured.EffectAuthority is { } effects && (CapturedNeowOffers != null ||
+            VanillaNeowCatalogExact != true && RuntimeVersionCompatibility.Resolve(GameVersion).SemanticProfileId ==
+                RngSemanticProfileId.Modern113))
+        {
+            bool? scroll = captured.UnlockedCommonCards.HasValue && captured.UnlockedUncommonCards.HasValue
+                ? captured.UnlockedCommonCards >= 4 && captured.UnlockedUncommonCards >= 2 : null;
+            var pool = CapturedNeowOffers?.AllPossibleRelics?.Where(k => k != BaseGameModelKeys.Relics.NeowsBones)
+                .Select(k => (Key: k, Allowed: ModernNeowIdentityRules.IsAllowed(k, PlayersCount, captured.AllCharacterCardPoolsUnlocked, scroll)))
+                .ToArray();
+            var eligible = pool?.Where(p => p.Allowed != false).Select(p => p.Key).ToArray();
+            captured = captured with { EffectAuthority = effects with
+            {
+                BonesEligibleRelics = eligible, BonesEligibilityExact = pool != null && pool.All(p => p.Allowed.HasValue),
+                SnapshotFingerprint = OrderedPartyAuthority.Hash(effects.SnapshotFingerprint + "|runtime-bones|" +
+                    (eligible == null ? "unobserved" : string.Join(",", eligible.Select(k => k.Serialized))))
+            }};
+        }
         var world = ReflectionNeowEffectSnapshotAdapter.DeriveWorld(profile, RawSeed, Character,
             Ascension, PlayersCount, PlayerSlotIndex, true, captured.EffectAuthority, GameMode,
             GameModeAuthority, GameVersion, World);
@@ -150,7 +175,7 @@ internal sealed record RuntimeContextObservedInputs(
             GameVersion, profile.ProfileId, vanilla, vanilla ? null : "runtime-character", vanilla ? "sts2" : null,
             authority, unlockCaptured ? captured.UnlockCompleteness : SnapshotCompleteness.Missing,
             captured.CharacterResolution, captured.EffectAuthority, world, GameMode, GameModeAuthority,
-            supportEvidence: SupportEvidence);
+            supportEvidence: SupportEvidence, capturedNeowOffers: CapturedNeowOffers);
     }
 }
 
@@ -182,11 +207,14 @@ public static partial class RuntimeContextAuthorityCapture
                 playerSlotIndex, predictionGameMode, predictionGameModeAuthority, request.UnlockState,
                 roster, request.DiscoveredActs, schedule).ConfigureAwait(false);
             await schedule.Checkpoint("NeowCatalog").ConfigureAwait(false);
-            bool? neow = ReflectionNeowEffectSnapshotAdapter.CaptureVanillaNeowCatalogExact(out string evidence);
-            if (neow != true && Interlocked.Exchange(ref _neowCatalogWarning, 1) == 0)
+            bool? neow = ReflectionNeowEffectSnapshotAdapter.CaptureVanillaNeowCatalogExact(
+                RuntimeVersionCompatibility.Resolve(gameVersion).SemanticProfileId == RngSemanticProfileId.Modern113,
+                out var capturedOffers, out string evidence);
+            if (neow != true && capturedOffers == null && Interlocked.Exchange(ref _neowCatalogWarning, 1) == 0)
                 Bootstrap.RuntimeLog.TryBackgroundWarning($"runtimeNeowCatalogAuthority={neow?.ToString() ?? "Unknown"};evidence={evidence};scope=Neow;noInventedCatalog=true");
             return new(rawSeed, character, ascension, gameVersion, profile.ProfileId, playersCount, playerSlotIndex,
-                predictionGameMode, predictionGameModeAuthority, effect, world, neow, support);
+                predictionGameMode, predictionGameModeAuthority, effect, world, neow, support)
+                { CapturedNeowOffers = capturedOffers };
         });
     }
 }

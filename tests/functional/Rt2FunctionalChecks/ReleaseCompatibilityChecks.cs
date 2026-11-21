@@ -105,8 +105,19 @@ internal static class ReleaseCompatibilityChecks
             var n=JsonNode.Parse(raw)!;n["Context"]!["Authority"]!["VanillaNeowCatalogExact"]=catalog.HasValue?JsonValue.Create(catalog.Value):null;
             var changed=n.Deserialize<ProductionSearchReplayContext>(options)!.Context;
             Check(SeedPredictionRequest.TryCreate("000000000000",changed.Authority.Character,changed.Ascension,1,0,changed.Authority,true,out var prediction,out _),"boundary request");
-            var facts=RuntimeProfileRegistry.Observe(changed.Detection,prediction!);
-            var doc=SeedPredictionDocument.FromFacts(facts);
+            var analysis=SeedPredictionDocument.FromFacts(RuntimeProfileRegistry.Observe(changed.Detection,prediction!));
+            var projected=analysis.Sections.Single(s=>s.Kind==PredictionSectionKind.NeowIdentity);
+            Check(analysis.ModelAssumptions.TryGetValue(SeedPredictionDomainSelection.Neow,out var premise) &&
+                premise.StartsWith("StandardNeowOfferPool",StringComparison.Ordinal) &&
+                projected.NeowChoices.Count>0 &&
+                projected.NeowChoices.All(choice=>choice.IdentityPrecision!=PredictionPrecision.Exact),
+                "seed analysis shows conditional Neow offers with their premise");
+            var root=TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance,"000000000000");
+            Check(SeedPredictionRequest.TryCreateFromRootHash(root,changed.Authority.Character,changed.Ascension,1,0,
+                changed.Authority,null,prediction!.Domains,prediction.RelicSequencePreviewCount,true,out var strictRequest,out _),
+                "strict boundary request");
+            var doc=SeedPredictionDocument.FromFacts(RuntimeProfileRegistry.ObserveFromRootHash(changed.Detection,strictRequest!,root));
+            Check(doc.ModelAssumptions.Count==0,"strict prediction does not use conditional analysis assumptions");
             var neow=doc.Sections.Single(s=>s.Kind==PredictionSectionKind.NeowIdentity);
             var expectedStatus=catalog.HasValue?SeedDomainEvaluationStatus.Unsupported:SeedDomainEvaluationStatus.Unknown;
             Check(neow.DomainStatus==expectedStatus && neow.NeowChoices.Count==0 &&

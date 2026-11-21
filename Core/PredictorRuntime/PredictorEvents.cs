@@ -14,6 +14,7 @@ internal sealed record PredictorEventOption(string Key, bool Enabled = true, int
     int? MaxHpCost = null, bool? WillKill = null, long? RelicId = null, ModelKey? OfferedRelic = null,
     int? HealthHeal = null, int? LocalPotionOrdinal = null, ModelKey? LocalPotionKey = null)
 {
+    public ModelKey? OfferedCardPool { get; init; }
     public bool HasHiddenObtain { get; init; }
 }
 internal sealed record PredictorEventHealthFact(int CurrentHp, int MaxHp);

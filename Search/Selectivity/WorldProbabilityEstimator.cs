@@ -414,7 +414,7 @@ internal static class WorldProbabilityEstimator
 
         // Static eligibility is query-context deterministic. Runtime/deck/route-dependent
         // predicates deliberately remain in the cleaned candidate pool, matching Searcher semantics.
-        EventPoolSequenceProjector.Candidate[] raw = prepared.Candidates.ToArray();
+        EventPoolSequenceProjector.Candidate[] raw = prepared.GeneratedQueue.ToArray();
         if (raw.Length == 0)
         {
             return TrySolveEventPool(Array.Empty<EventPoolSequenceProjector.Candidate>(), conditions, out probability, out reason);

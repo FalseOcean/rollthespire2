@@ -91,9 +91,9 @@ internal static partial class AncientOptionFamily
 
     private static Func<ulong, bool> CreateMatcher(AncientOptionFamilyPlan plan)
     {
-        var reported = new System.Collections.Concurrent.ConcurrentDictionary<(int Act, ModelKey? Ancient), byte>();
+        var reported = new System.Collections.Concurrent.ConcurrentDictionary<(int Act, ModelKey? Ancient, string Cause), byte>();
         return root => plan.MatchesObserved(root, (act, key, cause) => {
-            if (reported.TryAdd((act, key), 0))
+            if (reported.TryAdd((act, key, cause), 0))
                 RolltheSpire2.Infrastructure.Diagnostics.RuntimeIssueLedger.Current.RecordDegradation(
                     "AncientOptionFilterIncomplete", nameof(AncientOptionFamilyPlan), $"Filter.Act{act}.{key?.Serialized ?? "Unscoped"}",
                     "issues.filter_incomplete", $"act={act};ancient={key?.Serialized};cause={cause};retained=true;filterDecision=Unknown;requiresFinalCheck=true;matchClaimed=false");

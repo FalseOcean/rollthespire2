@@ -50,10 +50,7 @@ internal static class PredictorInitialization
         {
             AncientAuthority = Beta109WorldSnapshotProjector.ProjectForSeed(worldSource, context.Seed),
             Catalog = new(effects.CharacterRewardPool.ToImmutableArray(), effects.ColorlessRewardPool.ToImmutableArray()),
-            PotionPool = effects.PotionPool.Select(p => new PredictorPotionOption(p.PotionKey,
-                p.Rarity switch { EffectPotionRarity.Common => PredictorPotionRarity.Common,
-                    EffectPotionRarity.Uncommon => PredictorPotionRarity.Uncommon,
-                    EffectPotionRarity.Rare => PredictorPotionRarity.Rare, _ => PredictorPotionRarity.Event })).ToImmutableArray()
+            PotionPool = effects.PotionPool.Select(PredictorPotionOption.FromSnapshot).ToImmutableArray()
         };
         var deck = startingDeck.ToList();
         if (context.Modifiers.Any(m => m.Key.Entry is "DRAFT" or "INSANITY" or "SEALED_DECK")) deck.Clear();
@@ -71,6 +68,7 @@ internal static class PredictorInitialization
         ImmutableArray<ModelKey> neowOptions = [];
         if (runtimeWorld.StartedWithNeow && context.Modifiers.IsEmpty)
         {
+            if (!authority.HasExactModernNeowIdentityInputs) throw new InvalidOperationException("PredictorOpeningCatalogMissing");
             var neow = ModernNeowIdentityPredictor.PredictModernCore(context.Seed, authority, context.RuntimeProfile, true);
             if (neow.UnknownEligibilityAffectedPool) throw new InvalidOperationException("PredictorOpeningEligibilityMissing");
             neowOptions = neow.RelicKeys.ToImmutableArray();

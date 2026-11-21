@@ -52,7 +52,7 @@ internal sealed partial class WorkspaceShell
         RefreshFeedback();
     }
 
-    // Capture game metadata/UI on the main thread; never compile, predict or touch RunState.
+    // Copy existing UI and gameplay observations on the main thread before starting the ZIP worker.
     private FeedbackBundleRequest CaptureFeedbackRequest()
     {
         var warnings = new List<string>();
@@ -75,17 +75,35 @@ internal sealed partial class WorkspaceShell
                 "runtime.issue.feedback_metadata_failed", RuntimeIssueSeverity.Warning);
         }
         Capture("Godot", () => Engine.GetVersionInfo()["string"].AsString());
+        Capture("ConfiguredRenderingMethod", () => RenderingEnvironmentEvidence.ConfiguredRenderingMethod());
+        Capture("RenderingMethod", () => RenderingServer.GetCurrentRenderingMethod());
         Capture("RenderingDriver", () => RenderingServer.GetCurrentRenderingDriverName());
         Capture("GPU", () => RenderingServer.GetVideoAdapterName());
+        Capture("HostHardware", RenderingEnvironmentEvidence.CaptureHostHardware);
+        Capture("AdapterApiVersion", () => RenderingServer.GetVideoAdapterApiVersion());
+        Capture("AdapterDriver", () => RenderingEnvironmentEvidence.CaptureDriver());
+        Capture("SearchModePreference", () => _persistence?.Preferences.SearchMode);
         Capture("GpuInitialization", () => Search.FamilyExecution.FamilyDeviceProfileFoundation.Initialization.Capture());
         Capture("SearchDiagnostics", () => _references?.CaptureSearchDiagnostics());
         Capture("OperationalLog", () => new { RuntimeLog.CurrentLogPath, RuntimeLog.LastFailureCode, RuntimeLog.LastFailureDetail });
         Capture("Mods", () => MegaCrit.Sts2.Core.Modding.ModManager.Mods.Select(m => new {
             Id = m.manifest?.id, Name = m.manifest?.name, Version = m.manifest?.version,
             State = m.state.ToString(), Source = m.modSource.ToString() }).ToArray());
-        string? editor = null;
-        try { editor = JsonSerializer.Serialize(_references?.CaptureDraft().WithoutCapturedAuthority()); }
-        catch (Exception ex) { CaptureIssue("CurrentEditor", ex); }
+        string? Optional(string name, Func<string?> read)
+        {
+            try { return read(); }
+            catch (Exception ex) { CaptureIssue(name, ex); return null; }
+        }
+        string? editor = Optional("CurrentEditor", () => _references is null ? null :
+            JsonSerializer.Serialize(_references.CaptureDraft().WithoutCapturedAuthority()));
+        string? search = Optional("SearchEvidence", () => _persistence?.CaptureSearchFeedbackJson());
+        string? analysis = Optional("AnalysisEvidence", () => _predictor?.CaptureFeedbackEvidence() is { } view
+            ? JsonSerializer.Serialize(view) : null);
+        string? play = Optional("PlayEvidence", () =>
+        {
+            var observed = FeedbackPlayObservation.Capture(_liveRun);
+            return observed.Status == "NoRecentObservation" ? null : JsonSerializer.Serialize(observed);
+        });
         string godotLog = "";
         try
         {
@@ -105,7 +123,7 @@ internal sealed partial class WorkspaceShell
         paths[userData] = "<GAME_USER_DATA>";
         return new(Path.Combine(userData, "RolltheSpire2", "feedback"), RuntimeLog.LogDirectory,
             RuntimeLog.CurrentLogPath, godotLog, JsonSerializer.Serialize(environment, new JsonSerializerOptions { WriteIndented = true }),
-            editor, paths, warnings);
+            editor, paths, warnings) { SearchEvidenceJson = search, AnalysisEvidenceJson = analysis, PlayEvidenceJson = play };
     }
 
     // Polling keeps every Godot operation on the main thread, including after a tab switch.

@@ -19,6 +19,7 @@ namespace RolltheSpire2.Ui.InRunOperations;
 // the returned native card ignores input so its owner can provide the interaction.
 internal static class OperationNativeCardDisplay
 {
+    private const string CardScenePath = "res://scenes/cards/card.tscn";
     private static IUiTextProvider UiText => JsonUiTextProvider.CreateUi13(UiLanguagePreferences.LanguageCode);
 
     internal static float ScaleForViewport(Vector2 viewport) =>
@@ -29,17 +30,34 @@ internal static class OperationNativeCardDisplay
         Action<Control>? onNativeReady = null, Action<double>? onReadyMeasured = null,
         string diagnosticPrefix = "operationNativeCard")
     {
-        var tile = new Control
-        {
-            CustomMinimumSize = new Vector2(350, 470) * scale,
-            Size = new Vector2(350, 470) * scale,
-            MouseFilter = Control.MouseFilterEnum.Ignore
-        };
+        var tile = NewTile(scale);
+        Populate(tile, snapshot, scale, onNativeReady, onReadyMeasured, diagnosticPrefix);
+        return tile;
+    }
+
+    internal static Control NewTile(float scale) => new()
+    {
+        CustomMinimumSize = new Vector2(350, 470) * scale,
+        Size = new Vector2(350, 470) * scale,
+        MouseFilter = Control.MouseFilterEnum.Ignore
+    };
+
+    internal static NCard InstantiateFace() =>
+        PreloadManager.Cache.GetScene(CardScenePath).Instantiate<NCard>();
+
+    internal static bool HasCachedFaceScene => PreloadManager.Cache.ContainsKey(CardScenePath);
+    internal static void LoadFaceScene() => _ = PreloadManager.Cache.GetScene(CardScenePath);
+
+    internal static void Populate(Control tile, PredictorCard snapshot, float scale,
+        Action<Control>? onNativeReady, Action<double>? onReadyMeasured, string diagnosticPrefix,
+        NCard? prepared = null)
+    {
+        var card = prepared;
         try
         {
             var model = OperationPreviewCardModel.Create(snapshot);
             NativeCardPortraits.BindDisplayModel(model);
-            var card = PreloadManager.Cache.GetScene("res://scenes/cards/card.tscn").Instantiate<NCard>();
+            card ??= InstantiateFace();
             card.Model = model;
             card.Position = new Vector2(180, 240) * scale;
             card.Scale = Vector2.One * scale;
@@ -73,10 +91,10 @@ internal static class OperationNativeCardDisplay
         }
         catch (Exception exception)
         {
+            if (card != null && card.GetParent() == null) card.QueueFree();
             RuntimeLog.WarnException($"{diagnosticPrefix}Failed;card={snapshot.Key.Serialized}", exception);
             AddCardTextFallback(tile, snapshot);
         }
-        return tile;
     }
 
     private static void AddCardTextFallback(Control tile, PredictorCard snapshot)

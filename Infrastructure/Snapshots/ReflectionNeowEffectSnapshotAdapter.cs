@@ -288,7 +288,13 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             allowed,
             RuntimeAssemblyName(model.GetType()),
             SourceModId: SourceModIdFor(model),
-            IsMultiplayerOnly: IsMultiplayerOnly(model));
+            IsMultiplayerOnly: IsMultiplayerOnly(model))
+        {
+            MerchantCloneRuleExact = model is MegaCrit.Sts2.Core.Models.PotionModel &&
+                new[] { "DeepCloneFields", "AfterCloned" }.All(name =>
+                    model.GetType().GetMethod(name, BindingFlags.NonPublic | BindingFlags.Instance,
+                        Type.EmptyTypes)?.DeclaringType?.Assembly == typeof(MegaCrit.Sts2.Core.Models.PotionModel).Assembly)
+        };
     }
 
     private static object? ConvertRelicModel(object model, int order, string poolId)
@@ -793,9 +799,9 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         }
     }
 
-    private static IReadOnlyDictionary<ModelKey, ModelKey> CaptureCharacterByCardPool(object unlockState)
+    private static Dictionary<ModelKey, Queue<ModelKey>> CaptureCharactersByCardPool(object unlockState)
     {
-        var output = new Dictionary<ModelKey, ModelKey>(ModelKeyComparer.Instance);
+        var output = new Dictionary<ModelKey, Queue<ModelKey>>(ModelKeyComparer.Instance);
         foreach (object character in Enumerate(ReadProperty(unlockState, "Characters")))
         {
             if (!TryModelKey(character, out ModelKey characterKey) ||
@@ -810,7 +816,8 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             {
                 continue;
             }
-            output[poolKey] = characterKey;
+            if (!output.TryGetValue(poolKey, out var owners)) output[poolKey] = owners = new();
+            owners.Enqueue(characterKey);
         }
         return output;
     }

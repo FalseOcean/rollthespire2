@@ -6,7 +6,7 @@ English | [简体中文](README.zh-CN.md)
 
 RolltheSpire2 (RT2) is an in-game seed search and analysis mod for **Slay the Spire 2**. Combine your desired conditions, search for matching seeds, and inspect their predicted openings, rewards, maps and more.
 
-This source tree is **1.4.6**. On Windows, the same RT2 installation selects the rules for stable **0.111.1** and beta **0.113.1**.
+This source tree is **1.4.7**. On Windows, the same RT2 installation selects the rules for stable **0.111.1** and beta **0.113.1**.
 
 In 0.113, search for ordinary relics in the first 1 to 3 shops, the relic tier rolled by an event, or named transformation results. Click Astrolabe or Pandora’s Box in Seed Information to see the cards in order. Several GPU searches combining Neow, events or multiplayer openings are faster.
 
@@ -59,6 +59,8 @@ GPU initialization failures show their stage and reason and offer an explicit re
 The optional candidate-output mode is off by default and skips final Exact validation. With normal validation enabled, Exact can still return `Unknown` or `Unsupported` without a proven mismatch; these results are also delivered as explicitly unverified. Only a final `Match` confirms the modeled conditions. Unverified results can be checked individually later, but another check may remain inconclusive. Actual checking exceptions remain pending failures with their original cause, rather than ordinary unverified results or completed target progress.
 
 ## Feedback
+
+To investigate a slowdown, turn on **Log GPU power during searches** in **Settings → Diagnostics**. Starting with the next GPU search, the log pairs available NVIDIA power readings and limits on Windows with scan speed. The feedback ZIP includes the log. This setting defaults to off.
 
 Open **Feedback** in RT2 to export a diagnostic ZIP and open a prefilled [GitHub Issue](https://github.com/FalseOcean/rollthespire2/issues/new). Add a description and reproduction steps, attach the ZIP, then submit. You can also copy the report and email **rollthespire2@outlook.com**.
 

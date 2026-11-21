@@ -133,8 +133,7 @@ internal static class PredictorSeedCapture
         var character = ModelDb.GetById<CharacterModel>(new ModelId(context.Character.Category, context.Character.Entry));
         var effects = authority.EffectAuthority!;
         context = context with { Catalog = new(effects.CharacterRewardPool!.ToImmutableArray(), effects.ColorlessRewardPool!.ToImmutableArray()),
-            PotionPool = effects.PotionPool!.Select(p => new PredictorPotionOption(p.PotionKey,
-                p.Rarity.ToString() switch { "Common" => PredictorPotionRarity.Common, "Uncommon" => PredictorPotionRarity.Uncommon, "Rare" => PredictorPotionRarity.Rare, _ => PredictorPotionRarity.Event })).ToImmutableArray() };
+            PotionPool = effects.PotionPool!.Select(PredictorPotionOption.FromSnapshot).ToImmutableArray() };
         if (effects.UnlockedCharacterCardPoolKeys == null || effects.OtherCharacterPools == null)
             throw new InvalidOperationException("PredictorUnlockedCharacterCatalogMissing");
         var allCards = ModelDb.AllCharacters.Where(c => effects.UnlockedCharacterCardPoolKeys.Contains(new ModelKey(c.Id.Category, c.Id.Entry)))
@@ -143,7 +142,7 @@ internal static class PredictorSeedCapture
         var characterPools = ModelDb.AllCharacters.Where(c => effects.UnlockedCharacterCardPoolKeys.Contains(new ModelKey(c.Id.Category, c.Id.Entry)))
             .Select(c => new PredictorCharacterPool(new(c.Id.Category, c.Id.Entry), (c.Id == character.Id ? effects.CharacterRewardPool! :
                 effects.OtherCharacterPools.Single(p => p.CharacterKey == new ModelKey(c.Id.Category, c.Id.Entry)).Cards)
-                .Where(card => card.IsUnlockedInCapturedPool && !card.IsMultiplayerOnly).Select(card => card.CardKey).ToImmutableArray())).ToImmutableArray();
+                .Where(card => card.IsUnlockedInCapturedPool && !card.IsMultiplayerOnly).Select(card => card.CardKey).ToImmutableArray(), new(c.CardPool.Id.Category, c.CardPool.Id.Entry))).ToImmutableArray();
         EncounterModel[] eventEncounters = [ModelDb.Encounter<DenseVegetationEventEncounter>(), ModelDb.Encounter<PunchOffEventEncounter>(),
             ModelDb.Encounter<MysteriousKnightEventEncounter>(), ModelDb.Encounter<BattlewornDummyEventV1Encounter>(),
             ModelDb.Encounter<BattlewornDummyEventV2Encounter>(), ModelDb.Encounter<BattlewornDummyEventV3Encounter>(), ModelDb.Encounter<FakeMerchantEventEncounter>()];

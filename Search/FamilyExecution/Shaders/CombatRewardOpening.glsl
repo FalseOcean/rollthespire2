@@ -213,9 +213,11 @@ uint c_observed_non_capsule(uint relic,uint64_t root,bool unlisted,bool niche_kn
     return C_OPENING_EXACT;
 }
 
-bool c_observed_route(uint64_t root,uint route,out uint keep_reason){
+bool c_observed_route(uint64_t root,uint route,uvec2 bones_pair,out uint keep_reason){
     keep_reason=0u;
+#if !RT2_C_SHARED_BONES_PAIR
     if(!c_observed_metadata_valid())return cr_family_numeric_failure();
+#endif
     RngState unused=cr_rng_initialize(uint64_t(0));
     RewardRouteState state=cr_initialize_route(root,false,unused);
 #if RT2_C_MODERN113
@@ -236,7 +238,11 @@ bool c_observed_route(uint64_t root,uint route,out uint keep_reason){
         if(bones_count<2u||bones_count>64u||bones_count>uint(bones_ids.ids.length()))return cr_family_numeric_failure();
 #ifndef RT2_C_OPENING_REPLAY_CROP
         if(dynamic_bones){
+#if RT2_C_SHARED_BONES_PAIR
+            first=bones_pair.x;second=bones_pair.y;
+#else
             if(!cr_replay_bones(root,first,second,state.rewards))return cr_family_numeric_failure();
+#endif
             count=2u;
         }
 #endif

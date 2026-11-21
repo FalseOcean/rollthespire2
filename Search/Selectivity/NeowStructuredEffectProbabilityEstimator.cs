@@ -181,7 +181,7 @@ internal static partial class NeowStructuredEffectProbabilityEstimator
     {
         var filter = ProbabilitySemanticProjection.From(plan).NumericalFilter;
         if (!ModernNeowIdentityRules.TryGetEligibleCursePool(plan.Authority, out IReadOnlyList<ModelKey> cursePool) ||
-            !authority.HasExactBonesPools ||
+            !authority.HasExactBonesOffer ||
             authority.BonesEligibleRelics is null)
         {
             return SearchSelectivityEstimate.Unpriced(

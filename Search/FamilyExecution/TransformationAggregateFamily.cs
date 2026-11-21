@@ -18,7 +18,7 @@ internal static class TransformationAggregateFamily
     {
         if (model.Evaluation.TransformationAggregate is { UsesExtendedRequirements: true })
         {
-            body = PrepareScoped(model, preferences);
+            body = PrepareScoped(model, preferences, preferGpu, numericalVariant);
             return true;
         }
         bool accepted = TryPrepare(model, preferences, out var prepared, preferGpu, numericalVariant);
@@ -42,39 +42,89 @@ internal static class TransformationAggregateFamily
         }
     }
 
-    // Scoped goals share one domain witness. The old numerical/GPU collector has
-    // neither labelled outputs nor Ancient continuation and cannot claim them.
-    private static FilterBodyDescription PrepareScoped(SearchModel model, FilterExecutionPreferences preferences)
+    // Scoped goals share one domain witness. Only the fixed-pool Ancient plan
+    // reduces that witness to a single seed-local numerical test.
+    private static FilterBodyDescription PrepareScoped(SearchModel model, FilterExecutionPreferences preferences,
+        bool preferGpu, GpuNumericalVariant numericalVariant)
     {
         var numerical = TransformationAncientNumericalPlan.TryCreate(model);
+        TransformationAggregateGpuPlan? gpu = null;
+        FilterPreparationIssue[] issues = [];
+        if (preferGpu && numerical is not null)
+        {
+            try { gpu = new(numerical, numericalVariant); }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception error) { issues = [new("GpuPreparation", "GpuPlanConstructionFailed", error.ToString())]; }
+        }
         string revision = numerical is null ? "T.Cpu.ScopedTransformations.20261117.v1" :
             "T.Cpu.AncientInitialBasics.20261117.v1";
         var profile = RuntimeProfileRegistry.Select(model.Detection);
         int workers = Math.Clamp(preferences.WorkerCount, 1, 32);
         bool packed = profile.ProfileId == RuntimeProfileId.Beta111;
         int window = numerical is null ? 1024 : 65536;
-        Func<ulong, bool> matches = numerical is null ? root => MatchesScoped(model, root) : numerical.Matches;
+        var eventCheck = numerical is null ? Runtime.TransformationAggregateValidator.PrepareIndependentEventCheck(model) : null;
+        if (eventCheck is not null) revision += ".EventScopeFirst.20261121.v1";
+        Func<ulong, bool> matches = numerical is null ? root => MatchesScoped(model, root, eventCheck) : numerical.Matches;
+        var estimate = numerical is null ? null : FamilyAuxiliaryEvidence.Read<TransformationAncientNumericalPlan.WorkEstimate?>(
+            Id, "AncientFixedPoolEstimate", () => numerical.EstimateWork(), null, model.SnapshotFingerprint);
+        var costs = estimate.HasValue ? FamilyAuxiliaryEvidence.Read<CpuCostSnapshot?>(
+            Id, "CpuCostSnapshot", CpuCostCalibration.Capture, null) : null;
+        FamilyPhysicalQuote? CpuRaw(FamilyPhysicalQuoteRequest geometry)
+        {
+            if (estimate is not { } work) return null;
+            // Rounded single-worker coefficients for the pre-hashed numerical loop.
+            // Root identity and transport are outside this arithmetic anchor.
+            return FamilyCoarsePricing.Cpu(Id, "T.AncientFixedPool", 4 + 8 * work.ExpectedDraws, workers, geometry,
+                FormattableString.Invariant($"{work.Evidence};ExpectedDraws={work.ExpectedDraws:G9};P1PrehashedNumericAnchor.20261121;NoHostTransport"),
+                measuredWorkerScale: TransformationAncientNumericalPlan.WorkerScale(workers, geometry.MeanInputPopulation));
+        }
         var prepared = new PreparedFilter(Id) {
             AnalyticalCost = new(Id, window, [], "ScopedTransformations.Unmeasured"),
-            Survival = FamilySurvivalProjection.Unresolved(Id, "ScopedTransformations.JointProbabilityUnavailable"),
-            Obligations = [new(Id, model.Authority.PlayerSlotIndex)]
+            Survival = estimate is { Survival: { } pass } estimated
+                ? FamilySurvivalProjection.Resolved(Id, pass, estimated.Evidence)
+                : FamilySurvivalProjection.Unresolved(Id, estimate?.Evidence ?? "ScopedTransformations.JointProbabilityUnavailable"),
+            Obligations = [new(Id, model.Authority.PlayerSlotIndex)], Issues = issues
         };
-        return new(prepared, revision, profile.ProfileId) {
+        var cpu = new FilterBodyDescription(prepared, revision, profile.ProfileId) {
             InputIdentity = model.SnapshotFingerprint, PlayersCount = model.Authority.PlayersCount,
             CpuWorkers = workers, WindowCapacity = window, MaximumRootWindowSize = window, CpuChunkCapacity = CpuFilterExecution.Capacity,
             PerformanceProjection = compact => CpuFilterExecution.Describe(Id, revision, workers, window, packed, packed, compact),
-            Cost = new() { CanonicalScope = false },
+            Cost = new() {
+                CanonicalScope = false, CalibrationQuote = CpuRaw, UsesBoundedPrefixPopulation = estimate.HasValue,
+                Quote = (selected, geometry, _) => CpuRaw(geometry) is { } raw
+                    ? costs?.Local(raw, selected.ResolveConditionPerformance(geometry.CompactInput).PhysicalImplementationRevision,
+                        workers, geometry.CompactInput) ?? raw : null
+            },
             CreateExecution = (selected, _) => new CpuFilterExecution(selected, profile, matches, packed, packed)
+        };
+        if (gpu is not { Supported: true } gpuPlan) return cpu;
+        return new(prepared, gpuPlan.Revision(false), profile.ProfileId) {
+            UsesGpu = true, NumericRequirements = gpuPlan.NumericRequirements,
+            InputIdentity = model.SnapshotFingerprint, PlayersCount = model.Authority.PlayersCount, CpuWorkers = workers,
+            WindowCapacity = gpuPlan.Capacity, CpuAlternatives = [cpu],
+            PerformanceProjection = compact => new(Id, gpuPlan.Revision(compact), "T.Gpu.AncientFixedPool" + gpuPlan.NumericalRevision,
+                1, "FamilyOwned;OneAncientFixedPool;ExactOwnsAncientOfferAndFinalDisposition", true),
+            Cost = new() {
+                CanonicalScope = false, PrivateCanonicalScope = false,
+                MinimumComparableInput = _ => gpuPlan.Capacity,
+                Quote = (_, geometry, _) => TransformationAncientGpuQuote(gpuPlan, estimate, geometry)
+            },
+            CreateExecution = (selected, _) => CreateGpuExecution(selected, gpuPlan, matches, profile),
+            BindPrivate = gpuPlan.NumericalVariant == GpuNumericalVariant.NativeFloat64
+                ? (device, input, output) => BindPrivateGpu(gpuPlan, device, input, output) : null
         };
     }
 
-    private static bool MatchesScoped(SearchModel model, ulong root)
+    private static bool MatchesScoped(SearchModel model, ulong root,
+        Func<ulong, List<Runtime.TransformationAggregateValidator.Output>?>? eventCheck)
     {
+        var events = eventCheck?.Invoke(root);
+        if (eventCheck is not null && events is null) return false;
         // A captured bag belongs to its capture seed. Replay the same copied
         // per-root authority boundary used by final validation before pruning.
         if (!Runtime.SearchAuthorityProjector.TryProjectForRootHash(model, root, $"root:{root:X16}",
                 out var authority, out _, out _)) return true;
-        return Runtime.TransformationAggregateValidator.Evaluate(model, root, authority).Disposition != SearchDisposition.NoMatch;
+        return Runtime.TransformationAggregateValidator.Evaluate(model, root, authority, events).Disposition != SearchDisposition.NoMatch;
     }
     private static TransformationAggregatePreparation Prepare(SearchModel model, FilterExecutionPreferences preferences,
         bool preferGpu, GpuNumericalVariant numericalVariant)
@@ -152,24 +202,50 @@ internal static class TransformationAggregateFamily
                     return FamilyGpuReadback.Reference(selected, quote);
                 }
             },
-            CreateExecution = (selected, _) => new GpuFilterExecution<TransformationAggregateGpuExecutor>(selected,
-                device => new(device, gpuPlan), (resource, input, token) => {
-                    var output = resource.Execute(input, token, out var metrics);
-                    return new(output, metrics.CanonicalMs, metrics.DispatchSyncMs, metrics.ReadbackMs, metrics.ReadbackBytes);
-                }, resource => resource.Dispose(), plan.Matches, profile, resource => (resource.Device, resource.SetupMs)),
-            BindPrivate = gpuPlan.NumericalVariant != GpuNumericalVariant.NativeFloat64 ? null : (device, input, output) => {
-                var resource = new TransformationAggregateGpuExecutor(device, gpuPlan, input, output);
-                return new(resource, resource.Device, resource.SetupMs, input, output, (batch, count, token) => {
-                    FamilyCandidateSet? filtered = null; TransformationAggregateGpuMetrics metrics;
-                    if (output is not null) resource.ExecutePrivateStage(batch, count, token, out metrics);
-                    else filtered = input is null ? resource.Execute(FamilyCandidateSet.Dense(batch), token, out metrics) :
-                        resource.ExecutePrivate(batch, count, token, out metrics);
-                    return new(metrics.Output, filtered, metrics.DispatchSyncMs, metrics.ReadbackMs,
-                        metrics.ReadbackBytes, metrics.CanonicalMs, metrics.Dispatches);
-                });
-            }
+            CreateExecution = (selected, _) => CreateGpuExecution(selected, gpuPlan, plan.Matches, profile),
+            BindPrivate = gpuPlan.NumericalVariant == GpuNumericalVariant.NativeFloat64
+                ? (device, input, output) => BindPrivateGpu(gpuPlan, device, input, output) : null
         };
         return new(plan, gpuPlan, probability, body);
+    }
+
+    private static IFilterExecution CreateGpuExecution(FilterBodyDescription selected, TransformationAggregateGpuPlan gpuPlan,
+        Func<ulong, bool> matches, IRuntimeProfile profile) => new GpuFilterExecution<TransformationAggregateGpuExecutor>(selected,
+        device => new(device, gpuPlan), (resource, input, token) => {
+            var output = resource.Execute(input, token, out var metrics);
+            return new(output, metrics.CanonicalMs, metrics.DispatchSyncMs, metrics.ReadbackMs, metrics.ReadbackBytes);
+        }, resource => resource.Dispose(), matches, profile, resource => (resource.Device, resource.SetupMs));
+
+    private static FamilyPrivateGpuExecution BindPrivateGpu(TransformationAggregateGpuPlan gpuPlan, Godot.RenderingDevice device,
+        PrivateOrdinalBuffer? input, PrivateOrdinalBuffer? output)
+    {
+        var resource = new TransformationAggregateGpuExecutor(device, gpuPlan, input, output);
+        return new(resource, resource.Device, resource.SetupMs, input, output, (batch, count, token) => {
+            FamilyCandidateSet? filtered = null;
+            TransformationAggregateGpuMetrics metrics;
+            if (output is not null) resource.ExecutePrivateStage(batch, count, token, out metrics);
+            else filtered = input is null ? resource.Execute(FamilyCandidateSet.Dense(batch), token, out metrics) :
+                resource.ExecutePrivate(batch, count, token, out metrics);
+            return new(metrics.Output, filtered, metrics.DispatchSyncMs, metrics.ReadbackMs,
+                metrics.ReadbackBytes, metrics.CanonicalMs, metrics.Dispatches);
+        });
+    }
+
+    private static FamilyPhysicalQuote? TransformationAncientGpuQuote(TransformationAggregateGpuPlan gpuPlan,
+        TransformationAncientNumericalPlan.WorkEstimate? estimate, FamilyPhysicalQuoteRequest geometry)
+    {
+        if (estimate is not { } work || gpuPlan.NumericalVariant == GpuNumericalVariant.IntegerRne &&
+            (geometry.PrivateInput || geometry.PrivateOutput)) return null;
+        // Rounded coefficients from independent fixed-pool Dense dispatch
+        // slopes. Constant per-dispatch header work cancels at the two input
+        // populations. Compact input has no fitted coefficients of its own.
+        var (fixedWork, drawWork, emitWork) = gpuPlan.NumericalVariant == GpuNumericalVariant.IntegerRne
+            ? (0.09, 0.035, 0.45) : (0.12, 0.06, 0.22);
+        double emission = work.Survival ?? 1;
+        double nanoseconds = fixedWork + drawWork * work.ExpectedDraws + emitWork * emission;
+        return FamilyCoarsePricing.Gpu(Id, "T.AncientFixedPool", nanoseconds, gpuPlan.Capacity, geometry,
+            FormattableString.Invariant($"{work.Evidence};ExpectedDraws={work.ExpectedDraws:G9};ExpectedEmission={emission:G9};NumericalVariant={gpuPlan.NumericalVariant};Anchor=T.AncientFixedPool.DenseDispatchSlope.20261121;InputAnchor=196608..1048576;EightIndependentShapes;NoPayloadTransport") +
+            (geometry.CompactInput ? ";CompactUsesDenseReference;CompactNumericSlopeUnmeasured" : ""));
     }
 
     // Keep model-only preparation delegates outside the body factory's closure.

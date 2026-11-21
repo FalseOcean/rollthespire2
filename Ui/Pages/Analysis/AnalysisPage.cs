@@ -292,15 +292,42 @@ internal sealed partial class AnalysisPage : MarginContainer, IAppPage, IRespons
         RenderWorkbench();
     }
 
+    // Presentation-only observations share the captured seed but have separate
+    // inputs. A projection failure leaves only that observation unavailable.
+    private T? ObservePreview<T>(string stage, Func<T?> observe) where T : class
+    {
+        try { return observe(); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Infrastructure.Diagnostics.RuntimeIssueLedger.Current.Record(ex, "AnalysisPreviewFailed",
+                nameof(AnalysisPage), stage, "issues.prediction_failed",
+                correlationId: $"request={LastRequest?.RequestId.Serialized};seed={LastFacts?.CanonicalSeed}");
+            return null;
+        }
+    }
+
     private Beta111ShopColorlessProjection? BuildMerchantColorlessProjection()
     {
         if (_merchantProjectionReady) return _merchantProjection;
         if (LastRequest?.Authority.ProfileId != RuntimeProfileId.Beta111 ||
             !TryGetProjectionRoot(out ulong rootHash))
             return null;
-        _merchantProjection = Beta111NormalMerchantColorlessSequenceProjector.Project(
-            rootHash,
-            Beta111MerchantColorlessAuthority.From(LastRequest.Authority));
+        _merchantProjection = ObservePreview("ShopColorlessCards", () =>
+        {
+            var captured = LastRequest.Authority;
+            var observed = Beta111NormalMerchantColorlessSequenceProjector.Project(rootHash,
+                Beta111MerchantColorlessAuthority.From(captured));
+            if (observed.Precision != PredictionPrecision.Unknown ||
+                !Beta111MerchantColorlessAuthority.TryAssumeStandardRules(captured, out var merchantEffects, out var assumptions))
+                return observed;
+            var modeled = Beta111NormalMerchantColorlessSequenceProjector.Project(rootHash,
+                Beta111MerchantColorlessAuthority.From(captured.WithEffectAuthority(merchantEffects)));
+            return modeled.Merchants.Count == 0 ? modeled : modeled with
+            {
+                Precision = PredictionPrecision.Partial,
+                ReplayAssumption = assumptions
+            };
+        }) ?? Beta111ShopColorlessProjection.Unknown("MerchantColorlessProjectionFailed");
         _merchantProjectionReady = true;
         return _merchantProjection;
     }
@@ -311,10 +338,10 @@ internal sealed partial class AnalysisPage : MarginContainer, IAppPage, IRespons
         if (LastRequest?.Authority.ProfileId != RuntimeProfileId.Beta111 ||
             !TryGetProjectionRoot(out ulong rootHash))
             return null;
-        _eventProjection = Beta111EventResultProjector.Project(
+        _eventProjection = ObservePreview("EventOptionResults", () => Beta111EventResultProjector.Project(
             rootHash,
             LastRequest.PlayerSlotIndex,
-            Beta111EventResultAuthority.From(LastRequest.Authority));
+            Beta111EventResultAuthority.From(LastRequest.Authority)));
         _eventProjectionReady = true;
         return _eventProjection;
     }
@@ -365,7 +392,8 @@ internal sealed partial class AnalysisPage : MarginContainer, IAppPage, IRespons
 
         // A missing projection is not permission to replace a frozen requested route.
         if (selectedRoute is null && !string.IsNullOrWhiteSpace(_preferredOpeningRouteId) &&
-            (_viewModel.NeowIdentityStatus != RolltheSpire2.Core.World.SeedDomainEvaluationStatus.Evaluated ||
+            (LastFacts?.ModelAssumptions.ContainsKey(SeedPredictionDomainSelection.Neow) == true ||
+             _viewModel.NeowIdentityStatus != RolltheSpire2.Core.World.SeedDomainEvaluationStatus.Evaluated ||
              selectedChoice?.ProductRelevantProjectionPrecision is PredictionPrecision.Unknown or PredictionPrecision.Unsupported))
         {
             _selectedNeowRelicKey = selectedChoice?.RelicKey ?? default;

@@ -72,7 +72,7 @@ internal sealed class CombatRewardObservedOpening
         var dense = new Dictionary<ModelKey, ushort>(ModelKeyComparer.Instance);
         string issue = "";
         RelicFamilyPool? pool = null;
-        if (capsules && !RelicFamilyPlanCompiler.TryCompilePool(request, out pool, out dense, out _, out issue))
+        if (capsules && !RelicFamilyPlanCompiler.TryCompilePool(request, out pool, out dense, out _, out issue, requireOrdinaryLanes: true))
             issue = "ObservedOpeningBag:" + issue;
         _pool = pool;
         if (pool is not null)

@@ -61,16 +61,20 @@ internal sealed partial class AnalysisPage
         var toolbar = new HBoxContainer(); toolbar.AddThemeConstantOverride("separation", 10); choices.AddChild(toolbar);
         var heading = WLabel(Text("predictor.neow_offers"), true); toolbar.AddChild(heading);
         heading.TooltipText = Text("predictor.design.opening_hint");
+        AddModelPremise(choices, SeedPredictionDomainSelection.Neow);
         _neowChoiceStrip.Reparent(choices);
         _neowChoiceStrip.Bind(_viewModel.NeowChoices, _selectedNeowRelicKey, _preferredOpeningRouteId,
             Text(Ui1TextKey.MissingIconTooltip), Text(Ui1TextKey.AnalysisNeowPickFirst));
         if (_viewModel.NeowIdentityStatus != SeedDomainEvaluationStatus.Evaluated)
-            choices.AddChild(WNote(Text("predictor.unavailable") + "\n" + _viewModel.NeowIdentityIssueCode));
+            choices.AddChild(WNote(Text(_viewModel.NeowIdentityIssueCode.StartsWith("AnalysisDomainFailed:", StringComparison.Ordinal)
+                ? "predictor.analysis.domain_failed" : _viewModel.NeowIdentityIssueCode == "NonVanillaCatalogUnsupported"
+                ? "predictor.neow_offer_rules_unknown" : "predictor.neow_offers_unknown")));
         foreach (string warning in _viewModel.OpeningWarnings) _wbCenter.AddChild(WNote(warning));
 
         var identities = new GridContainer { Columns = 1, SizeFlagsHorizontal = SizeFlags.ExpandFill };
         identities.AddThemeConstantOverride("h_separation", 14); _wbCenter.AddChild(identities);
-        RenderOpeningIdentity(identities, choice, _preferredOpeningRouteId);
+        if (_viewModel.NeowChoices.Count > 0)
+            RenderOpeningIdentity(identities, choice, _preferredOpeningRouteId);
         identities.Visible = identities.GetChildren().OfType<Control>().Any(c => c.Visible);
         var rewardHeader = new HBoxContainer(); _wbCenter.AddChild(rewardHeader);
         WTitle(rewardHeader, "predictor.combat_rewards");
@@ -79,10 +83,20 @@ internal sealed partial class AnalysisPage
         var scope = WNote(Text("predictor.design.reward_scope")); scope.Name = "RewardAssumptionsText"; scope.Visible = _rewardAssumptionsOpen;
         _wbCenter.AddChild(scope);
         assumptions.Pressed += () => { _rewardAssumptionsOpen = !_rewardAssumptionsOpen; scope.Visible = _rewardAssumptionsOpen; };
+        AddModelPremise(_wbCenter, SeedPredictionDomainSelection.NormalCombatRewards);
         if (route is null || route.Battles.Count == 0)
         {
-            _wbCenter.AddChild(WNote(Text(choice is not null && NeowChoiceStrip.HasAmbiguousBonesRoutes(choice) && string.IsNullOrWhiteSpace(_preferredOpeningRouteId)
-                ? Ui1TextKey.AnalysisOpeningBonesRoutePrompt : "predictor.unavailable")));
+            string reason = _viewModel.NormalCombatRewardDomain.IssueCode switch
+            {
+                string issue when issue.StartsWith("AnalysisDomainFailed:", StringComparison.Ordinal) => "predictor.analysis.domain_failed",
+                string issue when issue.StartsWith("NeowPrerequisite:", StringComparison.Ordinal) => "predictor.rewards_need_neow",
+                "MissingSelectedActsForRewardProjection" or "MissingModernStartingActAuthority" or
+                    "MissingStable107StartingActAuthority" => "predictor.rewards_need_act",
+                _ when choice is not null && NeowChoiceStrip.HasAmbiguousBonesRoutes(choice) &&
+                    string.IsNullOrWhiteSpace(_preferredOpeningRouteId) => Ui1TextKey.AnalysisOpeningBonesRoutePrompt,
+                _ => "predictor.unavailable"
+            };
+            _wbCenter.AddChild(WNote(Text(reason)));
             return;
         }
         var battles = new GridContainer { Name = "OpeningBattleRewards", Columns = 1, SizeFlagsHorizontal = SizeFlags.ExpandFill };
@@ -192,6 +206,15 @@ internal sealed partial class AnalysisPage
             if (excluded > 0) edit.Text += $" · {excluded}";
             header.AddChild(edit); edit.Pressed += () => { _ancientConditionsOpen = !_ancientConditionsOpen; RenderWorkbench(); };
         }
+        string? optionAssumption = LastFacts?.World?.Ancients.FirstOrDefault(item =>
+            item.Act == ancient.Act && item.AncientKey == ancient.AncientDisplay.ModelKey)?.OptionReplayAssumption;
+        if (!string.IsNullOrEmpty(optionAssumption))
+        {
+            var note = WNote(_uiText!.Format("predictor.analysis.assumed.ancient_options",
+                ReplayAssumptionPresentation.Describe(_uiText, optionAssumption)));
+            note.Name = "AssumedAncientOptions";
+            section.AddChild(note);
+        }
         var identityRow = new HBoxContainer { Name = "AncientIdentityAndOptions" };
         identityRow.AddThemeConstantOverride("separation", 24); section.AddChild(identityRow);
         var identity = WObject(ancient.AncientDisplay.ModelKey, GameContentKind.Ancient, ancient.AncientDisplay.DisplayName);
@@ -218,8 +241,22 @@ internal sealed partial class AnalysisPage
                 : WAncientOption(display.ModelKey, display.DisplayName));
             if (option.CharacterTargetDisplay is { } target)
                 tile.AddChild(WCompactIdentity(target.ModelKey, GameContentKind.Character, target.DisplayName, 24));
+            if (ancient.OptionsEvaluationStatus == AncientOptionsEvaluationStatus.EvaluatedPartial &&
+                option.OptionPrecision != PredictionPrecision.Exact)
+                tile.AddChild(WNote(option.PrecisionLabel));
         }
-        if (ancient.Options.Count == 0) WEmpty(section);
+        if (ancient.Options.Count == 0 || ancient.OptionsEvaluationStatus == AncientOptionsEvaluationStatus.EvaluatedPartial)
+        {
+            string key = ancient.OptionsEvaluationStatus switch
+            {
+                AncientOptionsEvaluationStatus.EvaluatedKnownEmpty => "predictor.world.options_empty",
+                AncientOptionsEvaluationStatus.EvaluatedPartial => "predictor.world.options_partial",
+                AncientOptionsEvaluationStatus.EvaluatedLocked => "predictor.world.options_locked",
+                AncientOptionsEvaluationStatus.Unsupported or AncientOptionsEvaluationStatus.NotEvaluatedByPolicy => "predictor.world.options_unsupported",
+                _ => "predictor.world.options_unknown"
+            };
+            section.AddChild(WNote(Text(key)));
+        }
         if (ancient.AncientDisplay.ModelKey.Entry == "OROBAS" && !authored.OrobasTouchOfOrobasConditionMet &&
             !authored.OrobasArchaicToothConditionMet && ancient.Options.Count == 2 &&
             ancient.OptionsEvaluationStatus == AncientOptionsEvaluationStatus.EvaluatedNonEmpty)
@@ -265,7 +302,24 @@ internal sealed partial class AnalysisPage
         var section = WCard(_wbCenter, "");
         var header = new HBoxContainer(); section.AddChild(header);
         header.AddChild(WLabel(Text("predictor.events"), true));
-        if (info is null || info.Entries.Count == 0) { _inspectedEvents[act - 1] = default; WEmpty(section); return; }
+        if (info?.Authority == Core.Authority.SourceAuthority.ModdedRuntimeBestEffort && LastFacts?.World?.EventSequenceReplayAssumption is { Length: > 0 } eventPremise)
+        {
+            var note = WNote(_uiText!.Format("predictor.analysis.assumed.events",
+                ReplayAssumptionPresentation.Describe(_uiText, eventPremise)));
+            note.Name = "AssumedEventOrder";
+            section.AddChild(note);
+        }
+        if (info is null || info.Entries.Count == 0)
+        {
+            _inspectedEvents[act - 1] = default;
+            string? issue = LastFacts?.World?.EventSequenceIssues.GetValueOrDefault(act);
+            if (string.IsNullOrEmpty(issue)) issue = _viewModel!.EventPoolSequenceDomain.IssueCode;
+            if (string.IsNullOrEmpty(issue) || issue is "EventPoolSequencePredictionMissing" or "ModernEventPoolSequenceIncomplete")
+                issue = SharedRoomIssue;
+            section.AddChild(WNote(info is { OpeningAncientCursorOffset: not null } ? Text("predictor.world.events_empty") :
+                WorldIssueText(issue, "predictor.world.events_unknown")));
+            return;
+        }
         var countLabel = WNote(""); header.AddChild(countLabel);
         var expand = WAction("predictor.design.show_all"); expand.Name = "EventQueueExpand";
         expand.Visible = info.Entries.Count > previewCount; header.AddChild(expand);
@@ -333,8 +387,15 @@ internal sealed partial class AnalysisPage
         }
         if (results is not null)
         {
-            if (entry.EventDisplay.ModelKey.Entry == Beta111EventResultCatalog.TrashHeapEventEntry && results.TrashHeapPrecision == PredictionPrecision.Exact)
-            { Add(results.TrashHeapGrabCard, GameContentKind.Card); Add(results.TrashHeapDiveRelic, GameContentKind.Relic); }
+            if (entry.EventDisplay.ModelKey.Entry == Beta111EventResultCatalog.TrashHeapEventEntry)
+            {
+                if (results.TrashGrabPrecision == PredictionPrecision.Exact) Add(results.TrashHeapGrabCard, GameContentKind.Card);
+                if (results.TrashDivePrecision == PredictionPrecision.Exact) Add(results.TrashHeapDiveRelic, GameContentKind.Relic);
+                if (shown && results.TrashGrabPrecision != PredictionPrecision.Exact)
+                    detail.AddChild(WNote(Text("predictor.analysis.trash_grab_unknown")));
+                if (shown && results.TrashDivePrecision != PredictionPrecision.Exact)
+                    detail.AddChild(WNote(Text("predictor.analysis.trash_dive_unknown")));
+            }
             if (entry.EventDisplay.ModelKey.Entry == Beta111EventResultCatalog.FakeMerchantEventEntry && results.FakeMerchantPrecision == PredictionPrecision.Exact)
                 foreach (var key in results.FakeMerchantInventory) Add(key, GameContentKind.Relic);
             if (entry.EventDisplay.ModelKey.Entry == Beta111EventResultCatalog.ColorfulPhilosophersEventEntry && results.ColorfulPrecision == PredictionPrecision.Exact)
@@ -394,7 +455,10 @@ internal sealed partial class AnalysisPage
                         section.AddChild(items);
                     }
                     foreach (var entry in entries) items.AddChild(_relicNames ? WRelicPreviewTile(entry) : WSequenceIcon(entry));
-                    if (entries.Length == 0) WEmpty(section);
+                    if (lane.IssueCode == "MissingModernRelicShopEligibilityAuthority")
+                        section.AddChild(WNote(Text("predictor.analysis.shop_eligibility")));
+                    else if (entries.Length == 0) section.AddChild(WNote(Text(lane.Precision == PredictionPrecision.Exact
+                        ? "predictor.analysis.bag_empty" : "predictor.unavailable")));
                 }
             }
             Lanes("predictor.player_relic_bag", _viewModel!.RelicSequenceDomain.Items.Where(l => l.Kind != RelicSequenceKind.Shop));

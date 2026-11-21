@@ -8,7 +8,12 @@ namespace RolltheSpire2.Infrastructure.Diagnostics;
 // All game/Godot values are captured by the caller on the main thread.
 internal sealed record FeedbackBundleRequest(string OutputDirectory, string Rt2Directory,
     string CurrentRt2Log, string GodotLog, string EnvironmentJson, string? EditorJson,
-    IReadOnlyDictionary<string, string> PrivatePaths, IReadOnlyList<string> CaptureWarnings);
+    IReadOnlyDictionary<string, string> PrivatePaths, IReadOnlyList<string> CaptureWarnings)
+{
+    internal string? SearchEvidenceJson { get; init; }
+    internal string? AnalysisEvidenceJson { get; init; }
+    internal string? PlayEvidenceJson { get; init; }
+}
 internal sealed record FeedbackBundleResult(string Path, long Bytes, int Logs, int Warnings, bool Oversized,
     FeedbackIssueText ChineseIssue, FeedbackIssueText EnglishIssue);
 
@@ -61,6 +66,9 @@ internal static class FeedbackBundle
                 }
                 Write("environment.json", request.EnvironmentJson);
                 if (request.EditorJson is not null) Write("current-editor.json", request.EditorJson);
+                if (request.SearchEvidenceJson is not null) Write("search-evidence.json", request.SearchEvidenceJson);
+                if (request.AnalysisEvidenceJson is not null) Write("analysis-evidence.json", request.AnalysisEvidenceJson);
+                if (request.PlayEvidenceJson is not null) Write("play-evidence.json", request.PlayEvidenceJson);
                 foreach (LogSource source in sources)
                 {
                     string entryName = source.Kind + "/" + Path.GetFileName(source.Path);
@@ -137,6 +145,11 @@ internal static class FeedbackBundle
                     请说明操作步骤、预期结果与实际现象，界面问题请附截图。
 
                     environment.json: environment at export time; RT2 hash captured when the mod loaded.
+                    search-evidence.json: bounded search results actually received by RT2, with their query and session.
+                    analysis-evidence.json: the seed, route selection and model outputs in the analysis view.
+                    play-evidence.json: available observations from gameplay. Compare matching seed, act and player seat.
+                    可用时分别保存搜索实收候选、种子分析的预测、游戏里观察到的选项与奖励；请按种子、幕和座位对照。
+                    未观察到的现场不会补算。相应文件的收集状态见 manifest.json。
                     current-editor.json: editor at export time, NOT necessarily the failed search.
                     searches/: latest logged workload per included RT2 log, with its session/start provenance.
                     These workloads are NOT automatically classified as the failing search. Earlier searches
@@ -154,7 +167,15 @@ internal static class FeedbackBundle
                     GitHub attachments on public issues are public. Review the ZIP before attaching it.
                     ZIPs above GitHub's attachment limit are kept intact; no logs are silently removed.
                     """);
-                Write("manifest.json", JsonSerializer.Serialize(new { SchemaVersion = 1, ExportedUtc = DateTime.UtcNow,
+                string Availability(string name, string? payload) => payload is not null ? "included" :
+                    warnings.Any(w => w.StartsWith(name + ": ", StringComparison.Ordinal)) ? "capture-failed" : "not-observed";
+                Write("manifest.json", JsonSerializer.Serialize(new { SchemaVersion = 2, ExportedUtc = DateTime.UtcNow,
+                    Evidence = new Dictionary<string,string>
+                    {
+                        ["search-evidence.json"] = Availability("SearchEvidence", request.SearchEvidenceJson),
+                        ["analysis-evidence.json"] = Availability("AnalysisEvidence", request.AnalysisEvidenceJson),
+                        ["play-evidence.json"] = Availability("PlayEvidence", request.PlayEvidenceJson)
+                    },
                     Selection = "Current log first, then newest; at most 5 RT2 + 5 Godot logs",
                     Logs = receipts, Warnings = warnings }, Json));
             }

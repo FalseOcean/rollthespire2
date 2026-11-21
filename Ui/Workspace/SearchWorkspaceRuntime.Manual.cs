@@ -65,7 +65,7 @@ internal sealed partial class SearchWorkspaceRuntime
             try
             {
                 var input = TrustedRootHashInput.FromCanonicalSeed(profile, seed);
-                var exact = ProductionExactSearchEvaluator.Evaluate(plan.Model, input);
+                var exact = ProductionExactSearchEvaluator.EvaluateCandidate(plan.Model, input);
                 if (exact.Facts is { } facts) ProductionExactSearchEvaluator.ThrowIfPredictionFailed(facts);
                 if (!exact.IsMatch) { try { ExactRejectionDiagnostics.Log(plan.Model, seed, exact); } catch { } }
                 return exact;

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text;
 using System.Security.Cryptography;
 using System.IO.Compression;
@@ -15,6 +16,10 @@ namespace RolltheSpire2.Search.FamilyExecution;
 internal sealed record FamilyCanonicalCostReference(int SchemaVersion, string Boundary,
     IReadOnlyList<FamilyCanonicalCostReferenceRow> Rows, JsonElement? CompleteCallCurves = null);
 
+[JsonSerializable(typeof(FamilyCanonicalCostReference))]
+[JsonSerializable(typeof(FamilyCompleteCallCurve))]
+internal sealed partial class FamilyCanonicalCostJsonContext : JsonSerializerContext;
+
 internal sealed record FamilyCanonicalCostReferenceRow(FamilyCanonicalCostKey Key, double MinimumInputs,
     double MaximumInputs, double InterceptMilliseconds, double NanosecondsPerInput, double? SetupMilliseconds,
     int MeasuredRepeats, double MeasuredMilliseconds, string TrainingRowsSha256, string FitMethod,
@@ -27,9 +32,9 @@ internal sealed record FamilyCanonicalStagePrice(double Milliseconds, double? Se
 
 internal sealed class FamilyCanonicalCostSnapshot
 {
-    private readonly IReadOnlyDictionary<string, FamilyCanonicalCostReferenceRow[]> _byKey;
-    private readonly IReadOnlyDictionary<string, FamilyCanonicalCostReferenceRow[]> _denseByShape;
-    private readonly IReadOnlySet<string> _referencedShapes;
+    private readonly IReadOnlyDictionary<FamilyCanonicalCostKey, FamilyCanonicalCostReferenceRow[]> _byKey;
+    private readonly IReadOnlyDictionary<FamilyCanonicalCostKey, FamilyCanonicalCostReferenceRow[]> _denseByShape;
+    private readonly IReadOnlySet<FamilyCanonicalCostKey> _referencedShapes;
     private readonly FamilyCompleteCallSnapshot _completeCalls;
     internal string AssetEvidence { get; init; } = "";
     internal bool IsEmpty => _byKey.Count == 0 && _denseByShape.Count == 0 && _completeCalls.IsEmpty;
@@ -52,9 +57,9 @@ internal sealed class FamilyCanonicalCostSnapshot
         // Godot main loop. CPU collection has no GPU cadence requirement.
         var admitted = described.Where(row => row.Key.ExecutionClass == "CPU" ||
             row.MeasurementCadence == FamilyCanonicalMeasuredCost.LiveMainLoopCadence).ToArray();
-        _byKey = Index(admitted.Where(row => row.RootSpanMode == "Exact"), key => key.PriceKey);
+        _byKey = Index(admitted.Where(row => row.RootSpanMode == "Exact"), key => key.PriceIdentity);
         _denseByShape = Index(admitted.Where(row => row.RootSpanMode == "DenseEqualsInputRange"), DenseShapeKey);
-        _referencedShapes = admitted.Select(row => DenseShapeKey(row.Key)).ToHashSet(StringComparer.Ordinal);
+        _referencedShapes = admitted.Select(row => DenseShapeKey(row.Key)).ToHashSet();
         _completeCalls = FamilyCompleteCallSnapshot.Parse(completeCallCurves);
     }
 
@@ -62,7 +67,7 @@ internal sealed class FamilyCanonicalCostSnapshot
     // geometry remain the actual measured/requested spans. Every other field,
     // including body, children, device and work shape, remains exact. Reviewed
     // current solo N GPU calls additionally omit the unrelated CPU budget.
-    private static string DenseShapeKey(FamilyCanonicalCostKey key) => (key with { RootWindow = 0 }).PriceKey;
+    private static FamilyCanonicalCostKey DenseShapeKey(FamilyCanonicalCostKey key) => (key with { RootWindow = 0 }).PriceIdentity;
 
     // Existence only: a known finite body may lack this population/span. This
     // never returns a price or relaxes the finite Quote admission contract.
@@ -73,11 +78,11 @@ internal sealed class FamilyCanonicalCostSnapshot
     internal (double Ratio, string Evidence) CpuWorkerRatio(string family, int workers, bool compact) =>
         _completeCalls.CpuWorkerRatio(family, workers, compact);
 
-    private static IReadOnlyDictionary<string, FamilyCanonicalCostReferenceRow[]> Index(
-        IEnumerable<FamilyCanonicalCostReferenceRow> rows, Func<FamilyCanonicalCostKey, string> identity)
+    private static IReadOnlyDictionary<FamilyCanonicalCostKey, FamilyCanonicalCostReferenceRow[]> Index(
+        IEnumerable<FamilyCanonicalCostReferenceRow> rows, Func<FamilyCanonicalCostKey, FamilyCanonicalCostKey> identity)
     {
-        var groups = new Dictionary<string, FamilyCanonicalCostReferenceRow[]>(StringComparer.Ordinal);
-        foreach (var group in rows.GroupBy(row => identity(row.Key), StringComparer.Ordinal))
+        var groups = new Dictionary<FamilyCanonicalCostKey, FamilyCanonicalCostReferenceRow[]>();
+        foreach (var group in rows.GroupBy(row => identity(row.Key)))
         {
             var ranges = group.OrderBy(row => row.MinimumInputs).ToArray();
             for (int i = 1; i < ranges.Length; i++)
@@ -119,7 +124,7 @@ internal sealed class FamilyCanonicalCostSnapshot
             geometry.CompactInput != key.CompactInput || geometry.MeanInputPopulation < 1) return null;
         if (_completeCalls.Quote(key, geometry, sourceSurvival, out string? selectorGap) is { } complete)
             return complete with { Evidence = complete.Evidence + AssetEvidence };
-        var row = Find(_byKey, key.PriceKey, geometry.MeanInputPopulation);
+        var row = Find(_byKey, key.PriceIdentity, geometry.MeanInputPopulation);
         // A Dense interval is an explicit finite fit over measured N=span
         // endpoints, not permission to infer span from Compact mean population.
         // Exact rows win even when an interval also covers this geometry.
@@ -152,7 +157,7 @@ internal sealed class FamilyCanonicalCostSnapshot
             : "";
 
     private static FamilyCanonicalCostReferenceRow? Find(
-        IReadOnlyDictionary<string, FamilyCanonicalCostReferenceRow[]> index, string key, double inputs) =>
+        IReadOnlyDictionary<FamilyCanonicalCostKey, FamilyCanonicalCostReferenceRow[]> index, FamilyCanonicalCostKey key, double inputs) =>
         index.TryGetValue(key, out var rows)
             ? rows.SingleOrDefault(row => inputs >= row.MinimumInputs && inputs <= row.MaximumInputs) : null;
 }
@@ -171,6 +176,15 @@ internal static class FamilyCanonicalMeasuredCost
     private static readonly Lazy<FamilyCanonicalCostSnapshot> Reference = new(() =>
         FamilyAuxiliaryEvidence.Read(nameof(FamilyCanonicalMeasuredCost), "LoadFiniteCanonicalReference",
             LoadReference, new FamilyCanonicalCostSnapshot([])));
+    private static int _preloadRequested;
+
+    // This immutable asset needs no query, save, or Godot state. Pricing still
+    // awaits the very same snapshot when a search reaches it before preload.
+    internal static void BeginPreload()
+    {
+        if (Interlocked.Exchange(ref _preloadRequested, 1) == 0 && !Reference.IsValueCreated)
+            _ = Task.Run(static () => { _ = Reference.Value; });
+    }
 
     internal static (double Ratio, string Evidence) CpuWorkerRatio(string family, int workers, bool compact) =>
         FamilyAuxiliaryEvidence.Read(nameof(FamilyCanonicalMeasuredCost), "CpuWorkerReferenceRatio",
@@ -189,16 +203,23 @@ internal static class FamilyCanonicalMeasuredCost
         return ParseLoaded(bytes.ToArray(), "Embedded:" + ResourceName);
     }
 
-    private static FamilyCanonicalCostSnapshot ParseLoaded(byte[] bytes, string source) =>
-        ParseCore(Encoding.UTF8.GetString(bytes).TrimStart('\uFEFF'),
-            ";CanonicalAssetSource=" + source + ";CanonicalAssetSha256=" + Convert.ToHexString(SHA256.HashData(bytes)));
-
-    internal static FamilyCanonicalCostSnapshot Parse(string json) => ParseCore(json, "");
-
-    private static FamilyCanonicalCostSnapshot ParseCore(string json, string assetEvidence)
+    private static FamilyCanonicalCostSnapshot ParseLoaded(byte[] bytes, string source)
     {
-        var document = JsonSerializer.Deserialize<FamilyCanonicalCostReference>(json)
-            ?? throw new InvalidDataException("CanonicalCostReference.NullDocument");
+        long started = System.Diagnostics.Stopwatch.GetTimestamp();
+        var json = bytes.AsSpan();
+        while (json.StartsWith(Encoding.UTF8.Preamble)) json = json[Encoding.UTF8.Preamble.Length..];
+        var snapshot = CreateSnapshot(JsonSerializer.Deserialize(json, FamilyCanonicalCostJsonContext.Default.FamilyCanonicalCostReference),
+            ";CanonicalAssetSource=" + source + ";CanonicalAssetSha256=" + Convert.ToHexString(SHA256.HashData(bytes)));
+        Bootstrap.RuntimeLog.TryBackgroundInfo($"searchStartup=true;phase=CanonicalCostReferenceLoaded;elapsedMs={System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:F4}");
+        return snapshot;
+    }
+
+    internal static FamilyCanonicalCostSnapshot Parse(string json) =>
+        CreateSnapshot(JsonSerializer.Deserialize(json, FamilyCanonicalCostJsonContext.Default.FamilyCanonicalCostReference), "");
+
+    private static FamilyCanonicalCostSnapshot CreateSnapshot(FamilyCanonicalCostReference? document, string assetEvidence)
+    {
+        if (document is null) throw new InvalidDataException("CanonicalCostReference.NullDocument");
         if (document.SchemaVersion != 1 || document.Boundary != Boundary || document.Rows is null)
             throw new InvalidDataException("CanonicalCostReference.SchemaOrBoundaryMismatch");
         return new(document.Rows, document.CompleteCallCurves) { AssetEvidence = assetEvidence };

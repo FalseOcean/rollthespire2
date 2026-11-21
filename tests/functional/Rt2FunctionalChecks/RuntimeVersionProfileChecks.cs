@@ -76,20 +76,46 @@ internal static class RuntimeVersionProfileChecks
         var opening113 = RuntimeVersionCompatibility.Resolve("0.113.0");
         Check(opening113.IsProvisional && opening113.AllowsProductionSearch && !opening113.RuntimeAccepted &&
             opening113.SemanticProfileId == RngSemanticProfileId.Modern113 &&
+            !opening113.IsReleaseSupported && opening113.RulesAdaptedThroughVersion == "0.113.1" &&
             opening113.SemanticProfileId != RuntimeVersionCompatibility.Resolve("0.111.0").SemanticProfileId,
             "0.113 uses its own opening rules while remaining provisional");
-        foreach (string futureVersion in new[] { "0.113.1", "0.113.9", "0.114.0", "1.0.0" })
+        foreach (var (target, origin, semantics) in new[]
+        {
+            ("0.111.1", "0.111.0", RngSemanticProfileId.Modern110),
+            ("0.113.1", "0.113.0", RngSemanticProfileId.Modern113)
+        })
+        {
+            var adapted = RuntimeVersionCompatibility.Resolve(target);
+            Check(adapted.IsReleaseSupported && adapted.RuntimeAccepted && !adapted.RequiresCompatibilityWarning &&
+                adapted.AllowsProductionSearch && adapted.DetectedVersion == target && adapted.ReferenceVersion == origin &&
+                adapted.RulesAdaptedThroughVersion == target && adapted.SemanticProfileId == semantics,
+                $"The release supports {target} and labels its inherited {origin} rules by the adapted patch");
+        }
+        var old111 = RuntimeVersionCompatibility.Resolve("0.111.0");
+        Check(old111.RuntimeAccepted && !old111.IsReleaseSupported && old111.RulesAdaptedThroughVersion == "0.111.1",
+            "An older accepted version retains its own status under the stable rule line");
+        var adapted114Example = RuntimeVersionCompatibility.AdaptedRelease(opening113 with { RulesAdaptedThroughVersion = "0.114.0" });
+        Check(adapted114Example.IsReleaseSupported && adapted114Example.DetectedVersion == "0.114.0" &&
+            adapted114Example.RulesAdaptedThroughVersion == "0.114.0" && adapted114Example.ReferenceVersion == "0.113.0" &&
+            adapted114Example.SemanticProfileId == RngSemanticProfileId.Modern113,
+            "A future release can explicitly adapt the existing 113 implementation to 114 without relabeling its origin");
+        Check(!RuntimeVersionCompatibility.Resolve("unknown").IsReleaseSupported &&
+            RuntimeVersionCompatibility.Resolve("0.107.1").RulesAdaptedThroughVersion == string.Empty,
+            "An undetected or archived version is never labeled as an active adapted rule set");
+        foreach (string futureVersion in new[] { "0.113.9", "0.114.0", "1.0.0" })
         {
             var future = RuntimeVersionCompatibility.Resolve(futureVersion);
             Check(future.IsProvisional && future.AllowsProductionSearch && !future.RuntimeAccepted &&
                 future.SupportKind == RuntimeVersionSupportKind.LatestKnownFallback &&
                 future.GameVersionIdentity.ExactVersion == futureVersion &&
                 future.ReferenceVersion == RuntimeVersionCompatibility.LatestKnownProfileVersion &&
+                !future.IsReleaseSupported && future.RulesAdaptedThroughVersion == "0.113.1" &&
                 future.SemanticProfileId == opening113.SemanticProfileId &&
                 RuntimeProfilePolicies.UsesChildStreamShuffle(future.SemanticProfileId),
                 $"Unknown later version {futureVersion} inherits the latest known rules without claiming validation");
         }
         Check(resolution.SemanticProfileId == RngSemanticProfileId.Modern110 &&
+            resolution.RulesAdaptedThroughVersion == "0.111.1" &&
             resolution.ReferenceVersion == RuntimeVersionCompatibility.Beta111Version,
             "An unknown version before the 0.113 rule change retains the earlier rules");
         Check(Base34SeedEnumerator.ZeroSeed(Beta111Profile.Instance) == "000000000000" &&

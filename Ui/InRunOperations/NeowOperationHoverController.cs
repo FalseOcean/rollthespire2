@@ -78,6 +78,7 @@ internal sealed partial class NeowOperationHoverController : Control
     private CancellationTokenSource? _cancellation;
     private Task<OperationPreview>? _work;
     private NeowOperationOverlay? _view;
+    private OperationPreview? _preparedPreview;
     private ulong? _viewLayoutFrame;
     private readonly OperationCardDisplayReuse _cardDisplays = new();
     private double _poll;
@@ -258,32 +259,19 @@ internal sealed partial class NeowOperationHoverController : Control
                     if (_request?.Kind == Kind.CardTarget) LogTiming("empty");
                     return;
                 }
-                long checking = Stopwatch.GetTimestamp();
-                bool fresh = _request?.Kind == Kind.ModOperation
-                    ? ModOperationObservationStamp() == _stamp
-                    : _directTransformSelector != null
-                    ? PredictorOperationCapture.DirectTransformObservationStamp(_snapshot!, _run!, _directTransformSelector) == _stamp
-                    : _heldRelicObservation is { } heldRelic
-                    ? PredictorLiveRunCapture.HeldRelicObservationStamp(_run!, heldRelic) == _stamp
-                    : _potionObservation is { } potion
-                    ? PredictorOperationPotionTargetCapture.ObservationStamp(_run!, potion.Context.Operation!.PlayerId, potion.Source) == _stamp
-                    : _snapshot != null && PredictorOperationCapture.IsCurrent(_snapshot, _run!, _version, NGame.Instance, _timing.Publication);
-                _timing.PublishCaptureMs = Elapsed(checking);
-                if (!fresh) { QueueRefresh(); return; }
-                // Every published result has just checked its dynamic inputs.
-                // Do not observe them a second time in this same frame.
-                _poll = .5;
-                if (_request?.Kind == Kind.CardTarget) RuntimeLog.Info("operationCardHover=true;stage=publication;visibleContent=" +
-                    NeowOperationOverlay.HasVisibleContent(preview) + ";paths=" + preview.Branches.Sum(branch => branch.PathsExamined) + ";faults=" + preview.Faults.Length);
-                if (NeowOperationOverlay.HasVisibleContent(preview))
-                {
-                    long rendering = Stopwatch.GetTimestamp();
-                    PresentPreview(preview);
-                    _timing.RenderMs = Elapsed(rendering);
-                    long placement = Stopwatch.GetTimestamp();
-                    PositionView(); _timing.PlacementMs = Elapsed(placement);
-                }
-                if (_request?.Kind == Kind.CardTarget) LogTiming("published");
+                long rendering = Stopwatch.GetTimestamp();
+                PresentPreview(preview);
+                _timing.RenderMs = Elapsed(rendering);
+                _preparedPreview = preview;
+                if (!_view!.HasPendingCardFaces) PublishPreparedView();
+                return;
+            }
+            if (_view is { HasPendingCardFaces: true } pending)
+            {
+                long rendering = Stopwatch.GetTimestamp();
+                pending.BuildCardFaceBatch();
+                _timing.RenderMs += Elapsed(rendering);
+                if (!pending.HasPendingCardFaces) PublishPreparedView();
                 return;
             }
             // A pending worker cannot publish without the check above. Reading
@@ -311,6 +299,35 @@ internal sealed partial class NeowOperationHoverController : Control
             RuntimeLog.Fault("operationUiFailed=true;stage=main-thread-capture-or-publication;source=" + _request?.Source, error);
             Clear();
         }
+    }
+
+    private void PublishPreparedView()
+    {
+        // Faces can take several frames to prepare. Validate the actual inputs
+        // at publication, even when every displayed face was reused.
+        long checking = Stopwatch.GetTimestamp();
+        bool fresh = _request?.Kind == Kind.ModOperation
+            ? ModOperationObservationStamp() == _stamp
+            : _directTransformSelector != null
+            ? PredictorOperationCapture.DirectTransformObservationStamp(_snapshot!, _run!, _directTransformSelector) == _stamp
+            : _heldRelicObservation is { } heldRelic
+            ? PredictorLiveRunCapture.HeldRelicObservationStamp(_run!, heldRelic) == _stamp
+            : _potionObservation is { } potion
+            ? PredictorOperationPotionTargetCapture.ObservationStamp(_run!, potion.Context.Operation!.PlayerId, potion.Source) == _stamp
+            : _snapshot != null && (_request?.Kind == Kind.CardTarget && _owner is NCardHolder holder &&
+                PredictorOperationCapture.TransformSelector(holder) != null
+                ? PredictorOperationCapture.IsCurrentSelection(_snapshot, _run!, _version, NGame.Instance, _timing.Publication)
+                : PredictorOperationCapture.IsCurrent(_snapshot, _run!, _version, NGame.Instance, _timing.Publication));
+        _timing.PublishCaptureMs = Elapsed(checking);
+        if (!fresh) { QueueRefresh(); return; }
+        if (_request?.Kind == Kind.CardTarget && _preparedPreview is { } preview)
+            RuntimeLog.Info("operationCardHover=true;stage=publication;visibleContent=true;paths=" +
+                preview.Branches.Sum(branch => branch.PathsExamined) + ";faults=" + preview.Faults.Length);
+        _preparedPreview = null;
+        _poll = .5;
+        long placement = Stopwatch.GetTimestamp();
+        PositionView(); _timing.PlacementMs = Elapsed(placement);
+        if (_request?.Kind == Kind.CardTarget) LogTiming("published");
     }
 
     private void BeginPrediction()
@@ -429,7 +446,9 @@ internal sealed partial class NeowOperationHoverController : Control
         ";nativeCardCount=" + (_view?.NativeCardCount ?? 0) +
         ";nativeCardReused=" + (_view?.NativeCardReuseCount ?? 0) +
         ";pollStampMs=" + _timing.PollObservationMs.ToString("F3", System.Globalization.CultureInfo.InvariantCulture) +
-        ";publicationValidation=" + (_directTransformSelector != null ? "DirectAstrolabeDynamicStamp" : "FullCapture") +
+        ";publicationValidation=" + (_directTransformSelector != null ? "DirectAstrolabeDynamicStamp" :
+            _timing.Publication.SelectionCatalogReuses > 0 ? "RecheckedSelectionCatalog" :
+            _timing.Publication.SelectionCatalogDigestReuses > 0 ? "RecheckedSelectionDigest" : "FullCapture") +
         ";pollCount=" + _timing.PollCount);
 
     private static string CapturePhases(string prefix, PredictorOperationCapture.CaptureTiming timing) =>
@@ -454,7 +473,7 @@ internal sealed partial class NeowOperationHoverController : Control
 
     private void PositionView()
     {
-        if (_view == null || _owner == null) return;
+        if (_view == null || _owner == null || _view.HasPendingCardFaces) return;
         var viewport = GetViewportRect();
         // Card and merchant holders are centered on their visible hitbox;
         // their nominal root rectangle is not the region the player operates.
@@ -512,6 +531,7 @@ internal sealed partial class NeowOperationHoverController : Control
     private void HideView()
     {
         RestoreNativeTip();
+        _preparedPreview = null;
         _viewLayoutFrame = null;
         if (_view == null) return;
         if (IsInstanceValid(_view)) { _view.Hide(); _view.ReleaseCardDisplays(); RemoveChild(_view); _view.QueueFree(); }
@@ -520,7 +540,8 @@ internal sealed partial class NeowOperationHoverController : Control
     private void PresentPreview(OperationPreview preview)
     {
         HideView();
-        _view = new() { Modulate = new Color(1, 1, 1, 0) }; _view.UseCardDisplays(_cardDisplays);
+        _view = new() { Modulate = new Color(1, 1, 1, 0), StageCardFaces = _request != null };
+        _view.UseCardDisplays(_cardDisplays);
         if (_request?.Kind == Kind.HeldRelic && _owner is NRelicInventoryHolder { Relic.Model: { } held })
             preview = preview with { Heading = held.Title.GetFormattedText() };
         AddChild(_view); _view.SetPreview(preview);

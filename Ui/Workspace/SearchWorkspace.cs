@@ -40,8 +40,8 @@ internal sealed partial class SearchWorkspace
     private bool _cursorDirty;
     private double _workspaceDirtyAge;
     private double _cursorDirtyAge;
-    internal bool HasPendingWorkspaceCommit => (_workspaceDirty || _cursorDirty) && !_unreadableDocuments.Contains("search_workspace.json");
-    internal bool HasUnsavedSearchState => _workspaceDirty && _documentFailures.ContainsKey("search_workspace.json");
+    internal bool HasPendingWorkspaceCommit => (_workspaceDirty || _cursorDirty) && !_unreadableDocuments.Contains(WorkspaceFileName);
+    internal bool HasUnsavedSearchState => _workspaceDirty && _documentFailures.ContainsKey(WorkspaceFileName);
 
     public SearchWorkspace(string userDataDirectory, bool initializeSearchCursor = true)
     {
@@ -54,7 +54,7 @@ internal sealed partial class SearchWorkspace
         _json.Converters.Add(new ModelKeyJsonConverter());
         _presets = new SearchPresetCatalog(_directory);
         _preferences = Load<UserPreferencesDocument>("user_preferences.json") ?? new UserPreferencesDocument();
-        _workspace = Load<SearchWorkspaceDocument>("search_workspace.json") ?? new SearchWorkspaceDocument();
+        _workspace = Load<SearchWorkspaceDocument>(WorkspaceFileName) ?? new SearchWorkspaceDocument();
         _predictorContext = Load<PredictorContextDocument>("predictor_context.json") ?? new PredictorContextDocument();
         _cursor = Load<SearchCursorDocument>("search_cursor.json") ?? new SearchCursorDocument();
         _environment = Load<SearchEnvironmentSignature>("search_environment.json") ?? new SearchEnvironmentSignature();
@@ -131,6 +131,7 @@ internal sealed partial class SearchWorkspace
             CommittedCursor = _workspace.CommittedCursor, AuxiliaryIssues = _workspace.AuxiliaryIssues,
             QueryFingerprint = queryFingerprint ?? string.Empty, QueryHistory = histories,
             ResultBatchId = batchId, ResultsStartedAtUtc = started,
+            LatestSearchFeedback = _workspace.LatestSearchFeedback,
             ResultDraft = savedDraft, ResultContext = savedContext, ResultsSkipExactValidation = skipExactValidation
         };
         ProjectActiveHistory(workspace, history, newExecution: true);
@@ -282,6 +283,7 @@ internal sealed partial class SearchWorkspace
                 ResultBatchId = _workspace.ResultBatchId, ResultsStartedAtUtc = _workspace.ResultsStartedAtUtc,
                 ResultDraft = _workspace.ResultDraft, ResultContext = _workspace.ResultContext,
                 ResultsSkipExactValidation = _workspace.ResultsSkipExactValidation, ResultProgress = _workspace.ResultProgress,
+                LatestSearchFeedback = _workspace.LatestSearchFeedback,
                 QueryHistory = _workspace.QueryHistory, ActiveHistoryId = _workspace.ActiveHistoryId,
                 LegacyPresetQueryKeys = _workspace.LegacyPresetQueryKeys,
                 AuxiliaryIssues = _workspace.AuxiliaryIssues, LegacyQueryAliases = _workspace.LegacyQueryAliases, CommittedCursor = _workspace.CommittedCursor,
@@ -345,7 +347,20 @@ internal sealed partial class SearchWorkspace
             _workspace.CommittedCursor = CopyCursor(_cursor);
             MarkWorkspaceDirty();
         }
-        FlushDocument(ref _workspaceDirty, ref _workspaceDirtyAge, "search_workspace.json", _workspace);
+        if (!_workspaceDirty) return;
+        // The successful checkpoint itself must be safe to reopen. Keep the
+        // notices live until its atomic replacement actually succeeds.
+        var checkpoint = _workspace.ForCheckpoint(IsWorkspaceWriteIssue);
+        if (WriteNow(WorkspaceFileName, checkpoint))
+        {
+            if (!ReferenceEquals(checkpoint, _workspace))
+            {
+                ResolvePresentationFailure(WorkspaceWriteStage);
+                ResolvePresentationFailure(WorkspacePersistenceStage, IsWorkspaceWriteIssue);
+            }
+            _workspaceDirty = false;
+        }
+        _workspaceDirtyAge = 0d;
     }
     private static SearchCursorDocument CopyCursor(SearchCursorDocument cursor) => new()
     { Initialized = cursor.Initialized, PersistentOrigin = cursor.PersistentOrigin,
@@ -398,6 +413,7 @@ internal sealed partial class SearchWorkspace
         _workspace.AuxiliaryIssues ??= [];
         foreach (string detail in _auxiliaryFailures)
             if (!_workspace.AuxiliaryIssues.Contains(detail, StringComparer.Ordinal)) _workspace.AuxiliaryIssues.Add(detail);
+        if (_workspace.AuxiliaryIssues.Exists(IsWorkspaceWriteIssue)) MarkWorkspaceDirty();
         NormalizePredictorContext();
         // Pre-cutover SearchDraft embedded run/session controls. They are deliberately
         // no longer semantic draft state. Existing persistent cursor and runtime settings

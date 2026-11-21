@@ -93,7 +93,7 @@ internal sealed partial class ModernCapsuleRelicPlan
             }
             if (!observesRoute) return null;
         }
-        if (maximumDraws == 0 || !RelicFamilyPlanCompiler.TryCompilePool(request, out var pool, out var dense, out _, out _) ||
+        if (maximumDraws == 0 || !RelicFamilyPlanCompiler.TryCompilePool(request, out var pool, out var dense, out _, out _, requireOrdinaryLanes: true) ||
             !pool.UsesChildShuffle) return null;
 
         // Compare the raw bucket sources also used by Production Exact. Solo

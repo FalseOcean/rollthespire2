@@ -19,6 +19,7 @@ internal sealed class TransformationAggregateGpuExecutor : IDisposable
     private readonly int _owner = System.Environment.CurrentManagedThreadId;
     private bool _disposed;
     private readonly bool _privateInput, _privateOutput;
+    private readonly bool _ancientFixedPool;
     private readonly int _seedsPerInvocation;
     private readonly bool _tracePrivate = EwPhysicalExperiment.Mode.Length != 0 || PrivateOrdinalSelection.IsRequested || NwaePhysicalExperiment.Mode.Length != 0;
     internal int Capacity { get; }
@@ -32,6 +33,7 @@ internal sealed class TransformationAggregateGpuExecutor : IDisposable
         if (plan.NumericalVariant == GpuNumericalVariant.IntegerRne && (privateInput is not null || privateOutput is not null))
             throw new InvalidOperationException("T.IntegerRne.PublicTransportOnly");
         _privateInput = privateInput is not null; _privateOutput = privateOutput is not null;
+        _ancientFixedPool = plan.AncientFixedPool;
         if (_privateInput && ReferenceEquals(privateInput, privateOutput)) throw new ArgumentException("T.PrivateBuffersAlias");
         _rd = rd; Capacity = plan.Capacity; NumericalVariant = plan.NumericalVariant; _seedsPerInvocation=plan.SeedsPerInvocation; var watch = Stopwatch.StartNew();
         // The full-target 16m window already uses 128 MiB for public ordinals.
@@ -105,8 +107,11 @@ internal sealed class TransformationAggregateGpuExecutor : IDisposable
         var watch = Stopwatch.StartNew(); var survivors = new List<ulong>(); int dispatches = 0, groups = 0; long bytes = 0; double read = 0;
         // One table owns the complete logical batch, including every slot's
         // batch.v[6] offset. It is immutable until all these submissions drain.
-        // Compact/private input always hashes its actual ABI1 ordinal directly.
-        if (_prefixHashTable.IsValid && input.IsDense && !_privateInput && inputCount > 0)
+        // The fixed-pool body indexes this table by the actual batch-local ordinal,
+        // including sparse and resident inputs. Oversized batches use the full codec.
+        bool ancientPrefix = _ancientFixedPool && input.Batch.BatchCandidateCount <= NeowPrefixHashCache.MaxCandidateCount;
+        bool usesPrefix = _ancientFixedPool ? ancientPrefix : input.IsDense && !_privateInput;
+        if (_prefixHashTable.IsValid && usesPrefix && inputCount > 0)
             FamilyGpuComputeUtility.Update(_rd, _prefixHashTable,
                 NeowPrefixHashCache.BuildTable(input.Batch.BatchBase, input.Batch.BatchCandidateCount), "T.PrefixHash");
         double submitSync = 0, widen = 0;
@@ -122,7 +127,7 @@ internal sealed class TransformationAggregateGpuExecutor : IDisposable
                 int windowOffset=offset+slot*Capacity,count=Math.Min(Capacity,inputCount-windowOffset);
                 FamilyGpuComputeUtility.Update(_rd, _batch[slot], [(uint)input.Batch.BatchBase,(uint)(input.Batch.BatchBase>>32),
                     (uint)input.Batch.BatchCandidateCount,(uint)count,input.IsDense && !_privateInput?0u:1u,
-                    (uint)(_privateOutput ? PrivateOrdinalBuffer.Capacity : Capacity),(uint)windowOffset,0], "T.TransformationAggregate.Batch");
+                    (uint)(_privateOutput ? PrivateOrdinalBuffer.Capacity : Capacity),(uint)windowOffset,ancientPrefix ? 1u : 0u], "T.TransformationAggregate.Batch");
                 if (!_privateOutput) FamilyGpuComputeUtility.Update(_rd, _header[slot], Header(), "T.TransformationAggregate.Header");
                 if(!input.IsDense && !_privateInput)
                     FamilyGpuComputeUtility.UpdateBytes(_rd,_input[slot],FamilyGpuComputeUtility.PackAbi1UInt32(input,windowOffset,count),"T.TransformationAggregate.Input");

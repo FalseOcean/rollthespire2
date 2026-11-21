@@ -74,7 +74,7 @@ internal sealed partial class EventSearchEditor : Control
         public ModelKey CrystalCharacter;
         public CrystalSphereSearchRelics CrystalRelics;
         public HashSet<string> InactiveResultEvents { get; } = new(StringComparer.Ordinal);
-        public IReadOnlyList<ModelKey> TransformCards = [];
+        public Func<int, IReadOnlyList<ModelKey>> TransformCandidates = _ => [];
         public IReadOnlyDictionary<ModelKey, CardPickerCandidateMetadata> CardPickerMetadata =
             new Dictionary<ModelKey, CardPickerCandidateMetadata>(ModelKeyComparer.Instance);
         public IReadOnlySet<ModelKey> MultiplayerOnlyCards = new HashSet<ModelKey>(ModelKeyComparer.Instance);
@@ -131,44 +131,47 @@ internal sealed partial class EventSearchEditor : Control
         if (!drafts.TryGetValue(seat, out SeatDraft? draft)) drafts[seat] = draft = new SeatDraft();
         _draft = draft;
         partyAuthority = sharedContext?.Authority ?? partyAuthority;
-        string unlockKey = sharedContext?.Key ?? (players == 1
-            ? System.Text.Json.JsonSerializer.Serialize(SaveManager.Instance.GenerateUnlockStateFromProgress().ToSerializable())
-            : unlocks is null ? "unread" : System.Text.Json.JsonSerializer.Serialize(unlocks));
+        var seatUnlocks = sharedContext?.Unlocks ?? (players == 1
+            ? SaveManager.Instance.GenerateUnlockStateFromProgress().ToSerializable()
+            : unlocks);
+        string unlockKey = sharedContext?.Key ?? (seatUnlocks is null ? "unread" : System.Text.Json.JsonSerializer.Serialize(seatUnlocks));
         string context = $"{character}/{ascension}/{players}/{seat}/{unlockKey}/{partyAuthority?.WorldSnapshotFingerprint}";
         if (_draft.Context != context)
         {
             _draft.Context = context;
             try
             {
-                if (players > 1 && unlocks is null)
+                if (seatUnlocks is null)
                     _draft.Catalog = EventSequenceSearchUiCatalog.Empty(
                         _runtime.Profile.ProfileId, "event-template-unlocks-unread");
                 else
                 {
-                    UnlockState resolved = sharedContext is not null ? UnlockState.FromSerializable(sharedContext.Unlocks) : players == 1
-                        ? SaveManager.Instance.GenerateUnlockStateFromProgress()
-                        : UnlockState.FromSerializable(unlocks!);
-                    string seed = RolltheSpire2.Compatibility.ProfileSeedGenerator.CreateProbeSeed(_runtime.Profile);
                     var world = partyAuthority?.WorldAuthority;
                     if (partyAuthority is null)
                     {
-                        var effects = ReflectionNeowEffectSnapshotAdapter.Capture(_runtime.Profile, seed,
-                            CharacterIdentity.FromKey(character), ascension, players, seat, _runtime.Profile.ProfileId,
-                            _runtime.Detection.DisplayVersion, RolltheSpire2.Compatibility.RuntimeProfilePolicies.EffectCatalogRules(_runtime.Profile.ProfileId), resolved);
+                        string seed = ProfileSeedGenerator.CreateProbeSeed(_runtime.Profile);
                         world = ReflectionNeowEffectSnapshotAdapter.CaptureWorld(_runtime.Profile, seed,
                             CharacterIdentity.FromKey(character), ascension, players, seat, noRunModifiers: true,
-                            effects.EffectAuthority, gameVersion: _runtime.Detection.DisplayVersion);
+                            effects: null, gameVersion: _runtime.Detection.DisplayVersion, explicitUnlockState: UnlockState.FromSerializable(seatUnlocks));
                     }
                     _draft.Catalog = EventSequenceSearchUiCatalog.FromAuthority(_runtime.Profile.ProfileId, world);
                 }
-                CaptureResultPools(character, ascension, players, partyAuthority,
-                    sharedContext is not null ? UnlockState.FromSerializable(sharedContext.Unlocks) : unlocks is null ? null : UnlockState.FromSerializable(unlocks));
             }
             catch (Exception exception)
             {
                 _draft.Catalog = EventSequenceSearchUiCatalog.Empty(
                     _runtime.Profile.ProfileId, "event-template-catalog-unavailable");
                 Infrastructure.Diagnostics.RuntimeIssueLedger.Current.Record(exception, "EditorCatalogCaptureFailed", "EventEditorPrototype", "PickerCatalog", "issues.capture_failed", Infrastructure.Diagnostics.RuntimeIssueSeverity.Warning);
+            }
+            try
+            {
+                CaptureResultPools(character, ascension, players, seat, partyAuthority,
+                    seatUnlocks is null ? null : UnlockState.FromSerializable(seatUnlocks));
+            }
+            catch (Exception exception)
+            {
+                Infrastructure.Diagnostics.RuntimeIssueLedger.Current.Record(exception, "EditorCatalogCaptureFailed", "EventEditorPrototype",
+                    "ResultPools", "issues.capture_failed", Infrastructure.Diagnostics.RuntimeIssueSeverity.Warning);
             }
         }
         if (render) Render();

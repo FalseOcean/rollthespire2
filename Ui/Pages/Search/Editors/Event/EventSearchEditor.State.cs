@@ -82,7 +82,7 @@ internal sealed partial class EventSearchEditor
     internal ObjectPickerPanel? Picker { get; set; }
     internal bool GuideOpen { get => _guideExpanded; set => _guideExpanded = value; }
     internal bool AdvancedOpen { get => _draft.QueueAdvanced; set => SetQueueAdvanced(value); }
-    internal IReadOnlyList<ModelKey> TransformationCardCandidates => _draft.TransformCards;
+    internal IReadOnlyList<ModelKey> TransformationCardCandidates => _draft.TransformCandidates(1);
     internal IReadOnlyDictionary<ModelKey, CardPickerCandidateMetadata> TransformationCardPickerMetadata => _draft.CardPickerMetadata;
     internal IReadOnlySet<ModelKey> TransformationMultiplayerOnlyCards => _draft.MultiplayerOnlyCards;
 

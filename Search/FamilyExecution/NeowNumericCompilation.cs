@@ -293,6 +293,7 @@ internal static class NeowNumericCompilation
         bool needsBones)
     {
         bool baseIdentityExact = Beta110FastRelicCatalog.IsAbiCompatible &&
+                                 context.Authority.VanillaNeowCatalogExact == true &&
                                  RuntimeProfilePolicies.UsesBeta110SharedAlgorithms(context.ProfileId) &&
                                  context.Authority.ProfileId == context.ProfileId &&
                                  context.Authority.IsProductionBetaProjectionAuthorityExact &&
@@ -325,7 +326,7 @@ internal static class NeowNumericCompilation
         bool bonesExact = !needsBones;
         if (needsBones)
         {
-            bonesExact = effects?.HasExactBonesPools == true;
+            bonesExact = effects?.HasExactBonesOffer == true;
             if (bonesExact)
             {
                 foreach (ModelKey key in effects!.BonesEligibleRelics!)

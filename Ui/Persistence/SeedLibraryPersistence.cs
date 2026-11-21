@@ -42,6 +42,7 @@ internal sealed record SeedLibraryResultProvenance(bool IsUnverified, bool IsUnf
     SearchDisposition ValidationDisposition, string ValidationIssue, RequestSupportAssessment? SupportScope,
     string SourceQueryKey, string SearchRecordId)
 {
+    public SearchReplayEstimate? ReplayEstimate { get; init; }
     public string SourceEnvironmentFingerprint { get; init; } = "";
     public string SourceSeed { get; init; } = "";
     public string SourceContextIdentity { get; init; } = "";
@@ -57,13 +58,13 @@ internal sealed record SeedLibraryResultProvenance(bool IsUnverified, bool IsUnf
     internal static SeedLibraryResultProvenance From(PersistedSearchResult result, SeedQueryAssociation? origin) => new(
         result.IsUnverified, result.IsUnfiltered, result.EffectiveValidationDisposition, result.ValidationIssue,
         result.SupportScope, origin?.QueryKey ?? result.QueryFingerprint, origin?.SearchRecordId ?? "")
-        { MapSearch = result.MapSearch, SourceSeed = result.Seed, SourceEnvironmentFingerprint = origin?.EnvironmentFingerprint ?? "",
+        { ReplayEstimate = result.ReplayEstimate, MapSearch = result.MapSearch, SourceSeed = result.Seed, SourceEnvironmentFingerprint = origin?.EnvironmentFingerprint ?? "",
             SourceContextIdentity = result.Context is { } context ? SeedLibraryStore.ContextIdentity(result.Seed, context) : "",
             TreasureSources = result.TreasureSources.ToArray(), MapRouteWitnesses = result.MapRouteWitnesses.ToArray() };
     internal static SeedLibraryResultProvenance From(SearchCandidate result, SeedQueryAssociation? origin) => new(
         result.IsUnverified, result.IsUnfiltered, result.ValidationDisposition, result.ValidationIssue,
         result.SupportScope, origin?.QueryKey ?? "", origin?.SearchRecordId ?? "")
-        { MapSearch = result.MapSearch, SourceSeed = result.Seed, SourceEnvironmentFingerprint = origin?.EnvironmentFingerprint ?? "",
+        { ReplayEstimate = result.Evaluation.ReplayEstimate, MapSearch = result.MapSearch, SourceSeed = result.Seed, SourceEnvironmentFingerprint = origin?.EnvironmentFingerprint ?? "",
             TreasureSources = SearchResultProjection.TreasureSources(result), MapRouteWitnesses = MapRouteWitnessProjection.FromCandidate(result) };
     internal SeedLibraryResultProvenance ForContext(string seed, SeedLibraryContext context) => this with
     {

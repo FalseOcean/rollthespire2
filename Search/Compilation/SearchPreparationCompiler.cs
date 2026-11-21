@@ -39,7 +39,11 @@ public static class SearchPreparationCompiler
         { IncludeDiagnostics = parent.IncludeDiagnostics, ExactOptions = ShionExactTrialOptions.Off, VariantOpening = PrepareVariantOpening(player) };
     }
 
-    public static SearchPreparationResult Compile(CompiledSearch compiled, SearchRunOptions runOptions)
+    public static SearchPreparationResult Compile(CompiledSearch compiled, SearchRunOptions runOptions) =>
+        Compile(compiled, runOptions, feasibilityOfCompiled: null);
+
+    internal static SearchPreparationResult Compile(CompiledSearch compiled, SearchRunOptions runOptions,
+        SearchFeasibilityResult? feasibilityOfCompiled)
     {
         ArgumentNullException.ThrowIfNull(compiled);
         ArgumentNullException.ThrowIfNull(runOptions);
@@ -76,9 +80,9 @@ public static class SearchPreparationCompiler
         }
         else
         {
-            var runnable = SearchRuleRemainders.For(compiled).Compiled;
-            SearchFeasibilityResult feasibility = SearchFeasibilityAnalyzer.Analyze(
-                compiled.Status == QueryNormalizationStatus.Impossible ? compiled : runnable);
+            var runnable = compiled.Status == QueryNormalizationStatus.Impossible ? compiled : SearchRuleRemainders.For(compiled).Compiled;
+            SearchFeasibilityResult feasibility = ReferenceEquals(runnable, compiled) && feasibilityOfCompiled is not null
+                ? feasibilityOfCompiled : SearchFeasibilityAnalyzer.Analyze(runnable);
             if (feasibility.IsImpossible)
                 return Reject(SearchDisposition.NoMatch, "SearchImpossible:" + feasibility.Proof!.ReasonCode + ":" + feasibility.Proof.Diagnostic);
         }

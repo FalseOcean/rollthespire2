@@ -229,7 +229,8 @@ internal static class RelicFamilyPlanCompiler
         out RelicFamilyPool pool,
         out Dictionary<ModelKey, ushort> denseByKey,
         out Dictionary<ushort, ushort>[] lanePositions,
-        out string issue)
+        out string issue,
+        bool requireOrdinaryLanes = false)
     {
         denseByKey = new Dictionary<ModelKey, ushort>(ModelKeyComparer.Instance);
         lanePositions = Enumerable.Range(0, LaneCount).Select(_ => new Dictionary<ushort, ushort>()).ToArray();
@@ -243,14 +244,18 @@ internal static class RelicFamilyPlanCompiler
         bool sourceUsable = world.Completeness == SnapshotCompleteness.Complete &&
             world.SourceAuthority is SourceAuthority.OfficialRuntimeExact or
                 SourceAuthority.AuditedStaticExact or SourceAuthority.ModdedRuntimeBestEffort;
+        // Modern113 can capture both bags exactly even when an unrelated part of
+        // the world (such as ordinary events) is missing. The bag checks below
+        // still bind the shuffle, bucket order and shop eligibility to this run.
+        sourceUsable |= generation.RngSemantics == RngSemanticProfileId.Modern113 &&
+            world.SourceAuthority == SourceAuthority.Incomplete && generation.NoUnknownHooksOrModifiers;
         bool singleplayer = generation.ModeFactsExact && generation.GameMode == WorldGameMode.Singleplayer &&
                             generation.IsMultiplayerExact && !generation.IsMultiplayer && generation.PlayerCount == 1;
         bool seedBranch = generation.RunSeedHashKind == Beta109RunSeedHashKind.ModernXxHash64 &&
                           generation.OldSeedBranchStatus == Beta109OldSeedBranchStatus.NewSeedHashed;
-        bool exactInputs = generation.RelicInitializationExact && generation.SharedRelicPoolOrderExact &&
+        bool exactInputs = generation.InitialRelicReplayAssumption.Length == 0 && generation.RelicInitializationExact && generation.SharedRelicPoolOrderExact &&
                            generation.CharacterRelicPoolOrderExact && generation.RelicRarityAuthorityExact &&
-                           generation.RelicShopEligibilityAuthorityExact && generation.PlayerRelicPoolCompositionExact &&
-                           generation.SharedRelicBuckets.Count > 0 && generation.PlayerRelicBuckets.Count > 0 &&
+                           generation.PlayerRelicPoolCompositionExact &&
                            generation.SharedRelicBuckets.All(IsBucketExact) &&
                            generation.PlayerRelicBuckets.All(IsBucketExact);
         bool party = generation.HasExactPartyRelicBags && generation.PlayerCount <= 4 &&
@@ -270,7 +275,7 @@ internal static class RelicFamilyPlanCompiler
             : []).ToArray();
         Beta109RelicBucketSnapshot[] buckets = prefixBuckets.Concat(generation.PlayerRelicBuckets).ToArray();
         int totalEntries = buckets.Sum(bucket => bucket.OrderedEntries.Count);
-        int maxLength = buckets.Max(bucket => bucket.OrderedEntries.Count);
+        int maxLength = buckets.Select(bucket => bucket.OrderedEntries.Count).DefaultIfEmpty().Max();
         if (buckets.Length > MaximumBuckets || totalEntries > MaximumEntries || maxLength > MaximumBucketLength)
             return Missing("RelicFamilyPoolCapacityExceeded", out pool, out issue);
 
@@ -317,10 +322,16 @@ internal static class RelicFamilyPlanCompiler
         {
             int matchingPlayerBuckets = Enumerable.Range(0, buckets.Length)
                 .Count(index => scopes[index] == 1 && LaneIndex(kinds[index]) == lane);
-            if (matchingPlayerBuckets != 1)
+            // Capsule callers use all three ordinary lanes for rolled rarity and fallback.
+            // Sequence filters read only the lanes named in their predicates.
+            if (matchingPlayerBuckets > 1 || (requireOrdinaryLanes && lane < 3 && matchingPlayerBuckets == 0))
                 return Missing(
                     matchingPlayerBuckets == 0 ? "RelicFamilyLaneMissing" : "RelicFamilyLaneAmbiguous",
                     out pool, out issue);
+            if (lane == 3 && (request.Evaluation.RelicSequenceConditions.Any(c => !c.IsEmpty && c.Lane == RelicSequenceKind.Shop) ||
+                request.Evaluation.RelicShopSequenceConditions.Any(c => !c.IsEmpty)) && generation.PlayerRelicBuckets.Any(b =>
+                LaneIndex(ParseBucketKind(b.BucketId)) == lane && !b.HasExactShopEligibility))
+                return Missing("MissingRelicShopLaneEligibility", out pool, out issue);
         }
 
         pool = new RelicFamilyPool(ids, flags, offsets, lengths, scopes, kinds, directions, maxLength)
@@ -355,7 +366,7 @@ internal static class RelicFamilyPlanCompiler
     }
 
     private static bool IsBucketExact(Beta109RelicBucketSnapshot bucket) =>
-        bucket.OrderExact && bucket.HasExactShopEligibility &&
+        bucket.OrderExact &&
         bucket.OrderedEntries.Count == bucket.OrderedRelics.Count &&
         bucket.OrderedEntries.Select(entry => entry.RelicKey).SequenceEqual(bucket.OrderedRelics);
 

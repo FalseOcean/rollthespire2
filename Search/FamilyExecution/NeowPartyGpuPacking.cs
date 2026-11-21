@@ -46,6 +46,6 @@ internal static class NeowPartyGpuPacking
         else source = source.Replace(entry, "bool accepted=true;\nfor(party_plan=0u;party_plan<" + plans.Length +
             "u;party_plan++) { if(!matches(root)) { accepted=false; break; } }\nif(accepted) append_ordinal(ordinal);", StringComparison.Ordinal);
         var hostMeta = (uint[])meta.Clone(); hostMeta[66] = 0;
-        return (packed with { Meta = hostMeta }, source);
+        return (packed with { Meta = hostMeta, DensePrefixRequested = plans[0].DensePrefixRequested }, source);
     }
 }

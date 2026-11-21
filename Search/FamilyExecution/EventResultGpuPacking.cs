@@ -106,8 +106,7 @@ internal static class EventResultGpuPacking
         var colors = new List<uint>();
         if (eventAuthority is { ColorfulPoolAuthorityExact: true } authority)
         {
-            foreach (ModelKey key in Beta111EventRules.ColorfulCandidates(authority.OwnerCharacterKey,
-                         authority.UnlockedCharacterCardPoolKeys, authority.RngSemantics))
+            foreach (ModelKey key in authority.ColorfulCandidates())
             {
                 colors.Add(checked((uint)IndexOf(colorOrder, key)));
             }

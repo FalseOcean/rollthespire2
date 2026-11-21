@@ -1,7 +1,9 @@
 using System.Runtime.CompilerServices;
 using Godot;
+using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Cards.Holders;
 using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
+using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.Runs;
 using RolltheSpire2.Core.PredictorRuntime;
 
@@ -47,10 +49,9 @@ internal static partial class PredictorOperationCapture
             }
             return previous.Snapshot;
         }
-        // For events/composite continuations only the immutable canonical
-        // upgrade definitions are reused. All dynamic inputs are captured.
         var snapshot = Capture(run, version, root, true, out observationStamp, timing,
-            previous?.Version == version ? previous.Snapshot : null);
+            previous?.Version == version ? previous.Snapshot : null,
+            selectionCatalog: run.CurrentRoom is EventRoom { LocalMutableEvent: not AncientEventModel });
         direct = TryDirectTransformObservation(snapshot, run, selector, out var stamp, timing);
         SelectionCaptures.Remove(selector);
         SelectionCaptures.Add(selector, new(snapshot, version, direct ? stamp : null));
@@ -58,4 +59,9 @@ internal static partial class PredictorOperationCapture
         if (timing != null) timing.AllocatedBytes = GC.GetAllocatedBytesForCurrentThread() - allocated;
         return snapshot;
     }
+
+    internal static bool IsCurrentSelection(PredictorOperationSnapshot snapshot, RunState run, string version,
+        Node? root, CaptureTiming timing) =>
+        Capture(run, version, root, false, out _, timing, snapshot,
+            selectionCatalog: snapshot.Scene is PredictorOperationEventScene).Fingerprint == snapshot.Fingerprint;
 }

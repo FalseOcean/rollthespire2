@@ -152,7 +152,7 @@ bool world_match(uint invocation,uint64_t root){
         if(!evaluate_predicate_range(act_meta_buffer.values[b+16u],act_meta_buffer.values[b+17u],first,INVALID_ID,1u))return false;
         if(!(plan_meta_buffer.values[12u]>=10u&&act==3u)&&!evaluate_predicate_range(act_meta_buffer.values[b+14u],act_meta_buffer.values[b+15u],first,INVALID_ID,1u))return false;
         if(!(act<maxAct||hasAncient||second))continue;
-        uint localCount=act_meta_buffer.values[b+20u],total=localCount+assignedCount[i];if(total==0u)return fault(16u);
+        uint localCount=act_meta_buffer.values[b+20u],total=localCount+assignedCount[i];if(total==0u){if(hasAncient)return true;continue;}
 #if RT2_W_SHARED_ANCIENT_IDS
         uint rank=next_int(total),ancient=rank<localCount?data.v[extra.v[x+6u]+rank]:sharedIds[assignedOffset[i]+rank-localCount];
         if(!evaluate_predicate_range(extra.v[x+7u],extra.v[x+8u],ancient,INVALID_ID,1u))return false;
@@ -180,5 +180,8 @@ void main(){
     if(ordinal>=batch.v[2]){fault(128u);return;}
     if(world_match(i,root_hash_for_ordinal(make_u64(batch.v[0],batch.v[1])+uint64_t(ordinal)))){
         uint p=atomicAdd(header.v[2],1u);if(p>=batch.v[5]){fault(256u);return;}output_ids.v[p]=ordinal;
+#ifdef RT2_W_SMALL_HEADER_CAPACITY
+        if(p<RT2_W_SMALL_HEADER_CAPACITY) header.v[8u+p]=ordinal;
+#endif
     }
 }

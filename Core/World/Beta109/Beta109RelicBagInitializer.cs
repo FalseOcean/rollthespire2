@@ -52,7 +52,7 @@ public static class Beta109RelicBagInitializer
                     .Select(entry => new Beta109RelicBucketEntrySnapshot(
                         entry.RelicKey,
                         entry.IsAllowedInShops,
-                        entry.ShopEligibilityExact))
+                        entry.ShopEligibilityExact) { UnmodeledRunEligibility = entry.UnmodeledRunEligibility })
                     .ToArray()
             })
             .ToArray();
@@ -69,4 +69,7 @@ public sealed record Beta109RelicSourceEntry(
     ModelKey RelicKey,
     string RarityCode,
     bool IsAllowedInShops = false,
-    bool ShopEligibilityExact = false);
+    bool ShopEligibilityExact = false)
+{
+    public bool UnmodeledRunEligibility { get; init; }
+}

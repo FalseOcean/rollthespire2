@@ -37,13 +37,16 @@ internal sealed partial class AnalysisPage
         _merchantProjectionReady = _eventProjectionReady = false;
     }
 
-    private Task<MapPrediction> GetOverviewMap(int act, ModelKey actKey, bool secondBoss, CancellationToken cancellation)
+    private Task<MapPrediction> GetOverviewMap(int act, ModelKey actKey, CancellationToken cancellation)
     {
         if (_overviewMaps.TryGetValue(act, out var cached) && !cached.IsFaulted && !cached.IsCanceled)
             return cached;
 
         var request = LastRequest!;
         string seed = LastFacts!.CanonicalSeed;
+        bool secondBoss = LastFacts.World?.SelectedActs is { Count: > 0 } selectedActs
+            ? request.Ascension >= 10 && act == selectedActs.Count
+            : _viewModel!.BossDomain.Items.Any(b => b.Act == act && b.Ordinal == 2);
         var task = Task.Run(() => Beta111MapPredictor.Predict(seed, request.Authority.ProfileId,
             actKey, act - 1, request.Ascension, request.PlayersCount, secondBoss, cancellation,
             request.Authority.VersionResolution.SemanticProfileId), cancellation);

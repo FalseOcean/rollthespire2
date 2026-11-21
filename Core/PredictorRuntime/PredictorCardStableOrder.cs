@@ -11,8 +11,12 @@ internal sealed record PredictorObservedCardSort(int UpgradeLevel, int? Permanen
 internal static class PredictorCardStableOrder
 {
     // The native StableShuffle sorts with List<T>.Sort before consuming RNG.
-    internal static void Sort(List<PredictorCard> cards, PredictorContext? context) =>
+    internal static void Sort(List<PredictorCard> cards, PredictorContext? context)
+    {
+        if (cards.Count > 1 && cards.FirstOrDefault(card => card.HasCustomStableComparison) is { } custom)
+            throw new NotSupportedException("PredictorCustomCardComparison:" + custom.Key);
         cards.Sort((left, right) => Compare(left, right, context));
+    }
 
     private static int Compare(PredictorCard left, PredictorCard right, PredictorContext? context)
     {

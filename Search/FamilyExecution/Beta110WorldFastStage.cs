@@ -316,12 +316,22 @@ internal static class Beta110WorldFastPlanCompiler
             return Beta110WorldFastPlan.Disabled("MissingModernWorldAuthority");
         }
 
+        // The dense prefix layout operates on unique references. Production Exact handles
+        // native Except semantics for repeated references without losing their initial weight.
+        if (generation.SharedAncientReferenceIds is { } ids && ids.Distinct().Count() != ids.Count)
+            return Beta110WorldFastPlan.Disabled("SharedAncientRepeatedReferences");
+        int lastRequestedAct = filter.BossFilters.Select(f => f.Act).Concat(filter.BossOrdinalFilters.Select(f => f.Act))
+            .Concat(filter.AncientIdentityFilters.Select(f => f.Act)).Concat(filter.AncientBranchConditions.Select(f => f.Act))
+            .Concat(filter.AncientOptionFilters.Select(f => f.Act)).Concat(filter.AncientSeaGlassTargetFilters.Select(f => f.Act))
+            .Concat(filter.EventSequenceConditions.Select(f => f.Act)).Concat(filter.EncounterQueues.Select(f => f.Act))
+            .Concat(branches.Select(b => b.Act)).DefaultIfEmpty(0).Max();
         bool exactFoundation =
             (SourceAuthorityRules.SupportsExactIdentity(world.SourceAuthority) || authority.UsesBestEffortModel) &&
             (world.Completeness == SnapshotCompleteness.Complete || authority.UsesBestEffortModel) &&
-            generation.HasExactWorldFastPlanInputs &&
+            generation.CanPrepareWorldFastThrough(lastRequestedAct) &&
             generation.CanReconstructSelectedActs &&
-            (generation.WorldGenerationHooksExact || authority.UsesBestEffortModel) &&
+            generation.WorldGenerationHooksExact &&
+            generation.InitialRelicReplayAssumption.Length == 0 &&
             generation.DirectSourceAudited &&
             (generation.IsVanilla || authority.UsesBestEffortModel) &&
             ((generation.GameMode == WorldGameMode.Singleplayer && !generation.IsMultiplayer && generation.PlayerCount == 1) ||
@@ -384,6 +394,8 @@ internal static class Beta110WorldFastPlanCompiler
             bool needEventMaterialization = hasEventRequest &&
                 filter.EventSequenceConditions.Any(condition => !condition.IsEmpty && condition.Act == act.Act);
             if (!needEventMaterialization) continue;
+            if (act.OrderedAncients.Count == 0)
+                return Beta110WorldFastPlan.Disabled("EventOpeningCursorNotGuaranteed");
             if (!EventPoolSequenceProjector.TryPrepare(
                     act.Act,
                     act.ActKey,
@@ -397,6 +409,8 @@ internal static class Beta110WorldFastPlanCompiler
             {
                 return Beta110WorldFastPlan.Disabled("EventStaticCandidateAuthority:" + issue);
             }
+            if (prepared.RemovedAfterShuffle != null)
+                return Beta110WorldFastPlan.Disabled("GeneratedRoomEventFilterRequiresExact");
             if (prepared.Candidates.Count > MaximumEventCandidates)
                 return Beta110WorldFastPlan.Disabled("EventCandidateCapacityExceeded");
             preparedEvents[act.ActKey] = prepared;
@@ -603,6 +617,10 @@ internal static class Beta110WorldFastPlanCompiler
             var encounterPredicates = family ? filter.EncounterQueues.Where(p => p.Act == act.Act)
                 .Select(p => new WorldFastEncounterPredicate(p.Kind, p.RangeMode, p.RangeValue, p.AllowedKeys.Select(Add).Distinct().ToArray(),
                     p.VariantKey is { } v && v != act.ActKey)).ToArray() : [];
+            // Empty bags still consume their fallback draws, but provide no queue entries.
+            // The compact encounter output indices assume a value was emitted for each requested slot.
+            if (encounterPredicates.Length > 0 && (weak.Length == 0 || regular.Length == 0 || elite.Length == 0))
+                return Beta110WorldFastPlan.Disabled("EncounterQueueHasEmptySource");
             bool needsDiscovery = act.ActKey.Entry == "OVERGROWTH" && (!generation.TestModeFactExact || generation.TestModeIsOff);
             int discovery = !needsDiscovery || world.EncounterNumberOfRuns > 0 ? 0 :
                 world.EncounterNumberOfRuns == 0 && profile == RuntimeProfileId.Beta111 && generation.TestModeFactExact &&
@@ -1013,8 +1031,11 @@ internal static class Beta110WorldFastStage
             bool needAncient = act.Act < plan.MaxRequiredAct || act.HasAncientPredicate || plan.RequiresSecondBoss;
             if (!needAncient) continue;
             int ancientPoolCount = act.Ancients.Length + assignedCounts[selectedIndex];
-            if (ancientPoolCount <= 0)
-                return Keep(WorldFastStageDiagnosticCode.WorldContinuationUnavailable);
+            if (ancientPoolCount == 0)
+            {
+                if (act.HasAncientPredicate) return Keep(WorldFastStageDiagnosticCode.WorldContinuationUnavailable);
+                continue;
+            }
             int ancientIndex = upFront.NextInt(ancientPoolCount);
             ancientDrawCalls++;
             ushort ancient = ancientIndex < act.Ancients.Length

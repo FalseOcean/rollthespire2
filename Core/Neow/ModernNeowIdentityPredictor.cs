@@ -50,8 +50,7 @@ internal static class ModernNeowIdentityPredictor
         }
         ulong eventSeed = profile.DeriveEventStreamSeed(rootSeed, authority.PlayerSlotIndex, "NEOW");
         var rng = new Xoshiro256StarStar(eventSeed);
-        ModernNeowIdentityPreparation preparation = ModernNeowIdentityRules.Prepare(
-            authority.PlayersCount, authority.AllCharacterCardPoolsUnlocked, authority.IsScrollBoxesAllowed);
+        ModernNeowIdentityPreparation preparation = authority.NeowPreparation;
         if (preparation.EligibleCurses.IsEmpty)
         {
             throw new InvalidOperationException("Modern Neow curse pool is empty after copied eligibility filtering.");

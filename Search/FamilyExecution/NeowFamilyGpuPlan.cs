@@ -47,7 +47,12 @@ internal sealed record NeowFamilyGpuPlan(uint[] Meta, uint[] PoolMeta, uint[] Ca
     internal const string LeafyStagedDenseRevision = "N.Neow.Gpu.LocalDonor.LeafyPreGate.DensePreBonesCarry8.CanonicalAbi1Ready.20260906.v1";
     internal bool UsesStagedDense => Meta[66] != 0;
     internal const string DirectFirstDrawRevision = ".DirectFirstDraw.20261119.v1";
+    internal const string DenseDirectPrefixRevision = ".DenseBatchPrefix34x4.20261120.v1";
     internal const string DirectFirstDrawVariable = "RT2_N_DIRECT_FIRST_DRAW";
+    internal bool DensePrefixRequested { get; init; } = !string.Equals(
+        Environment.GetEnvironmentVariable("RT2_N_DENSE_PREFIX_TABLE"), "off", StringComparison.OrdinalIgnoreCase);
+    internal bool UsePartyDensePrefix => DensePrefixRequested && IsMultiplayer && !UsesStagedDense &&
+        NumericalVariant == NeowGpuNumericalVariant.NativeFloat64;
     internal bool UseDirectFirstDraw => DirectFirstDrawRequested && TryCompileTerminalCurseGate(out _);
     private bool UsesOrdinarySoloMenuStage => !IsMultiplayer && UsesChildShuffle && !UsesStagedDense &&
         DirectNestedMode == 0 && !HasLocalResults && !UsesLeafyPreGate && ModernTransformGate is null &&
@@ -89,6 +94,12 @@ internal sealed record NeowFamilyGpuPlan(uint[] Meta, uint[] PoolMeta, uint[] Ca
         !HasAuthoredUpgrades && CapsuleNicheMetaOffset < 0 && ModernTransformGate is null;
     internal const string PairMaskRevision = ".UnorderedPairMask32.20261119.v1";
     internal bool UsesLeafyPreGate => Meta[70] != 0;
+    internal bool HasSingleKaleidoscopeWithLeafy { get; init; }
+    // Only staged Dense already established Leafy before reaching the pair checkpoint.
+    internal bool UseStagedLeafyKaleidoscope => UsesStagedDense && UsesLeafyPreGate && HasSingleKaleidoscopeWithLeafy &&
+        Meta[83] == 0 && !HasAuthoredUpgrades && CapsuleNicheMetaOffset < 0 &&
+        FixedPairLocalSourceMask == ((1L << Beta110FastRelicCatalog.LeafyPoultice) | (1L << Beta110FastRelicCatalog.Kaleidoscope));
+    internal const string StagedLeafyKaleidoscopeRevision = ".IndependentLeafyKaleidoscope.20261121.v1";
     // Stage 1 checkpoints the proven pair and Stage 3 runs the same pair_identity
     // before local replay. The modern joint transform gate reads only its own
     // Transformations prefix; it cannot replace or change either pickup source.

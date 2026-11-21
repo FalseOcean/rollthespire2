@@ -24,6 +24,7 @@ internal static class SeedPredictionDocumentFactory
         var choices = facts.Neow?.Choices ?? [];
         return new()
         {
+            ModelAssumptions = facts.ModelAssumptions,
             Context = facts.Context, PredictorId = facts.PredictorId,
             OriginalSeed = facts.OriginalSeed, CanonicalSeed = facts.CanonicalSeed,
             Sections = BuildSections(choices, facts.World, facts.Relics, facts.CombatRewards,

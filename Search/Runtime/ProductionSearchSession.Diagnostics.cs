@@ -28,6 +28,39 @@ public sealed partial class ProductionSearchSession
     private readonly ConcurrentDictionary<string, byte> _executionWarnings = new(StringComparer.Ordinal);
     private string _cleanupIssue = "";
 
+    private async Task LogGpuPowerAsync()
+    {
+        try
+        {
+            // The search owns completion. A slow driver query must never hold up results or cleanup.
+            var interval = TimeSpan.FromSeconds(2);
+            long previousRoots = Interlocked.Read(ref _scanned);
+            double previousSeconds = _clock.Elapsed.TotalSeconds;
+            if (await Task.WhenAny(_completion, Task.Delay(interval)).ConfigureAwait(false) == _completion) return;
+            var adapter = SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity().GpuIdentity;
+            var sensor = new SearchGpuPowerSensor(adapter);
+            while (!_completion.IsCompleted && Volatile.Read(ref _gpuCreationCpuRecovery) is null)
+            {
+                var sample = await sensor.ReadAsync(CancellationToken.None).ConfigureAwait(false);
+                if (_completion.IsCompleted || Volatile.Read(ref _gpuCreationCpuRecovery) is not null) return;
+                long roots = Interlocked.Read(ref _scanned);
+                double seconds = _clock.Elapsed.TotalSeconds;
+                double duration = seconds - previousSeconds;
+                RuntimeLog.TryBackgroundInfo("gpuPowerSample=true;gpuPowerJson=" + RuntimeLog.SafeJson(new
+                {
+                    sample, scannedRoots = roots, sessionSeconds = seconds, intervalSeconds = duration,
+                    intervalRootsPerSecond = duration > 0 ? (roots - previousRoots) / duration : 0
+                }));
+                if (!string.IsNullOrEmpty(sample.UnavailableReason) && sample.AverageWatts is null &&
+                    sample.InstantWatts is null && sample.EnforcedLimitWatts is null) return;
+                previousRoots = roots;
+                previousSeconds = seconds;
+                if (await Task.WhenAny(_completion, Task.Delay(interval)).ConfigureAwait(false) == _completion) return;
+            }
+        }
+        catch (Exception error) { RecordDiagnosticFailure(error, "GpuPowerDiagnostics.Sample"); }
+    }
+
     public SearchDiagnosticSummarySnapshot GetDiagnosticSummary()
     {
         var first = Volatile.Read(ref _firstFailure);
@@ -116,6 +149,9 @@ public sealed partial class ProductionSearchSession
         $"sourceOrdinals={string.Join(',', isolation.FailedGlobalOrdinals)};reason={isolation.Error.GetBaseException().Message};" +
         $"finalValidationSkipped={isolation.FinalValidationSkipped}";
 
+    private void LogWorkloadEvidence() => TryDiagnostic(() =>
+        Infrastructure.Snapshots.ProductionSearchReplay.LogSessionWorkload(_plan, RuntimeLog.SessionId), "SessionWorkload");
+
     private void LogStartEvidence()
     {
         TryDiagnostic(() => {
@@ -160,9 +196,9 @@ public sealed partial class ProductionSearchSession
 
     private void LogResultEvidence(long exactAttempts)
     {
-        RuntimeLog.TryBackgroundInfo($"searchExactOutcome=true;attempts={exactAttempts};evaluatedMatch={_dispositions.GetValueOrDefault(nameof(SearchDisposition.Match))};evaluatedReject={_dispositions.GetValueOrDefault(nameof(SearchDisposition.NoMatch))};evaluatedUnknown={_dispositions.GetValueOrDefault(nameof(SearchDisposition.Unknown))};evaluatedUnsupported={_dispositions.GetValueOrDefault(nameof(SearchDisposition.Unsupported))};publishedMatches={_confirmedCandidates};publishedUnverified={_unverifiedCandidates};publishedTotal={_matches};firstResult={_firstResult?.Seed};lastResult={_lastResult?.Seed};canonicalFaultRecorded={_loggedFault!=0}");
+        RuntimeLog.TryBackgroundInfo($"searchExactOutcome=true;attempts={exactAttempts};evaluatedMatch={_dispositions.GetValueOrDefault(nameof(SearchDisposition.Match))};evaluatedReject={_dispositions.GetValueOrDefault(nameof(SearchDisposition.NoMatch))};evaluatedUnknown={_dispositions.GetValueOrDefault(nameof(SearchDisposition.Unknown))};evaluatedUnsupported={_dispositions.GetValueOrDefault(nameof(SearchDisposition.Unsupported))};publishedMatches={_confirmedCandidates};publishedUnverified={_unverifiedCandidates};modeledNonHits={Interlocked.Read(ref _modeledNonHits)};replayAssumptions={_replayAssumptions};publishedTotal={_matches};firstResult={_firstResult?.Seed};lastResult={_lastResult?.Seed};canonicalFaultRecorded={_loggedFault!=0}");
         RuntimeLog.TryBackgroundInfo("searchExactDiagnostics=true;summaryJson=" + RuntimeLog.SafeJson(GetDiagnosticSummary()));
-        object? ResultEvidence(SearchCandidate? candidate) => candidate is null ? null : new { candidate.Seed, candidate.ValidationDisposition, candidate.ValidationIssue, candidate.SupportScope, candidate.IsUnverified, candidate.IsUnfiltered, candidate.MatchedRouteIds, candidate.Witnesses };
+        object? ResultEvidence(SearchCandidate? candidate) => candidate is null ? null : new { candidate.Seed, candidate.ValidationDisposition, candidate.ValidationIssue, candidate.Evaluation.ReplayEstimate, candidate.SupportScope, candidate.IsUnverified, candidate.IsUnfiltered, candidate.MatchedRouteIds, candidate.Witnesses };
         RuntimeLog.TryBackgroundInfo("searchResultSamples=true;scope=BoundedFirstLastPublished;resultJson=" + RuntimeLog.SafeJson(new { first=ResultEvidence(_firstResult),last=ReferenceEquals(_firstResult,_lastResult)?null:ResultEvidence(_lastResult) }));
     }
 

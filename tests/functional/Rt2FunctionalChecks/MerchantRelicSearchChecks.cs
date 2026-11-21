@@ -1,4 +1,7 @@
 using System.Text.Json;
+using MegaCrit.Sts2.Core.Extensions;
+using RolltheSpire2.Core.Effects.Snapshots;
+using RolltheSpire2.Core.World.Snapshots;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Authority;
 using RolltheSpire2.Core.Identity;
@@ -43,6 +46,9 @@ internal static class MerchantRelicSearchChecks
         SearchQueryEvaluation Evaluate(SearchQuery q, SearchContext? ctx = null) =>
             ProductionExactSearchEvaluator.Evaluate(Prepare(q, ctx:ctx).Model, root).Evaluation;
         void Check(bool ok, string name) { if (!ok) throw new InvalidDataException("MerchantRelic: " + name); }
+        Check113Bags(authority, root.RootHash);
+        CheckRelicPoolCapture();
+        Check113PotionStock();
         var positive = Evaluate(query);
         Check(positive.Disposition == SearchDisposition.Match &&
             positive.Evidence.Any(e => e.RelatedKey == left && e.Ordinal == 1 && e.OutcomeId == "Left") &&
@@ -93,5 +99,145 @@ internal static class MerchantRelicSearchChecks
         }
         Console.WriteLine($"MERCHANT_RELIC_SEARCH=PASS;seed={seed};left={left};middle={middle};laterMiddle={later};partialWindowsAndSkipVerified=true");
         return 0;
+    }
+
+    private sealed class ObservedPool(object? result)
+    {
+        public object? GetUnlockedRelics(object unlockState) => result;
+    }
+
+    private static void CheckRelicPoolCapture()
+    {
+        var method = typeof(RolltheSpire2.Infrastructure.Snapshots.ReflectionNeowEffectSnapshotAdapter)
+            .GetMethod("CaptureBeta109WorldRelicPool", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        void Check(object? collection, bool expectedExact, int? expectedRarities)
+        {
+            var observation = method.Invoke(null, [new ObservedPool(collection), new object(), "fixture"])!;
+            var type = observation.GetType();
+            bool exact = (bool)type.GetProperty("Exact")!.GetValue(observation)!;
+            var rarities = (IReadOnlySet<string>?)type.GetProperty("ObservedRarities")!.GetValue(observation);
+            if (exact != expectedExact || rarities?.Count != expectedRarities)
+                throw new Exception("Missing, empty and unreadable relic captures need distinct authority");
+        }
+        Check(Array.Empty<object>(), true, 0);
+        Check(null, false, null);
+        Check(new object?[] { null }, false, null);
+        Check(new[] { new { Rarity = "Common" } }, false, 1);
+    }
+
+    private static void Check113Bags(RuntimeContextAuthoritySnapshot authority, ulong root)
+    {
+        var world = authority.WorldAuthority!;
+        var inputs = world.Beta109Generation!;
+        RelicSequencePredictionResult Project(Beta109WorldGenerationSnapshot generation) =>
+            RelicSequencePredictor.PredictFromRootHash(Beta111Profile.Instance, root, "bag-reference",
+                world with { Beta109Generation = generation });
+        var absent = inputs with
+        {
+            SharedRelicBuckets = inputs.SharedRelicBuckets.Where(b => !b.BucketId.EndsWith(":Shop")).ToArray(),
+            PlayerRelicBuckets = inputs.PlayerRelicBuckets.Where(b => !b.BucketId.EndsWith(":Shop")).ToArray()
+        };
+        var actual = Project(absent);
+        var native = new MegaCrit.Sts2.Core.Random.Rng(root, "up_front");
+        foreach (var bucket in absent.SharedRelicBuckets.Concat(absent.PlayerRelicBuckets))
+        {
+            var ordered = bucket.OrderedRelics.ToList().UnstableShuffle(native);
+            var lanes = bucket.BucketId.StartsWith("shared:") ? actual.TreasureRoomLanes : actual.Lanes;
+            var observed = lanes.Single(l => bucket.BucketId.EndsWith(":" + l.RarityCode));
+            if (!ordered.SequenceEqual(observed.FullEntries.Select(e => e.RelicKey))) throw new Exception("Native missing-bucket shuffle order");
+        }
+        if (actual.RngCallCount != native.ToSerializable().counter || actual.Lanes.Single(l => l.Kind == RelicSequenceKind.Shop).TotalCount != 0)
+            throw new Exception("Missing Shop deque consumed a shuffle or gained stock");
+        var common = actual.GetPlayerLane(RelicSequenceKind.Common)!.FullEntries[0].RelicKey;
+        var detached = NormalMerchantRelicProjector.Project(root, authority.WithWorldAuthority(null), actual, 3);
+        var attached = NormalMerchantRelicProjector.Project(root, authority.WithWorldAuthority(world with { Beta109Generation = absent }), actual, 3);
+        if (!detached.Merchants.SequenceEqual(attached.Merchants) || detached.Merchants.Any(m => m.Left.RelicKey is null || m.Middle.RelicKey is null))
+            throw new Exception("Replaying an already projected bag required the source catalog again");
+        var absentAuthority = authority.WithWorldAuthority(world with { Beta109Generation = absent });
+        var context = SearchContextFactory.From(absentAuthority.ProfileId, absentAuthority.Character.CharacterKey, absentAuthority.Ascension, absentAuthority,
+            new("0.113.1", "0.113.1", "beta", "fixture", true, ""), AncientOptionConditionProfile.BroadDefault);
+        var ordinaryQuery = SearchQuery.Empty with { RelicSequenceConstraints =
+            [new(RelicSequenceKind.Common, SearchSequenceRangeMode.ExactSlot, 1, new([common], [], []))] };
+        var preparation = SearchPreparationCompiler.Compile(SearchCompiler.Compile(ordinaryQuery, context), new("6Q8LL102Y4CF", 1, 1, 1));
+        var prepared = preparation.Plan ?? throw new Exception(preparation.Issue);
+        if (!RelicFamilyPlanCompiler.TryCompile(prepared.Model, out _, out var reason)) throw new Exception(reason);
+        var empty = absent with { SharedRelicBuckets = [], PlayerRelicBuckets = [] };
+        var zero = Project(empty);
+        var emptyAuthorities = authority.WithWorldAuthority(world with { Beta109Generation = empty });
+        if (zero.RngCallCount != 0 || zero.TreasureRoomLanes.Count != 3 ||
+            NormalMerchantRelicProjector.Project(root, emptyAuthorities, zero, 1).Merchants[0].Left.RelicKey?.Entry != "CIRCLET" ||
+            Project(empty with { RelicInitializationExact = false }).Status != SeedDomainEvaluationStatus.Unknown)
+            throw new Exception("Known empty vs missing bag source");
+        var before = Project(inputs);
+        var shop = before.Lanes.Single(l => l.Kind == RelicSequenceKind.Shop).FullEntries;
+        var partial = inputs with { RelicShopEligibilityAuthorityExact = false,
+            PlayerRelicBuckets = inputs.PlayerRelicBuckets.Select(b => b with { OrderedEntries = b.OrderedEntries.Select(e =>
+                e.RelicKey == shop[1].RelicKey ? e with { ShopEligibilityExact = false } : e).ToArray() }).ToArray() };
+        var ordinaryTarget = Project(partial).GetPlayerLane(RelicSequenceKind.Common)!.Entries[0].RelicKey;
+        var firstOrdinary = ExactSearchEvaluationProjection.Empty with { RelicSequenceConditions =
+            [new(RelicSequenceKind.Common, SearchSequenceRangeMode.ExactSlot, 1, new([ordinaryTarget], [], []))] };
+        var partialWorld = world with { Beta109Generation = partial };
+        var ordinaryReference = new RelicReferencePlan(firstOrdinary, partialWorld, Beta111Profile.Instance);
+        if (!ordinaryReference.Reference(root) || !ordinaryReference.Matches(root, code => throw new Exception(code)))
+            throw new Exception("Unrelated Shop eligibility blocked the ordinary reference filter");
+        var absentReference = new RelicReferencePlan(firstOrdinary with { RelicSequenceConditions =
+            [new(RelicSequenceKind.Common, SearchSequenceRangeMode.ExactSlot, 1, new([common], [], []))] },
+            world with { Beta109Generation = absent }, Beta111Profile.Instance);
+        if (!absentReference.Reference(root)) throw new Exception("Absent Shop bucket blocked Common");
+        var prefix = Project(partial).Lanes.Single(l => l.Kind == RelicSequenceKind.Shop);
+        if (prefix.Precision != PredictionPrecision.Partial || prefix.FullEntries.Count != 1 || prefix.Entries[0].RelicKey != shop[0].RelicKey)
+            throw new Exception("Uncertain eligibility erased or extended proven shop prefix");
+        var ordinaryOnly = inputs with { RelicShopEligibilityAuthorityExact = false,
+            PlayerRelicBuckets = inputs.PlayerRelicBuckets.Select(b => b.BucketId.EndsWith(":Common") ?
+                b with { OrderedEntries = b.OrderedEntries.Select(e => e with { ShopEligibilityExact = false }).ToArray() } : b).ToArray() };
+        if (!Project(ordinaryOnly).Lanes.Single(l => l.Kind == RelicSequenceKind.Shop).FullEntries.SequenceEqual(shop))
+            throw new Exception("Ordinary shelf eligibility changed stocked Shop deque");
+    }
+
+    private static void Check113PotionStock()
+    {
+        var stock = new List<NeowEffectPotionSnapshot>();
+        foreach (var rarity in new[] { EffectPotionRarity.Common, EffectPotionRarity.Uncommon, EffectPotionRarity.Rare })
+            for (int i = 0; i < 3; i++)
+                stock.Add(new(new("POTION", rarity + "_" + i), stock.Count, rarity) { MerchantCloneRuleExact = true });
+        stock.Add(new(new("POTION", "CUSTOM_COMMON"), stock.Count, EffectPotionRarity.Common, SourceModId: "test")
+            { MerchantCloneRuleExact = true });
+        if (!Beta111NormalMerchantShopsContinuation.HasUnconditionalPotionStock(stock))
+            throw new Exception("Inherited stock clone with custom potion should preserve fixed schedule");
+        var authority = new Beta111MerchantColorlessAuthority(
+            [new("CARD", "U1"), new("CARD", "U2")], [new("CARD", "R1"), new("CARD", "R2")],
+            true, true, true, false, RuntimeProfileId.Beta111, 0, 1, "controlled-potion-stock")
+            { UsesModern113 = true, PotionStock = stock };
+        var sparse = stock.Where(p => p.Rarity != EffectPotionRarity.Rare).ToArray();
+        bool sawLaterFailure = false;
+        for (ulong root = 0; root < 32; root++)
+        {
+            var native = new MegaCrit.Sts2.Core.Random.Rng(root, "shops");
+            var five = Beta111NormalMerchantColorlessSequenceProjector.Project(root, authority, 5);
+            int firstIncomplete = 6;
+            for (int ordinal = 1; ordinal <= 5; ordinal++)
+            {
+                for (int i = 0; i < 5; i++) native.NextUnsignedLong();
+                for (int slot = 0; slot < 3; slot++)
+                {
+                    if (native.NextFloat() <= .1f) firstIncomplete = Math.Min(firstIncomplete, ordinal);
+                    native.NextUnsignedLong();
+                }
+                // Three potion prices and five colored cards. Then U/upgrade/price, R/upgrade/price, sale/price.
+                for (int i = 0; i < 23; i++) native.NextUnsignedLong();
+                var uncommon = authority.UncommonPool[native.NextInt(authority.UncommonPool.Count)];
+                native.NextUnsignedLong(); native.NextUnsignedLong();
+                var rare = authority.RarePool[native.NextInt(authority.RarePool.Count)];
+                for (int i = 0; i < 4; i++) native.NextUnsignedLong();
+                var shop = five.Merchants[ordinal - 1];
+                if (shop.UncommonColorless != uncommon || shop.RareColorless != rare ||
+                    shop.OutgoingShopsState.CallCount != native.ToSerializable().counter)
+                    throw new Exception("Native colorless identity or outgoing Shops stream disagrees");
+            }
+            var prefix = Beta111NormalMerchantColorlessSequenceProjector.Project(root, authority with { PotionStock = sparse }, 5);
+            if (prefix.Merchants.Count != firstIncomplete - 1) throw new Exception("Seed-dependent potion stock prefix");
+            sawLaterFailure |= firstIncomplete is >= 2 and <= 5;
+        }
+        if (!sawLaterFailure) throw new Exception("Fixture must cover successful first shop and failed later continuation");
     }
 }

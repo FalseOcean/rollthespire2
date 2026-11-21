@@ -1,3 +1,4 @@
+using RolltheSpire2.Presentation.Ui1;
 using RolltheSpire2.Ui.Shell;
 using RolltheSpire2.Ui.Workspace;
 using Godot;
@@ -8,6 +9,8 @@ namespace RolltheSpire2.Ui.Pages.Search;
 
 internal sealed partial class QueryWorkbenchFrame
 {
+    private string? _displayedAuxiliaryStatus;
+
     private void TryAuxiliary(Action action, string stage)
     { try { action(); _persistence.ResolvePresentationFailure(stage); } catch (Exception exception) { AuxiliaryFailure(exception, stage); } }
     private void AuxiliaryFailure(Exception exception, string stage)
@@ -28,6 +31,9 @@ internal sealed partial class QueryWorkbenchFrame
             if (!string.IsNullOrEmpty(progress.FailureCode)) lines.Add(
                 progress.FailureCode.StartsWith("SearchRecoveryCapacityReached:", StringComparison.Ordinal)
                     ? _text.Get("workflow.recovery_capacity") : progress.FailureCode);
+            if (progress.ModeledNonHitCount > 0)
+                lines.Add(_text.Format("workflow.replay_non_hits", progress.ModeledNonHitCount,
+                    ReplayAssumptionPresentation.Describe(_text, progress.ReplayAssumptions)));
             if (!string.IsNullOrEmpty(progress.CleanupIssue)) lines.Add(_text.Get("workflow.cleanup_issue"));
         }
         int pending = _persistence.DisplayPendingCandidates.Count;
@@ -36,9 +42,12 @@ internal sealed partial class QueryWorkbenchFrame
         if (historical > 0) lines.Add(_text.Format("workflow.pending_historical_count", historical));
         if (_persistence.HasUnsavedSearchState) lines.Add(_text.Get("workflow.unsaved_search"));
         if (progress?.ExecutionWarnings.Count > 0) lines.Add(_text.Get("workflow.execution_warning"));
-        if (_persistence.Workspace.AuxiliaryIssues.LastOrDefault() is { } auxiliaryIssue)
+        var auxiliaryIssue = _persistence.Workspace.AuxiliaryIssues.LastOrDefault();
+        if (auxiliaryIssue is not null)
             lines.Add(_text.Get("workflow.auxiliary_issue") + " " + auxiliaryIssue.Split('\n')[0].TrimEnd('\r'));
-        _status.Text = string.Join("\n", lines);
+        string status = string.Join("\n", lines);
+        _displayedAuxiliaryStatus = auxiliaryIssue is null ? null : status;
+        _status.Text = status;
     }
     private void AddFailureDetails(VBoxContainer parent, string caption, string details)
     {

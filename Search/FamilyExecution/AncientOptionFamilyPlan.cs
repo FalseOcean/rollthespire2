@@ -8,6 +8,7 @@ using RolltheSpire2.Core.World.Snapshots;
 using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.FamilyExecution;
 using RolltheSpire2.Search.Selectivity;
+using RolltheSpire2.Search.Semantics;
 
 namespace RolltheSpire2.Search.FamilyExecution;
 
@@ -247,43 +248,50 @@ internal sealed class AncientOptionFamilyPlan
         };
         var prediction = Beta109AncientOptionProvider.PredictEventLocal(snapshot, act, key, _playerSlot,
             _characterKey, _filter.AncientOptionConditions);
-        // Like Exact's option predicate, A consumes option identity precision,
-        // not completeness of unrelated mutable post-obtain/setup projection.
-        if (prediction.EvaluationStatus is not (AncientOptionsEvaluationStatus.EvaluatedNonEmpty or
-            AncientOptionsEvaluationStatus.EvaluatedKnownEmpty or AncientOptionsEvaluationStatus.EvaluatedLocked) ||
-            prediction.Options.Any(o => o.OptionPrecision != PredictionPrecision.Exact))
-            return Unresolved("A.ReferenceNotExact:" + prediction.IssueCode);
-        var options = prediction.Options.Where(o => o.IsVisible).ToArray();
-
-        var sea = options.FirstOrDefault(o => o.OptionKey.Entry == "SEA_GLASS");
-        bool branchMatched = branches.Length == 0, branchUnresolved = false;
+        SearchDisposition Options(ModelKeySetFilter keys) =>
+            QueryKeySetPredicate.MatchVisibleAncientOptions(prediction.EvaluationStatus, prediction.Options, keys);
+        bool allOptionsKnown = prediction.EvaluationStatus is (AncientOptionsEvaluationStatus.EvaluatedNonEmpty or
+            AncientOptionsEvaluationStatus.EvaluatedKnownEmpty or AncientOptionsEvaluationStatus.EvaluatedLocked) &&
+            prediction.Options.All(o => o.OptionPrecision == PredictionPrecision.Exact);
+        var sea = prediction.Options.FirstOrDefault(o => o.IsVisible && o.OptionPrecision == PredictionPrecision.Exact &&
+            o.OptionKey.Entry == "SEA_GLASS");
+        bool branchMatched = branches.Length == 0, branchUnresolved = false, branchTargetUnresolved = false;
         foreach (var branch in branches)
         {
-            if (branch.OptionAny.Count > 0 && !options.Any(o => branch.OptionAny.Contains(o.OptionKey))) continue;
+            if (branch.OptionAny.Count > 0)
+            {
+                var disposition = Options(new(branch.OptionAny, [], []));
+                if (disposition == SearchDisposition.NoMatch) continue;
+                if (disposition == SearchDisposition.Unknown) { branchUnresolved = true; continue; }
+            }
             if (branch.SeaGlassTargetAny.Count > 0)
             {
-                if (sea is null) continue;
+                if (sea is null) { branchUnresolved |= !allOptionsKnown; continue; }
                 if (sea.CharacterTarget is not { Precision: PredictionPrecision.Exact, CharacterKey: { } target })
-                { branchUnresolved = true; continue; }
+                { branchUnresolved = branchTargetUnresolved = true; continue; }
                 if (!branch.SeaGlassTargetAny.Contains(target)) continue;
             }
             branchMatched = true;
             break;
         }
         if (!branchMatched && !branchUnresolved) return SearchDisposition.NoMatch;
-        static bool Set(IEnumerable<ModelKey> values, ModelKeySetFilter f)
+        bool filtersUnresolved = false;
+        foreach (var filter in row.OptionFilters)
         {
-            var v = values.ToArray(); return
-            (f.Any.Count == 0 || f.Any.Any(v.Contains)) && f.All.All(v.Contains) && !f.Ban.Any(v.Contains);
+            var disposition = Options(filter.Keys);
+            if (disposition == SearchDisposition.NoMatch) return SearchDisposition.NoMatch;
+            filtersUnresolved |= disposition == SearchDisposition.Unknown;
         }
-        if (!row.OptionFilters.All(f => Set(options.Select(o => o.OptionKey), f.Keys))) return SearchDisposition.NoMatch;
+        if (sea is null && row.HasSeaGlassFilter && !allOptionsKnown) filtersUnresolved = true;
         if (sea is not null && row.HasSeaGlassFilter)
         {
             if (sea.CharacterTarget is not { Precision: PredictionPrecision.Exact, CharacterKey: { } target })
                 return Unresolved("A.SeaGlassTargetNotExact:" + sea.CharacterTarget?.IssueCode);
-            if (!row.SeaGlassFilters.All(f => Set([target], f.Keys))) return SearchDisposition.NoMatch;
+            if (!row.SeaGlassFilters.All(f => QueryKeySetPredicate.MatchesKeySet([target], f.Keys))) return SearchDisposition.NoMatch;
         }
-        return branchMatched ? SearchDisposition.Match : Unresolved("A.SeaGlassTargetNotExact:" + sea?.CharacterTarget?.IssueCode);
+        if (!branchMatched && branchTargetUnresolved)
+            return Unresolved("A.SeaGlassTargetNotExact:" + sea!.CharacterTarget?.IssueCode);
+        return branchMatched && !filtersUnresolved ? SearchDisposition.Match : Unresolved("A.ReferenceNotExact:" + prediction.IssueCode);
 
         SearchDisposition Unresolved(string cause) => ReferenceUnresolved(act, key, cause, onUnresolved);
     }

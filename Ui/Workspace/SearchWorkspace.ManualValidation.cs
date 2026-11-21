@@ -181,6 +181,7 @@ internal sealed partial class SearchWorkspace
 
         var updated = FreezeResult(original);
         updated.ValidationDisposition = exact.Evaluation.Disposition;
+        updated.ReplayEstimate = exact.Evaluation.ReplayEstimate;
         updated.QueryFingerprint = plan.Model.CompiledSearch.SemanticFingerprint;
         updated.ValidationIssue = (string.IsNullOrWhiteSpace(exact.Evaluation.FailureCode) ? exact.FailureCode : exact.Evaluation.FailureCode) + string.Concat(exact.Evaluation.RouteRejections.Select(rejection =>
             $"\nroute={rejection.RouteId};disposition={rejection.Disposition};reason={rejection.Reason}"));

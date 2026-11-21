@@ -7,7 +7,10 @@ namespace RolltheSpire2.Search.FamilyExecution;
 
 internal readonly record struct WorldFamilyGpuMetrics(int Input, int Output, int Dispatches,
     int SubmissionGroups, int HeaderReadCalls, long HeaderReadBytes, int PayloadReadCalls, long PayloadReadBytes,
-    double DispatchSyncMs, double HeaderReadbackMs, double CanonicalMs);
+    double DispatchSyncMs, double HeaderReadbackMs, double CanonicalMs)
+{
+    internal FamilyCandidateSet? SmallOutput { get; init; }
+}
 // Bounded windows within one SearchBatch. No numerical work or public state is changed by grouping.
 internal sealed class WorldFamilyGpuExecutor : IDisposable
 {
@@ -17,7 +20,9 @@ internal sealed class WorldFamilyGpuExecutor : IDisposable
     private readonly List<Rid> _owned = new();
     private readonly Rid[] _batch, _header, _input, _output, _uniforms;
     private readonly byte[][] _batchBytes;
-    private readonly byte[] _headerResetBytes = FamilyGpuComputeUtility.ToBytes(Header());
+    internal const string SmallHeaderRevision = ".QueuedPrivateSmallHeader8.20261120.v1";
+    private readonly byte[] _headerResetBytes;
+    private readonly bool _smallHeader;
     private readonly Rid _pipeline, _headerBank;
     private readonly int _owner = System.Environment.CurrentManagedThreadId;
     private bool _disposed;
@@ -47,6 +52,14 @@ internal sealed class WorldFamilyGpuExecutor : IDisposable
         _rd = rd; Capacity = capacity; GroupingK = groupingK; NumericalVariant = numericalVariant; _familyId = familyId; _scope = familyId[..1];
         _privateInput = privateInput.HasValue; _privateOutput = privateOutput;
         _denseCarry8 = denseCarry8;
+        _smallHeader = privateOutput is not null && familyId == "W.World";
+        uint[] header = Header();
+        if (_smallHeader)
+        {
+            Array.Resize(ref header, header.Length + SmallCandidateExactPolicy.MaximumCandidates);
+            source = source.Replace("#version 450", $"#version 450\n#define RT2_W_SMALL_HEADER_CAPACITY {SmallCandidateExactPolicy.MaximumCandidates}u", StringComparison.Ordinal);
+        }
+        _headerResetBytes = FamilyGpuComputeUtility.ToBytes(header);
         if (privateInput.HasValue && privateOutput is not null && privateInput.Value == privateOutput.Buffer)
             throw new ArgumentException(_scope + ".PrivateBuffersAlias");
         var watch = Stopwatch.StartNew();
@@ -81,7 +94,7 @@ internal sealed class WorldFamilyGpuExecutor : IDisposable
             {
                 _batchBytes[slot] = new byte[8 * sizeof(uint)];
                 buffers[0] = _batch[slot] = Buffer(new uint[8]);
-                buffers[16] = _header[slot] = privateOutput is not null && slot > 0 ? _header[0] : Buffer(Header());
+                buffers[16] = _header[slot] = privateOutput is not null && slot > 0 ? _header[0] : Buffer(header);
                 buffers[18] = _input[slot] = privateInput ?? Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, Capacity * 4));
                 buffers[17] = _output[slot] = privateOutput?.Buffer ?? Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, Capacity * 4));
                 _uniforms[slot] = Add(FamilyGpuComputeUtility.CreateUniformSet(rd, shader, buffers, _familyId));
@@ -134,6 +147,7 @@ internal sealed class WorldFamilyGpuExecutor : IDisposable
         int dispatches = 0, groups = 0, headerCalls = 0, payloadCalls = 0;
         long headerBytes = 0, payloadBytes = 0;
         int privateCount = 0;
+        FamilyCandidateSet? smallOutput = null;
         bool resident = _privateOutput is not null;
         int candidatesPerWorkgroup = input.IsDense && !_privateInput && _denseCarry8 ? 512 : 64;
         if (resident) FamilyGpuComputeUtility.UpdateBytes(_rd, _header[0], _headerResetBytes, _scope + ".PrivateHeader");
@@ -207,7 +221,7 @@ internal sealed class WorldFamilyGpuExecutor : IDisposable
             // only the completed population boundary needs CPU observation.
             FamilyGpuReadback.Pending? pendingHeader = !resident || processed == inputCount
                 ? FamilyGpuReadback.Queue(_rd, resident || GroupingK == 1 ? _header[0] : _headerBank, 0,
-                    checked((uint)(resident ? 32 : slots * 32)),
+                    checked((uint)(resident ? _headerResetBytes.Length : slots * 32)),
                     $"{_scope}.Header:batch={input.Batch.BatchBase};offset={offset}")
                 : null;
             FamilyGpuComputeUtility.SubmitAndSync(_rd, _familyId); dispatchSync += watch.Elapsed.TotalMilliseconds - start; groups++;
@@ -218,11 +232,13 @@ internal sealed class WorldFamilyGpuExecutor : IDisposable
             {
                 if (processed < inputCount) { offset = processed; continue; }
                 ReadOnlySpan<uint> h = FamilyGpuComputeUtility.UInt32Span(headerData!);
-                if (h.Length != 8 || h[0] != 0x57464d52 || h[1] != 1 || h[5] != 0x57463031 ||
+                if (h.Length != _headerResetBytes.Length / sizeof(uint) || h[0] != 0x57464d52 || h[1] != 1 || h[5] != 0x57463031 ||
                     h[3] != 0 || h[4] != inputCount || h[2] > inputCount)
                     throw new InvalidDataException(_scope + ".PrivateHeaderFault:" + string.Join(',', h.ToArray()));
                 privateCount = checked((int)h[2]);
-                headerCalls++; headerBytes += 32; headerRead += watch.Elapsed.TotalMilliseconds - start;
+                if (_smallHeader && SmallCandidateExactPolicy.ShouldHandoff(privateCount))
+                    smallOutput = PrivateOrdinalBuffer.FromGpuOrdinals(input.Batch, h.Slice(8, privateCount));
+                headerCalls++; headerBytes += _headerResetBytes.Length; headerRead += watch.Elapsed.TotalMilliseconds - start;
                 offset = processed;
                 continue;
             }
@@ -256,7 +272,7 @@ internal sealed class WorldFamilyGpuExecutor : IDisposable
         {
             token.ThrowIfCancellationRequested();
             metrics = new(inputCount, privateCount, dispatches, groups, headerCalls, headerBytes, 0, 0,
-                dispatchSync, headerRead, watch.Elapsed.TotalMilliseconds);
+                dispatchSync, headerRead, watch.Elapsed.TotalMilliseconds) { SmallOutput = smallOutput };
             return null;
         }
         double sortStart = watch.Elapsed.TotalMilliseconds;

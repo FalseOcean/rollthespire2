@@ -48,6 +48,10 @@ internal static class CrystalSearchIntegrationChecks
             "Base premise supplies only the event owner's character cards in source order");
         Check(CrystalSphereSearchSemantics.Pool(effects, 1, Premises, Hero)!.SequenceEqual(expectedPool),
             "Prismatic takes native character pool order ahead of owner union and Dingy appends colorless; early identity wins");
+        var identityOnly = effects with { OtherCharacterPoolsExact = false, ColorlessRewardPoolExact = false,
+            OtherCharacterIdentityPoolsExact = true, ColorlessRewardIdentityPoolExact = true };
+        Check(CrystalSphereSearchSemantics.Pool(identityOnly, 1, Premises, Hero)!.SequenceEqual(expectedPool),
+            "Dingy and Prismatic keep card order with captured identities and incomplete behavior metadata");
         var party = CrystalSphereSearchSemantics.Pool(effects, 2, Premises, Hero)!;
         Check(party.Any(card => card.IsMultiplayerOnly) && !party.Any(card => !card.IsUnlockedInCapturedPool ||
             !card.EligibleForPostCombatRewardByPoolMembership), "Mode alters only multiplayer membership and keeps reward/unlock requirements");

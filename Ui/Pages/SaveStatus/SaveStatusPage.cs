@@ -21,7 +21,6 @@ internal sealed partial class SaveStatusPage : MarginContainer, IAppPage
 {
     private readonly ModRuntimeSnapshot _runtime;
     private readonly Label _pageTitle;
-    private readonly Label _subtitle;
     private readonly VBoxContainer _gameRows;
     private readonly Label _semanticSummary;
     private readonly Label _semanticMessage;
@@ -46,10 +45,7 @@ internal sealed partial class SaveStatusPage : MarginContainer, IAppPage
         var root = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, SizeFlagsVertical = Control.SizeFlags.ExpandFill };
         root.AddThemeConstantOverride("separation", 12);
         _pageTitle = WorkspacePalette.MainPanel.Label(string.Empty, 24, heading: true);
-        _subtitle = WorkspacePalette.MainPanel.Label(string.Empty, 16, secondary: true);
-        _subtitle.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         root.AddChild(_pageTitle);
-        root.AddChild(_subtitle);
 
         var scroll = new ScrollContainer
         {
@@ -60,8 +56,8 @@ internal sealed partial class SaveStatusPage : MarginContainer, IAppPage
         var content = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         content.AddThemeConstantOverride("separation", 16);
 
-        (_deviceRows, _) = CreateSection(content);
         (_gameRows, _) = CreateSection(content);
+        (_deviceRows, _) = CreateSection(content);
         _semanticRows = CreateSectionWithHeader(content, out _semanticSummary, out _semanticMessage);
         _unlockRows = CreateSectionWithHeader(content, out _unlockSummary, out _unlockMessage);
 
@@ -71,7 +67,7 @@ internal sealed partial class SaveStatusPage : MarginContainer, IAppPage
         fingerprintPanel.AddChild(_fingerprintMeta);
         content.AddChild(fingerprintPanel);
 
-        string[] titles = ["ui1.devices.title", Ui1TextKey.SaveStatusGameModelTitle,
+        string[] titles = [Ui1TextKey.SaveStatusGameModelTitle, "ui1.devices.title",
             Ui1TextKey.SaveStatusSemanticTitle, Ui1TextKey.SaveStatusUnlockTitle, "ui1.save_status.details"];
         for (int i = 0; i < content.GetChildCount(); i++)
         {
@@ -116,13 +112,12 @@ internal sealed partial class SaveStatusPage : MarginContainer, IAppPage
     {
         _ = contentNames;
         _pageTitle.Text = uiText.Get(Ui1TextKey.SaveStatusTitle);
-        _subtitle.Text = uiText.Get(Ui1TextKey.SaveStatusSubtitle);
 
         RuntimeAuthorityEnvironmentSnapshot environment = RuntimeAuthorityEnvironment.Current;
         RuntimeAuthoritySnapshot authority = environment.Authority;
         RuntimeAuthorityInterpretation interpretation = environment.Interpretation;
 
-        RebuildGameRows(uiText, authority);
+        RebuildGameRows(uiText);
         RebuildDeviceRows(uiText);
         RebuildSemanticRows(uiText, authority, interpretation);
         RebuildUnlockRows(uiText, authority, interpretation);
@@ -158,14 +153,33 @@ internal sealed partial class SaveStatusPage : MarginContainer, IAppPage
         _deviceRows.AddChild(help);
     }
 
-    private void RebuildGameRows(IUiTextProvider uiText, RuntimeAuthoritySnapshot authority)
+    private void RebuildGameRows(IUiTextProvider uiText)
     {
         ClearRows(_gameRows);
+        GameVersionDetection detection = _runtime.Detection;
+        RuntimeVersionResolution compatibility = _runtime.Compatibility;
         AddKeyValue(_gameRows, uiText.Get(Ui1TextKey.SaveStatusGameVersion),
-            string.IsNullOrWhiteSpace(authority.GameVersion) ? _runtime.Detection.DisplayVersion : authority.GameVersion);
-        AddKeyValue(_gameRows, uiText.Get(Ui1TextKey.SaveStatusPredictionModel), _runtime.Profile.ProfileId.ToString());
-        AddKeyValue(_gameRows, uiText.Get(Ui1TextKey.SaveStatusModelStatus), ResolveModelStatus(uiText));
-        AddKeyValue(_gameRows, uiText.Get(Ui1TextKey.SaveStatusFingerprintSchema), authority.FingerprintSchemaVersion.ToString());
+            detection.IsExact ? detection.DisplayVersion : uiText.Get(Ui1TextKey.SaveStatusGameVersionUnknown));
+        AddKeyValue(_gameRows, uiText.Get(Ui1TextKey.SaveStatusTargetVersions),
+            uiText.Format(Ui1TextKey.StableAndBetaGameVersions,
+                RuntimeVersionCompatibility.SupportedStableVersion, RuntimeVersionCompatibility.SupportedBetaVersion));
+        AddKeyValue(_gameRows, uiText.Get(Ui1TextKey.SaveStatusRulesVersion), RulesVersionText(uiText, compatibility));
+    }
+
+    private static string RulesVersionText(IUiTextProvider uiText, RuntimeVersionResolution compatibility)
+    {
+        string adaptedThrough = compatibility.RulesAdaptedThroughVersion;
+        if (string.IsNullOrEmpty(adaptedThrough))
+            return uiText.Get(Ui1TextKey.SaveStatusRulesUnavailable);
+
+        string key = compatibility switch
+        {
+            { IsReleaseSupported: true } => Ui1TextKey.SaveStatusRulesAdapted,
+            { SupportKind: RuntimeVersionSupportKind.LatestKnownFallback } => Ui1TextKey.SaveStatusRulesFallback,
+            { RuntimeAccepted: true } => Ui1TextKey.SaveStatusRulesOlder,
+            _ => Ui1TextKey.SaveStatusRulesUnverified
+        };
+        return uiText.Format(key, adaptedThrough);
     }
 
     private void RebuildSemanticRows(
@@ -275,20 +289,10 @@ internal sealed partial class SaveStatusPage : MarginContainer, IAppPage
             : environment.BaselineCandidatePath;
         _fingerprintMeta.Text = uiText.Format(
             Ui1TextKey.SaveStatusFingerprintMeta,
+            authority.FingerprintSchemaVersion,
             overall,
             baseline,
             candidate);
-    }
-
-    private string ResolveModelStatus(IUiTextProvider uiText)
-    {
-        if (_runtime.Compatibility.SupportKind == RuntimeVersionSupportKind.ProvisionalVersionedRules)
-            return uiText.Get(Ui1TextKey.SaveStatusModelProvisionalVersioned);
-        if (_runtime.IsCompatibilityFallback)
-            return uiText.Get(Ui1TextKey.SaveStatusModelBestEffort);
-        if (_runtime.RequiresCompatibilityWarning || !_runtime.RuntimeAccepted)
-            return uiText.Get(Ui1TextKey.SaveStatusModelUnverified);
-        return uiText.Get(Ui1TextKey.SaveStatusModelKnown);
     }
 
     private static string LocalizeDomain(IUiTextProvider uiText, string domain) => domain switch

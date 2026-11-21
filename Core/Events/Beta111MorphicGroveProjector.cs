@@ -24,7 +24,11 @@ public sealed record MorphicGrovePremises(
     string EventOccurrenceBasis,
     bool VanillaLocalDependenciesBound,
     bool NoDeckMutationHooks,
-    int? EntryFloor);
+    int? EntryFloor)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? InitialBasicCaptureIssue { get; init; }
+}
 
 public sealed record MorphicGroveCard(
     ModelKey CardKey, string PoolId, string CardType, string Rarity,

@@ -36,17 +36,23 @@ internal static class MerchantShopColorlessQueryEvaluator
             maxOrdinal);
         if (projection.Precision == PredictionPrecision.Unsupported)
             return SearchQueryEvaluation.Unsupported(projection.EvidenceCode);
-        if (projection.Precision != PredictionPrecision.Exact)
-            return SearchQueryEvaluation.Unknown(projection.EvidenceCode);
+        if (projection.Merchants.Count == 0)
+            return projection.Precision == PredictionPrecision.Exact
+                ? SearchQueryEvaluation.NoMatch(projection.EvidenceCode)
+                : SearchQueryEvaluation.Unknown(projection.EvidenceCode);
 
         var evidence = new List<SearchMatchEvidence>();
+        bool unresolved = false;
         foreach ((MerchantColorlessSlotCondition condition, int index) in
                  evaluation.MerchantColorlessConditions.Select((condition, index) => (condition, index)))
         {
             Beta111NormalMerchantProjection? merchant = projection.Merchants
                 .FirstOrDefault(item => item.MerchantOrdinal == condition.MerchantOrdinal);
             if (merchant is null)
-                return SearchQueryEvaluation.Unknown($"MerchantColorlessProjectionMissing:{condition.MerchantOrdinal}");
+            {
+                unresolved = true;
+                continue;
+            }
 
             ModelKey actual = condition.Slot == MerchantColorlessSlot.Uncommon
                 ? merchant.UncommonColorless
@@ -75,7 +81,14 @@ internal static class MerchantShopColorlessQueryEvaluator
                 .Select(item => condition.Slot == MerchantColorlessSlot.Uncommon ? item.UncommonColorless : item.RareColorless)
                 .ToArray();
             if (actual.Length < condition.Count)
-                return SearchQueryEvaluation.Unknown($"MerchantColorlessSequenceProjectionMissing:{condition.Count}");
+            {
+                if (condition.OrderMode == CombatRewardSequenceOrderMode.Ordered &&
+                    actual.Where((key, index) => condition.Slots[index] is { } target && key != target).Any())
+                    return SearchQueryEvaluation.NoMatch($"MerchantColorlessSequenceRejected:{condition.Slot}:{sequenceIndex}");
+                unresolved = true;
+                sequenceIndex++;
+                continue;
+            }
             if (!ShopSequenceSemantics.Matches(actual, condition.Count, condition.OrderMode, condition.Slots))
                 return SearchQueryEvaluation.NoMatch($"MerchantColorlessSequenceRejected:{condition.Slot}:{sequenceIndex}");
 
@@ -93,6 +106,6 @@ internal static class MerchantShopColorlessQueryEvaluator
             sequenceIndex++;
         }
 
-        return SearchQueryEvaluation.Match(evidence);
+        return unresolved ? SearchQueryEvaluation.Unknown(projection.EvidenceCode) : SearchQueryEvaluation.Match(evidence);
     }
 }

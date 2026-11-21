@@ -22,10 +22,15 @@ public sealed record SearchProgressSnapshot(
     bool CancellationRequested)
 {
     public int UnverifiedCandidateCount { get; init; }
+    public long ModeledNonHitCount { get; init; }
+    public int ModeledNonHitSampleCount { get; init; }
+    public bool ModeledNonHitSampleReceived { get; init; }
+    public string ReplayAssumptions { get; init; } = "";
     public int PendingCandidateCount { get; init; }
     public string CleanupIssue { get; init; } = "";
     public IReadOnlyList<string> ExecutionWarnings { get; init; } = [];
     public int DeliveredCandidateCount => MatchCount + UnverifiedCandidateCount;
+    public int TargetCandidateCount => DeliveredCandidateCount - ModeledNonHitSampleCount;
     // UI observation only; never a pricing/calibration denominator.
     public double ObservedScanningSeconds { get; init; }
     public long ObservedScanningRoots { get; init; }

@@ -41,29 +41,33 @@ public sealed partial class ProductionSearchSession
         return issue;
     }
 
-    private async ValueTask<bool> PublishCandidateAsync(SearchCandidate output, ulong ordinal, CancellationToken cancellationToken)
+    private async ValueTask<bool> PublishCandidateAsync(TrustedRootHashInput input, SearchBatch batch,
+        ulong ordinal, CancellationToken cancellationToken, ProductionExactSearchResult? exact = null,
+        bool modeledNonHitSample = false)
     {
-        int matchNumber = TryReserveMatch();
-        if (matchNumber == 0) return false;
-        _recovery.BeginDelivery(ordinal);
+        int matchNumber = modeledNonHitSample ? 0 : TryReserveMatch();
+        if ((!modeledNonHitSample && matchNumber == 0) || !_recovery.BeginDelivery(ordinal, modeledNonHitSample)) return false;
+        SearchCandidate output;
         try
         {
-            if (_beforeCandidatePublish is not null)
+            output = CreateCandidate(input, batch, exact);
+            if (_beforeCandidatePublish is not null && !modeledNonHitSample)
                 await _beforeCandidatePublish(matchNumber, cancellationToken).ConfigureAwait(false);
             await _candidates.Writer.WriteAsync(output, cancellationToken).ConfigureAwait(false);
         }
         catch
         {
             _recovery.AbandonDelivery(ordinal);
-            Interlocked.Decrement(ref _reservedMatches);
+            if (!modeledNonHitSample) Interlocked.Decrement(ref _reservedMatches);
             throw;
         }
         // Count only successfully published outputs, including in diagnostic candidate mode.
         int classificationCount = output.IsUnverified ? Interlocked.Increment(ref _unverifiedCandidates)
             : Interlocked.Increment(ref _confirmedCandidates);
-        int published = Interlocked.Increment(ref _matches);
+        Interlocked.Increment(ref _matches);
+        if (modeledNonHitSample) Interlocked.Increment(ref _modeledNonHitSampleCount);
         RecordPublishedCandidate(output, classificationCount);
-        if (published >= _plan.TargetMatchCount)
+        if (!modeledNonHitSample && Interlocked.Increment(ref _targetCandidates) >= _plan.TargetMatchCount)
         {
             Interlocked.Exchange(ref _targetReached, 1);
             _lifetime.Cancel();

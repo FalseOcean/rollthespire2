@@ -67,7 +67,7 @@ internal static class FeedbackIssueTemplate
             - 反馈包：{Scalar(bundleName)}
 
             ## 问题描述（请填写）
-            发生了什么？你原本期望什么？
+            发生了什么？如果预测和实玩不同，请指出对应的种子和出现差异的选项或奖励。
 
 
             ## 复现步骤（请填写）
@@ -96,7 +96,7 @@ internal static class FeedbackIssueTemplate
             - Bundle: {Scalar(bundleName)}
 
             ## Problem description (please fill in)
-            What happened? What did you expect to happen?
+            What happened? If a prediction differed in play, identify the seed and the option or reward that differed.
 
 
             ## Steps to reproduce (please fill in)

@@ -48,6 +48,7 @@ public static class ProductionSearchReplay
         Bootstrap.RuntimeLog.Info("standaloneProductionHostInitialized=true");
         Search.Runtime.SearchPerformanceProfileFoundation.ObserveGpuIdentity(
             Godot.RenderingServer.GetVideoAdapterName(), Godot.RenderingServer.GetCurrentRenderingDriverName());
+        Search.FamilyExecution.FamilyCanonicalMeasuredCost.BeginPreload();
         Search.FamilyExecution.GpuCostCalibration.InitializeOnMainThread();
         Search.FamilyExecution.CpuCostCalibration.InitializeOnMainThread();
         Search.Predictability.SearchPredictabilityVerificationStore.InitializeOnMainThread();

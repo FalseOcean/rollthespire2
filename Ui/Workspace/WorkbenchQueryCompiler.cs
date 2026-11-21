@@ -99,7 +99,7 @@ internal static class WorkbenchQueryCompiler
     private static RolltheSpire2.Core.Prediction.MorphicGroveScenario CaptureAggregateEventPremises(
         RuntimeContextAuthoritySnapshot authority, TransformationAggregateCondition aggregate)
     {
-        var source = Beta111MorphicGroveAuthorityCapture.CaptureAuthoredBasics(authority, aggregate.MorphicGrove || aggregate.TrialNondescript ? 2 : 1);
+        var source = Beta111MorphicGroveAuthorityCapture.ObserveAuthoredBasics(authority, aggregate.MorphicGrove || aggregate.TrialNondescript ? 2 : 1);
         return new(source.Authority, source.Premises with { EventOccurrenceBasis =
             "Authored transformation events: " + (aggregate.MorphicGrove ? "Morphic Grove / Group; " : "") +
             (aggregate.AromaOfChaos ? "Aroma of Chaos / LetGo; " : "") + (aggregate.WhisperingHollow ? "Whispering Hollow / Hug; " : "") +

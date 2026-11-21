@@ -8,6 +8,13 @@ using RolltheSpire2.Core.World.Beta109;
 
 namespace RolltheSpire2.Core.Events;
 
+[Flags]
+public enum EventResultCatalogParts
+{
+    None = 0, TrashGrab = 1, TrashDive = 2, FakeMerchant = 4,
+    All = TrashGrab | TrashDive | FakeMerchant
+}
+
 public sealed record Beta111EventResultAuthority(
     ModelKey OwnerCharacterKey,
     IReadOnlyList<ModelKey> UnlockedCharacterCardPoolKeys,
@@ -16,6 +23,11 @@ public sealed record Beta111EventResultAuthority(
     RuntimeProfileId ProfileId,
     string AuthorityFingerprint)
 {
+    public EventResultCatalogParts CatalogParts { get; init; }
+    internal IReadOnlyList<ModelKey>? CapturedColors { get; init; }
+    internal ModelKey[] ColorfulCandidates() => CapturedColors?.ToArray() ??
+        Beta111EventRules.ColorfulCandidates(OwnerCharacterKey, UnlockedCharacterCardPoolKeys, RngSemantics);
+    public bool HasCatalog(EventResultCatalogParts part) => StaticCatalogAuthorityExact || CatalogParts.HasFlag(part);
     public bool IsBeta111 => RuntimeProfilePolicies.SupportsEventResultModel(ProfileId);
     public RngSemanticProfileId RngSemantics { get; init; } = RngSemanticProfileId.Modern110;
     internal bool UsesChildShuffle => RuntimeProfilePolicies.UsesChildStreamShuffle(RngSemantics);
@@ -30,10 +42,12 @@ public sealed record Beta111EventResultAuthority(
             authority.Character.CharacterKey,
             effects?.UnlockedCharacterCardPoolKeys ?? Array.Empty<ModelKey>(),
             effects?.EventResultStaticCatalogExact == true,
-            effects?.EventColorfulCharacterPoolsExact == true || authority.UsesBestEffortModel && effects?.UnlockedCharacterCardPoolKeys is { Count: > 0 },
+            effects?.EventColorfulCharacterPoolsExact == true,
             authority.ProfileId,
             effects?.SnapshotFingerprint ?? authority.CatalogFingerprint)
-        { RngSemantics = authority.VersionResolution.SemanticProfileId };
+        { RngSemantics = authority.VersionResolution.SemanticProfileId,
+            CapturedColors = effects?.ColorfulCandidateColors,
+            CatalogParts = effects?.EventCatalogParts ?? EventResultCatalogParts.None };
     }
 }
 
@@ -47,6 +61,8 @@ public sealed record Beta111EventResultProjection(
     PredictionPrecision FakeMerchantPrecision,
     string EvidenceCode)
 {
+    public PredictionPrecision TrashGrabPrecision { get; init; } = TrashHeapPrecision;
+    public PredictionPrecision TrashDivePrecision { get; init; } = TrashHeapPrecision;
     public static Beta111EventResultProjection Unsupported(string code) => new(
         default,
         default,
@@ -77,18 +93,18 @@ public static class Beta111EventResultProjector
             return Beta111EventResultProjection.Unsupported("EventResultV1RequiresBeta111");
         ModelKey grab = default, dive = default;
         ModelKey[] fakeSix = [];
-        var staticPrecision = PredictionPrecision.Unsupported;
-        if (authority.StaticCatalogAuthorityExact)
+        bool canGrab = authority.HasCatalog(EventResultCatalogParts.TrashGrab);
+        bool canDive = authority.HasCatalog(EventResultCatalogParts.TrashDive);
+        bool canOffer = authority.HasCatalog(EventResultCatalogParts.FakeMerchant);
+        if (canGrab || canDive)
         {
-            // Grab and Dive are alternative choices from the same entry checkpoint.
-            Xoshiro256StarStar trashRng = EventRng(rootHash, playerSlotIndex, false,
-                Beta111EventResultCatalog.TrashHeapEventEntry);
-            grab = Beta111EventRules.TrashHeapGrab(trashRng.Clone());
-            dive = Beta111EventRules.TrashHeapDive(trashRng.Clone());
-            fakeSix = Beta111EventRules.FakeMerchantInventory(EventRng(
-                rootHash, playerSlotIndex, true, Beta111EventResultCatalog.FakeMerchantEventEntry), authority.RngSemantics);
-            staticPrecision = PredictionPrecision.Exact;
+            var trashRng = EventRng(rootHash, playerSlotIndex, false, Beta111EventResultCatalog.TrashHeapEventEntry);
+            if (canGrab) grab = Beta111EventRules.TrashHeapGrab(trashRng.Clone());
+            if (canDive) dive = Beta111EventRules.TrashHeapDive(trashRng);
         }
+        if (canOffer)
+            fakeSix = Beta111EventRules.FakeMerchantInventory(EventRng(rootHash, playerSlotIndex, true,
+                Beta111EventResultCatalog.FakeMerchantEventEntry), authority.RngSemantics);
 
         ModelKey[] colorful = Array.Empty<ModelKey>();
         PredictionPrecision colorfulPrecision = PredictionPrecision.Unknown;
@@ -96,7 +112,7 @@ public static class Beta111EventResultProjector
         {
             colorful = Beta111EventRules.ColorfulOffers(EventRng(rootHash, playerSlotIndex, false,
                 Beta111EventResultCatalog.ColorfulPhilosophersEventEntry),
-                authority.OwnerCharacterKey, authority.UnlockedCharacterCardPoolKeys, authority.RngSemantics);
+                authority.ColorfulCandidates());
             colorfulPrecision = PredictionPrecision.Exact;
         }
 
@@ -105,10 +121,14 @@ public static class Beta111EventResultProjector
             dive,
             colorful,
             fakeSix,
-            staticPrecision,
+            canGrab && canDive ? PredictionPrecision.Exact : PredictionPrecision.Unsupported,
             colorfulPrecision,
-            staticPrecision,
-            authority.UsesChildShuffle ? "beta113.event-result.source-audited" : "beta111.event-result-v1.source-audited");
+            canOffer ? PredictionPrecision.Exact : PredictionPrecision.Unsupported,
+            authority.UsesChildShuffle ? "beta113.event-result.source-audited" : "beta111.event-result-v1.source-audited")
+        {
+            TrashGrabPrecision = canGrab ? PredictionPrecision.Exact : PredictionPrecision.Unsupported,
+            TrashDivePrecision = canDive ? PredictionPrecision.Exact : PredictionPrecision.Unsupported
+        };
     }
 
     private static Xoshiro256StarStar EventRng(ulong rootHash, int playerSlotIndex,

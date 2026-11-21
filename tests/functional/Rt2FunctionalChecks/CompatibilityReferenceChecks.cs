@@ -38,7 +38,44 @@ internal static class CompatibilityReferenceChecks
         var candidateJson = System.Text.Json.JsonSerializer.SerializeToElement(candidate, options);
         Check(candidateJson.TryGetProperty("Evaluation", out _) && !candidateJson.TryGetProperty("AnalysisRequest", out _), "Candidate carries final evaluation independently of analysis request");
         Check(!candidateJson.TryGetProperty("PredictionRequest", out _), "Internal rename leaked into candidate schema");
+        CheckModernPatchPrediction(Check);
         Console.WriteLine($"CompatibilityReference checks={checks};PASS");
         return 0;
+    }
+
+    private static void CheckModernPatchPrediction(Action<bool, string> check)
+    {
+        const string seed = "000000000001"; // Native 0.113.0 opening includes Phial Holster.
+        var captured = ProductionSearchReplay.Read<ProductionSearchReplayContext>(
+            "tools/ProductionSearchHost/Corpus/v1/context.json").Context.Authority;
+        // Hold the item pools fixed so the combined Neow and reward report exercises both evidence sources.
+        var world = captured.WorldAuthority!;
+        world = world with { Beta109Generation = world.Beta109Generation! with { RngSemantics = RngSemanticProfileId.Modern113 } };
+        SeedPredictionFacts Observe(string version)
+        {
+            var authority = Beta110FastSearchFixtureAuthority.CreateBeta111(captured.Character.CharacterKey, 10, 0, 1, version)
+                .WithEffectAuthority(captured.EffectAuthority).WithWorldAuthority(world);
+            var detection = new GameVersionDetection(version, version, "beta", "CompatibilityReference", true, "");
+            if (!SeedPredictionRequest.TryCreate(seed, authority.Character, 10, 1, 0, authority, null,
+                SeedPredictionDomainSelection.Neow | SeedPredictionDomainSelection.NormalCombatRewards, true, out var request, out var error))
+                throw new InvalidOperationException(error.ToString());
+            return RuntimeProfileRegistry.Observe(detection, request!);
+        }
+
+        var reference = Observe("0.113.0");
+        var patch = Observe("0.113.1");
+        var offers = patch.Neow?.Choices.Select(choice => choice.RelicKey).ToArray() ?? [];
+        check(patch.Neow?.IdentityPrecision == PredictionPrecision.Exact && offers.Length == 3 &&
+            offers.Contains(BaseGameModelKeys.Relics.PhialHolster) &&
+            reference.Neow is { } opening && offers.SequenceEqual(opening.Choices.Select(choice => choice.RelicKey)),
+            "The accepted patch preserves the Modern113 opening and its ordered choices");
+        check(patch.Warnings.All(w => w.Code != PredictionWarningCode.UnverifiedVersionFallback) &&
+            Observe("0.113.9").Warnings.Any(w => w.Code == PredictionWarningCode.UnverifiedVersionFallback),
+            "Only the unknown later patch warns about provisional reuse");
+        check(patch.Diagnostics.Single(d => d.Code == PredictionDiagnosticCodes.RuntimeAuditFingerprint).Value ==
+            RuntimeVersionCompatibility.Resolve("0.113.1").EvidenceCode,
+            "The accepted patch records its own version evidence under the shared adapter");
+        check(patch.Diagnostics.Single(d => d.Code == "reward-adapter-audit-fingerprint").Value ==
+            RuntimeProfilePolicies.Beta111AuditFingerprint, "The combined report identifies the reward adapter's separate audit");
     }
 }

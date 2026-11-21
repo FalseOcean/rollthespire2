@@ -154,6 +154,7 @@ internal sealed partial class WorkspaceShell : Control
     }
     public override void _ExitTree()
     {
+        if (_workspace == Workspace.Analysis) _predictor?.RecordViewedAnalysis();
         StopPagePreparation(retire: true);
         if (_liveRun is null) FlushSearchEvidenceOnMainThread();
     }
@@ -176,6 +177,7 @@ internal sealed partial class WorkspaceShell : Control
     {
         if(_liveRun!=null && workspace==Workspace.Search) workspace=Workspace.Analysis;
         if (DeferWorkspacePage(workspace, () => SelectTask(workspace, encyclopediaTopic, predictorSeed))) return;
+        if (_workspace == Workspace.Analysis && workspace != _workspace) _predictor?.RecordViewedAnalysis();
         _notesPage?.SetPresentationActive(workspace == Workspace.Notes);
         bool libraryAlreadyCreated = _seedLibrary is not null;
         if (workspace == Workspace.Settings) EnsureSettings();

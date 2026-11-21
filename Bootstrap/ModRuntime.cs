@@ -21,6 +21,7 @@ internal static class ModRuntime
             }
 
             RuntimeLog.InitializeOnMainThread();
+            Infrastructure.Diagnostics.RenderingEnvironmentEvidence.RecordStartup();
             Infrastructure.Persistence.HistoricalRuntimeData.Archive(Path.GetDirectoryName(OperationalFileLog.LogDirectory)!);
         Search.FamilyExecution.FamilyDeviceProfileFoundation.CaptureAvailabilityOnMainThread();
             // OneTimeInitialization reads this manager before ModManager invokes us.
@@ -45,6 +46,7 @@ internal static class ModRuntime
                 $"Runtime initialized: game={detection.DisplayVersion}; profile={profile.ProfileId}; " +
                 $"compatibility={compatibility.SupportKind}; confidence={compatibility.Confidence}; runtimeAccepted={compatibility.RuntimeAccepted.ToString().ToLowerInvariant()}; " +
                 $"gameVersionIdentity={compatibility.GameVersionIdentity}; reference={compatibility.ReferenceVersion}; " +
+                $"rulesAdaptedThrough={compatibility.RulesAdaptedThroughVersion}; releaseSupported={compatibility.IsReleaseSupported.ToString().ToLowerInvariant()}; " +
                 $"semanticProfile={compatibility.SemanticProfileId}; " +
                 $"semanticFingerprint={RuntimeProfilePolicies.RngSemanticFingerprint(compatibility.SemanticProfileId)}; " +
                 $"capability={profile.Capability}; versionDetected={detection.IsExact.ToString().ToLowerInvariant()}; " +
@@ -53,7 +55,7 @@ internal static class ModRuntime
             {
                 RuntimeLog.Warn(
                     $"compatibilityWarning=UnvalidatedGameVersion;detected={compatibility.DetectedVersion}; " +
-                    $"reference={compatibility.ReferenceVersion};profile={compatibility.ProfileId}; " +
+                    $"reference={compatibility.ReferenceVersion};rulesAdaptedThrough={compatibility.RulesAdaptedThroughVersion};profile={compatibility.ProfileId}; " +
                     "RT2 will attempt compatible prediction/search using captured authority; game-version validation remains pending.");
             }
             RuntimeLog.Info($"Readable log: {RuntimeLog.CurrentLogPath}");
@@ -109,6 +111,8 @@ internal static class ModRuntime
                 RuntimeLog.Fault("startupFault=true;phase=NeowOperationUiInstallation", ex);
             }
 
+            if (compatibility.AllowsProductionSearch)
+                Search.FamilyExecution.FamilyCanonicalMeasuredCost.BeginPreload();
             _initialized = true;
         }
     }

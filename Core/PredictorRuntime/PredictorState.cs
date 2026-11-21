@@ -52,8 +52,20 @@ internal sealed record PredictorRunModifier(ModelKey Key, ModelKey? Character = 
 // persistent current/max HP simulation; requested healing can be capped by HP.
 internal sealed record PredictorHealthEffect(ModelKey SourceKey, long SourceInstanceId, int MaxHpDelta, int HealRequested);
 
-internal enum PredictorPotionRarity { Common, Uncommon, Rare, Event }
-internal sealed record PredictorPotionOption(ModelKey Key, PredictorPotionRarity Rarity, bool CanBeGeneratedInCombat = true);
+internal enum PredictorPotionRarity { Common, Uncommon, Rare, Event, Token, None }
+internal sealed record PredictorPotionOption(ModelKey Key, PredictorPotionRarity Rarity, bool CanBeGeneratedInCombat = true)
+{
+    internal static PredictorPotionOption FromSnapshot(NeowEffectPotionSnapshot potion) => new(potion.PotionKey,
+        potion.Rarity switch
+        {
+            EffectPotionRarity.Common => PredictorPotionRarity.Common,
+            EffectPotionRarity.Uncommon => PredictorPotionRarity.Uncommon,
+            EffectPotionRarity.Rare => PredictorPotionRarity.Rare,
+            EffectPotionRarity.Event => PredictorPotionRarity.Event,
+            EffectPotionRarity.Token => PredictorPotionRarity.Token,
+            _ => PredictorPotionRarity.None
+        });
+}
 
 internal enum PredictorStream
 {
@@ -86,6 +98,8 @@ internal sealed record PredictorCard(
     public bool HasRetainKeyword { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public ModelKey? Affliction { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool HasCustomStableComparison { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public PredictorObservedCardSort? ObservedSort { get; init; }
     // Null leaves canonical display behavior intact for producers that have
