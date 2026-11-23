@@ -21,9 +21,9 @@ internal static class TransformationContributorWhitelist
             "Beta111SingleBasicTransformProjector.WhisperingHollow", "TransformationAggregateNumericalPlan.WHISPERING_HOLLOW"),
         new Entry("E.Symbiote", 1, "One legal initial Basic at authored entry", "EventResultTransformSemantics.Project", "TransformationAggregateNumericalPlan.SYMBIOTE"),
         new Entry("E.TrialNondescript", 2, "Require Nondescript case, then transform two initial Basics", "EventResultTransformSemantics.Project", "TransformationAggregateNumericalPlan.TRIAL"),
-        new Entry("A.ASTROLABE", 3, "Selected Ancient offer; three removable same-pool initial Basics; declared preceding Transformations only",
+        new Entry("A.ASTROLABE", 3, "Selected Ancient offer; next three draws from the selected opening cursor for same-pool Basic inputs",
             "TransformationRelicProjector", "Scoped CPU projection; upgrade results"),
-        new Entry("A.PANDORAS_BOX", 0, "Variable count: actual opening Basic Strike/Defend materials minus earlier authored transforms, or explicit manual count",
+        new Entry("A.PANDORAS_BOX", 0, "Next draws from the selected opening cursor for the automatic or manual count shown in the editor",
             "TransformationRelicProjector", "Scoped CPU projection; zero descriptor count denotes variable, not zero outputs")
     });
     // N openings are alternatives. Bones admits exactly Leafy + NewLeaf, with

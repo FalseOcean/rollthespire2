@@ -54,6 +54,8 @@ internal sealed record WorkbenchSearchDraft(ModelKey Character, int Ascension, S
     AncientOptionConditionProfile AncientPremises)
 {
     public int Version { get; init; } = 3;
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool RequiresLobbyRead { get; init; }
     public IReadOnlyList<string>? ManualFamilyOrder { get; init; }
     public AncientEditorStateSnapshot? AncientEditor { get; init; }
     public NeowEditorStateSnapshot? NeowEditor { get; init; }
@@ -71,7 +73,7 @@ internal sealed record WorkbenchSearchDraft(ModelKey Character, int Ascension, S
     // editor/runtime/history drafts retain their observed per-player unlock data.
     internal WorkbenchSearchDraft ToPresetIntent() => WithoutCapturedAuthority() with
     {
-        Version = 5, GameVersion = "", Profile = null,
+        Version = 5, GameVersion = "", Profile = null, RequiresLobbyRead = false,
         Players = Players.Select(p => p with { Unlocks = null,
             UnlockSource = p.UnlockSource == "AssumedFullyUnlocked" ? "AssumedFullyUnlocked" : "CurrentContext" }).ToArray()
     };
@@ -119,6 +121,11 @@ internal sealed record WorkbenchSearchDraft(ModelKey Character, int Ascension, S
         RuntimeContextAuthoritySnapshot? capturedAuthority = null, OrderedPartyAuthority? capturedParty = null)
     {
         string probeSeed = RolltheSpire2.Compatibility.ProfileSeedGenerator.CreateProbeSeed(runtime.Profile);
+        if (RequiresLobbyRead)
+        {
+            foreach (var player in Players) player.RequireUnlocks();
+            throw new InvalidOperationException("Party.LobbyChangedReadUnlocksAgain");
+        }
         if (Version == 5) throw new InvalidOperationException("Preset.CurrentEnvironmentRequired");
         if (Version is not (1 or 2 or 3 or 4)) throw new InvalidOperationException("integration.load_version");
         if (Mode is not (WorldGameMode.Singleplayer or WorldGameMode.Multiplayer) || (Mode == WorldGameMode.Multiplayer) != (Players.Count > 0))

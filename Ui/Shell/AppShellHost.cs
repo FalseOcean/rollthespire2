@@ -66,6 +66,7 @@ internal sealed partial class AppShellHostRoot : Control
 
     private ModRuntimeSnapshot _snapshot = ModRuntimeSnapshot.NotInitialized;
     private Button? _launcher;
+    private Label? _launcherVersion;
     private NMainMenu? _mainMenu;
     private Rt2TopLevelSubmenu? _topLevelSurface;
     private bool _pushScheduled;
@@ -83,6 +84,16 @@ internal sealed partial class AppShellHostRoot : Control
     public override void _Input(InputEvent input)
     {
         _lastMenuInput = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (input is InputEventKey { Pressed: true, Echo: false } key &&
+            key.GetKeycodeWithModifiers() == _menuWorkspace?.Preferences.MainMenuLauncherShortcut &&
+            CanToggleMainMenuLauncher())
+        {
+            _menuWorkspace.SetMainMenuLauncherHidden(!_menuWorkspace.Preferences.MainMenuLauncherHidden);
+            RefreshLauncherVisibility();
+            GetViewport().SetInputAsHandled();
+            return;
+        }
+        TrackLauncherDrag(input);
     }
 
     public override void _ExitTree()
@@ -145,8 +156,11 @@ internal sealed partial class AppShellHostRoot : Control
         Node parent = lobby ?? this;
         if (_launcher.GetParent() != parent)
         {
+            EndLauncherGesture();
+            if (_launcher.GetParentControl() is { } previous) previous.Resized -= RestoreLauncherPosition;
             _launcher.Reparent(parent, false);
-            _launcher.Position = new Vector2(28, 96);
+            ((Control)parent).Resized += RestoreLauncherPosition;
+            RestoreLauncherPosition();
         }
     }
 
@@ -205,12 +219,10 @@ internal sealed partial class AppShellHostRoot : Control
             ZIndex = 0
         };
         StyleRt2Launcher(_launcher);
-        var versionLabel = new Label
+        var versionLabel = _launcherVersion = new Label
         {
             Name = "RolltheSpire2_LauncherVersion",
-            Text = $"RT2 v{typeof(ModRuntime).Assembly.GetName().Version?.ToString(3)}\n" +
-                text.Format("shell.target_game_versions", RuntimeVersionCompatibility.SupportedStableVersion,
-                    RuntimeVersionCompatibility.SupportedBetaVersion),
+            Text = FormatLauncherVersion(snapshot.Compatibility, text),
             Position = new Vector2(68, 5),
             MouseFilter = MouseFilterEnum.Ignore
         };
@@ -221,8 +233,13 @@ internal sealed partial class AppShellHostRoot : Control
         versionLabel.AddThemeConstantOverride("shadow_offset_y", 2);
         // Inherit launcher visibility when another main-menu surface opens.
         _launcher.AddChild(versionLabel);
-        _launcher.Pressed += ShowShell;
+        _launcher.Pressed += HandleLauncherPressed;
+        _launcher.GuiInput += BeginLauncherGesture;
         AddChild(_launcher);
+        RefreshLauncherVisibility();
+        Resized += RestoreLauncherPosition;
+        versionLabel.Resized += RestoreLauncherPosition;
+        RestoreLauncherPosition();
         RuntimeLog.Info("ui1AppShellAutoOpenSuppressed=true");
     }
 
@@ -384,14 +401,11 @@ internal sealed partial class AppShellHostRoot : Control
 
     public void SetMainMenuSurfaceVisible(bool visible, string reason)
     {
+        if (!visible) EndLauncherGesture();
         _mainMenuSurfaceVisible = visible;
         Visible = visible;
 
-        if (_launcher is not null)
-        {
-            _launcher.Visible = visible;
-            _launcher.Disabled = !visible || _pushScheduled;
-        }
+        RefreshLauncherVisibility();
 
         if (_lastLoggedSurfaceVisible != visible)
         {

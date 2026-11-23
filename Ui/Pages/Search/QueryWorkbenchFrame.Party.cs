@@ -10,10 +10,11 @@ namespace RolltheSpire2.Ui.Pages.Search;
 internal sealed partial class QueryWorkbenchFrame
 {
     private int _partyAscension = 10;
+    private bool _lobbyReadExpired;
     private readonly string[] _partyUnlockSources = Enumerable.Repeat("AssumedFullyUnlocked", MaximumPreviewPlayers).ToArray();
     private void UseFullyUnlockedParty()
     {
-        _readLobby = null; _readRoster = "";
+        _readLobby = null; _readRoster = ""; _lobbyReadExpired = false;
         for (int slot = 0; slot < MaximumPreviewPlayers; slot++)
         {
             _lobbyUnlocks[slot] = MegaCrit.Sts2.Core.Unlocks.UnlockState.all.ToSerializable();
@@ -60,21 +61,29 @@ internal sealed partial class QueryWorkbenchFrame
         return _editorParty;
     }
 
-    private WorkbenchSearchDraft CapturePartyDraft()
+    private WorkbenchSearchDraft CapturePartyDraft(bool forStorage = false)
     {
+        bool needsRead = _lobbyReadExpired;
         if (_readLobby is not null)
         {
-            if (_readLobby.Players.Count != _playerCount) throw new InvalidOperationException("Party.LobbySizeMismatch");
-            if (!ReferenceEquals(LobbyUnlockReadout.Find(GetTree().Root), _readLobby) || LobbyUnlockReadout.Roster(_readLobby) != _readRoster)
-                throw new InvalidOperationException("Party.LobbyChangedReadUnlocksAgain");
-            for (int slot = 0; slot < _playerCount; slot++)
-                if (_partyUnlockSources[slot] != "AssumedFullyUnlocked")
-                    _lobbyUnlocks[slot] = LobbyUnlockReadout.Copy(_readLobby.Players.Single(p => p.slotId == slot).unlockState);
+            bool sameSize = _readLobby.Players.Count == _playerCount;
+            needsRead = !sameSize || !ReferenceEquals(LobbyUnlockReadout.Find(GetTree().Root), _readLobby) ||
+                LobbyUnlockReadout.Roster(_readLobby) != _readRoster;
+            if (!sameSize && !forStorage) throw new InvalidOperationException("Party.LobbySizeMismatch");
+            if (!forStorage && !needsRead)
+                for (int slot = 0; slot < _playerCount; slot++)
+                    if (_partyUnlockSources[slot] != "AssumedFullyUnlocked")
+                        _lobbyUnlocks[slot] = LobbyUnlockReadout.Copy(_readLobby.Players.Single(p => p.slotId == slot).unlockState);
         }
         var players = Enumerable.Range(0, _playerCount).Select(slot => new WorkbenchPlayerDraft(slot, _seatCharacters[slot],
-            _lobbyUnlocks[slot] ?? throw new InvalidOperationException($"Party.UnlocksUnread:P{slot + 1}"), _partyUnlockSources[slot])
+            _lobbyUnlocks[slot], _partyUnlockSources[slot])
         { AncientEditor = _ancientEditor.ExportPartyEditorState(slot), NeowEditor = _neowEditor.ExportPartyEditorState(slot),
             EventEditor = _eventEditor.ExportPartyEditorState(slot), CombatRewardEditor = _combatEditor.ExportPartyEditorState(slot) }).ToArray();
+        if (!forStorage)
+        {
+            foreach (var player in players) player.RequireUnlocks();
+            if (needsRead) throw new InvalidOperationException("Party.LobbyChangedReadUnlocksAgain");
+        }
         var queries = new List<PlayerOfferQuery>();
         for (int slot = 0; slot < _playerCount; slot++)
         {
@@ -92,7 +101,8 @@ internal sealed partial class QueryWorkbenchFrame
         }
         var q = _eventEditor.ExportSharedPartyQuery(_ancientEditor.ExportSharedPartyQuery(_actInformationEditor.ExportQuery(SearchQuery.Empty))) with { Players = queries };
         return new(players[0].Character, _partyAscension, q, AncientOptionConditionProfile.BroadDefault)
-        { Version = 4, Players = players, PartyAncientEditor = _ancientEditor.ExportSharedPartyEditorState(),
+        { Version = 4, Players = players, RequiresLobbyRead = needsRead || players.Any(p => p.Unlocks is null),
+            PartyAncientEditor = _ancientEditor.ExportSharedPartyEditorState(),
             MapEditor = _actInformationEditor.ExportMapState(),
             Mode = Core.World.Snapshots.WorldGameMode.Multiplayer, GameVersion = _runtime.Detection.NormalizedVersion,
             Profile = _runtime.Profile.ProfileId, ObservationVersion = PartyNeowQuery.HasTransactions(q) ? Core.Effects.PartyNeowAdmission.ObservationVersion : OrderedPartyAuthority.ObservationVersion };
@@ -105,8 +115,11 @@ internal sealed partial class QueryWorkbenchFrame
         // The fully-unlocked option describes the current game. An older
         // captured lobby roster needs its actual unlock data to be read again.
         draft = draft.RefreshAssumedPartyUnlocks(_runtime);
-        // Validate the entire authored grammar before touching editor state.
-        _editorInputs.Compile(draft, _runtime);
+        // An interrupted lobby read leaves a serializable request. Validate its
+        // roster and grammar here; execution still needs current slot unlocks.
+        if (draft.RequiresLobbyRead)
+            Persistence.SearchPresetCompatibilityResolver.ValidateWorkbenchShape(draft.ToPresetIntent());
+        else _editorInputs.Compile(draft, _runtime);
         // Map predicates on a saved player are shared facts at compilation too.
         // Import that same bound map intent instead of losing it in personal editors.
         var boundMaps = PartyInitialQuery.BindSharedConditions(draft.Query);
@@ -116,14 +129,14 @@ internal sealed partial class QueryWorkbenchFrame
         ValidateRepresentable(mapQuery with { Players = [] }, allowSharedAncientIdentity: true);
         foreach (var p in draft.Query.Players) ValidateRepresentable(p.Offers.IsEmpty ? p.Conditions :
             p.Conditions with { LegacyNeow = p.Conditions.LegacyNeow with { NeowRelics = p.Offers } });
-        _readLobby = null; _readRoster = "";
+        _readLobby = null; _readRoster = ""; _lobbyReadExpired = draft.RequiresLobbyRead;
         _multiplayer = true; _playerCount = draft.Players.Count; _seat = 0; _partyAscension = draft.Ascension;
         _editorParty = null; _editorPartyKey = "";
         foreach (var p in draft.Players)
         {
-            _seatCharacters[p.Slot] = p.Character; _lobbyUnlocks[p.Slot] = LobbyUnlockReadout.Copy(p.Unlocks!);
+            _seatCharacters[p.Slot] = p.Character; _lobbyUnlocks[p.Slot] = p.Unlocks is null ? null : LobbyUnlockReadout.Copy(p.Unlocks);
             _partyUnlockSources[p.Slot] = p.UnlockSource;
-            _unlockReadStatus[p.Slot] = p.UnlockSource == "AssumedFullyUnlocked" ? 4 : 1;
+            _unlockReadStatus[p.Slot] = p.UnlockSource == "AssumedFullyUnlocked" ? 4 : draft.RequiresLobbyRead ? 0 : 1;
             _neowEditor.ImportPartyOffers(p.Slot, ModelKeySetFilter.Empty);
         }
         // Shared identity/mode owns personal A interpretation. Import it before any
@@ -151,5 +164,8 @@ internal sealed partial class QueryWorkbenchFrame
         _seat = 0;
         _ancientEditor.ImportSharedPartyQuery(draft.Query, draft.PartyAncientEditor, draft.Players);
         _actInformationEditor.ImportQuery(mapQuery, draft.MapEditor); RefreshEditorContexts(render);
+        if (draft.RequiresLobbyRead && System.Text.Json.JsonSerializer.Serialize(draft.Query) !=
+            System.Text.Json.JsonSerializer.Serialize(CapturePartyDraft(forStorage: true).Query))
+            throw new InvalidOperationException("integration.load_shape");
     }
 }

@@ -9,6 +9,7 @@ using RolltheSpire2.Core.Merchant;
 using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Core.Relics;
 using RolltheSpire2.Core.World;
+using RolltheSpire2.Infrastructure.Snapshots;
 using RolltheSpire2.Search.Compilation;
 using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.FamilyExecution;
@@ -49,6 +50,7 @@ internal static class MerchantRelicSearchChecks
         Check113Bags(authority, root.RootHash);
         CheckRelicPoolCapture();
         Check113PotionStock();
+        CheckColorlessPrefix(authority);
         var positive = Evaluate(query);
         Check(positive.Disposition == SearchDisposition.Match &&
             positive.Evidence.Any(e => e.RelatedKey == left && e.Ordinal == 1 && e.OutcomeId == "Left") &&
@@ -92,7 +94,7 @@ internal static class MerchantRelicSearchChecks
             async Task Scan()
             {
                 await using var session = FamilyExecutionCoordinator.Start(plan, gpuAvailable:false);
-                await session.Completion.WaitAsync(TimeSpan.FromSeconds(30));
+                await session.Completion.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
                 Check(session.TryReadCandidate(out var hit) && hit!.Seed == seed && hit.IsUnfiltered == skip &&
                     hit.ValidationDisposition == (skip ? SearchDisposition.NotEvaluatedByPolicy : SearchDisposition.Match), "production candidate validation");
             }
@@ -104,6 +106,103 @@ internal static class MerchantRelicSearchChecks
     private sealed class ObservedPool(object? result)
     {
         public object? GetUnlockedRelics(object unlockState) => result;
+    }
+
+    private sealed class PrefixClonePotion : MegaCrit.Sts2.Core.Models.PotionModel
+    {
+        public override MegaCrit.Sts2.Core.Entities.Potions.PotionRarity Rarity => MegaCrit.Sts2.Core.Entities.Potions.PotionRarity.Rare;
+        public override MegaCrit.Sts2.Core.Entities.Potions.PotionUsage Usage => MegaCrit.Sts2.Core.Entities.Potions.PotionUsage.AnyTime;
+        public override MegaCrit.Sts2.Core.Entities.Cards.TargetType TargetType => MegaCrit.Sts2.Core.Entities.Cards.TargetType.AnyPlayer;
+        protected override void AfterCloned() => base.AfterCloned();
+    }
+
+    private static void CheckColorlessPrefix(RuntimeContextAuthoritySnapshot source)
+    {
+        // A custom potion may clone successfully in-game while capture cannot
+        // certify its override. Keep every rarity stocked; this is not the
+        // different case where the native merchant itself cannot be created.
+        var effects = source.EffectAuthority!;
+        var nativePotion = new PrefixClonePotion();
+        if (!nativePotion.ToMutable().IsMutable) throw new Exception("Native custom potion must clone successfully");
+        var capturedPotion = (NeowEffectPotionSnapshot)typeof(ReflectionNeowEffectSnapshotAdapter)
+            .GetMethod("ConvertPotionModel", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+            .Invoke(null, [nativePotion, 0, "potion-prefix-clone"])!;
+        if (capturedPotion.MerchantCloneRuleExact || capturedPotion.Rarity != EffectPotionRarity.Rare)
+            throw new Exception("Normal custom clone must be captured as unverified, not impossible");
+        var capturedPool = effects.MerchantColorlessOrderedPool ?? effects.ColorlessRewardPool!;
+        // The compact shared fixture has only one rare. Two real candidate
+        // positions are needed to distinguish a wrong offered identity.
+        var pool = capturedPool.Concat([capturedPool.First(c => c.Rarity == EffectCardRarity.Rare) with {
+            CardKey = new("CARD", "PREFIX_OTHER_RARE"), InstanceId = "prefix-other-rare", PoolOrder = capturedPool.Count
+        }]).ToArray();
+        var stock = Enum.GetValues<EffectPotionRarity>()
+            .Where(r => r is EffectPotionRarity.Common or EffectPotionRarity.Uncommon or EffectPotionRarity.Rare)
+            .SelectMany(r => Enumerable.Range(0, 3).Select(i => new NeowEffectPotionSnapshot(
+                new("POTION", r + "_PREFIX_" + i), (int)r * 3 + i, r)
+                { MerchantCloneRuleExact = r != EffectPotionRarity.Rare || capturedPotion.MerchantCloneRuleExact })).ToArray();
+        var inputAuthority = source.WithEffectAuthority(effects with {
+            MerchantColorlessOrderedPool = pool, MerchantColorlessOrderedPoolExact = true,
+            MerchantColorlessPoolIdentityHooksExact = true, MerchantColorlessRarityIdentityHooksExact = true,
+            MerchantInitialInventoryShapeExact = false, MerchantPotionStock = stock
+        });
+        var context = SearchContextFactory.From(source.ProfileId, source.Character.CharacterKey, source.Ascension,
+            inputAuthority, new("0.113.1", "0.113.1", "beta", "fixture", true, ""), AncientOptionConditionProfile.BroadDefault);
+        var coveredPrefixes = new HashSet<int>();
+        for (ulong ordinal = 0; ordinal < 128; ordinal++)
+        {
+            string seed = VisibleSeedCandidateCodec.FormatOrdinal(Beta111Profile.Instance, ordinal);
+            var root = TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed);
+            var projection = Beta111NormalMerchantColorlessSequenceProjector.Project(root.RootHash,
+                Beta111MerchantColorlessAuthority.From(inputAuthority));
+            if (projection.Merchants.Count is < 1 or >= 5) continue;
+            int prefix = projection.Merchants.Count;
+            if (!coveredPrefixes.Add(prefix)) continue;
+            foreach (var slot in new[] { MerchantColorlessSlot.Uncommon, MerchantColorlessSlot.Rare })
+            {
+                var known = projection.Merchants.Select(m => slot == MerchantColorlessSlot.Uncommon
+                    ? m.UncommonColorless : m.RareColorless).ToArray();
+                SearchQuery Query(int count, CombatRewardSequenceOrderMode mode, params ModelKey?[] targets) =>
+                    SearchQuery.Empty with { MerchantColorlessSequenceConditions = [new(count, mode, slot, targets)] };
+                PreparedSearch Prepare(SearchQuery query) => SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context),
+                    new(seed, 1, 2, 1)).Plan ?? throw new Exception("Colorless prefix compile");
+                SearchDisposition Evaluate(SearchQuery query) => ProductionExactSearchEvaluator.Evaluate(Prepare(query).Model, root).Evaluation.Disposition;
+                for (int count = prefix + 1; count <= 5; count++)
+                {
+                    var targets = new ModelKey?[count]; targets[0] = known[0];
+                    var ordered = Query(count, CombatRewardSequenceOrderMode.Ordered, targets);
+                    if (Evaluate(ordered) != SearchDisposition.Match ||
+                        Evaluate(Query(count, CombatRewardSequenceOrderMode.Unordered, targets)) != SearchDisposition.Match)
+                        throw new Exception("Known colorless prefix lost to unrelated later shop");
+                    targets = new ModelKey?[count]; targets[^1] = known[0];
+                    if (Evaluate(Query(count, CombatRewardSequenceOrderMode.Ordered, targets)) != SearchDisposition.Unknown)
+                        throw new Exception("Specified later shop requires its observation");
+                    var mismatch = pool.First(c => c.Rarity == (slot == MerchantColorlessSlot.Uncommon
+                        ? EffectCardRarity.Uncommon : EffectCardRarity.Rare) && c.CardKey != known[0]).CardKey;
+                    targets[0] = mismatch;
+                    if (Evaluate(Query(count, CombatRewardSequenceOrderMode.Ordered, targets)) != SearchDisposition.NoMatch)
+                        throw new Exception("Known ordered mismatch must reject despite unknown suffix");
+                    var repeated = Enumerable.Repeat<ModelKey?>(mismatch, count).ToArray();
+                    if (Evaluate(Query(count, CombatRewardSequenceOrderMode.Unordered, repeated)) != SearchDisposition.NoMatch)
+                        throw new Exception("Unknown shops cannot fill more targets than remaining positions");
+                    using var completion = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                    Scan().GetAwaiter().GetResult();
+                    async Task Scan()
+                    {
+                        var options = SearchPresetStore.CreateJsonOptions();
+                        var restored = JsonSerializer.Deserialize<SearchQuery>(JsonSerializer.Serialize(ordered, options), options)!;
+                        if (SearchContinuationIdentity.For(Prepare(restored)) != SearchContinuationIdentity.For(Prepare(ordered)))
+                            throw new Exception("Colorless partial-window preset changed its continuation identity");
+                        await using var session = FamilyExecutionCoordinator.Start(Prepare(restored), gpuAvailable: false);
+                        await session.Completion.WaitAsync(completion.Token).ConfigureAwait(false);
+                        if (!session.TryReadCandidate(out var hit) || hit!.Seed != seed || hit.ValidationDisposition != SearchDisposition.Match)
+                            throw new Exception("Colorless prefix full search lost known positive");
+                    }
+                }
+            }
+            Console.WriteLine($"COLORLESS_PREFIX_PASS seed={seed};knownShops={prefix};bothSlots=true;orderedAndUnordered=true;fullSearch=true");
+            if (coveredPrefixes.Count == 4) return;
+        }
+        throw new Exception("Colorless prefix fixture needs each successful prefix of one through four shops");
     }
 
     private static void CheckRelicPoolCapture()

@@ -86,22 +86,17 @@ internal sealed partial class AnalysisPage
             openingNote.Text = _uiText.Format("predictor.ancient.transform.premise", opening);
             openingNote.Show();
         }
-        if (openingKnown)
-            block.AddChild(WNote(Text(pandora ? "predictor.ancient.transform.pandora" : "predictor.ancient.transform.astrolabe")));
-
         var body = WColumn();
-        // Older versions can still resolve a known empty box without drawing RNG.
-        bool knownLegacyCount = result.Status == SeedAncientTransformStatus.UnsupportedVersion && result.AutomaticCount.HasValue;
-        if (pandora && (openingKnown || knownLegacyCount))
+        if (pandora && result.PreviewCount.HasValue)
         {
             var controls = new HFlowContainer();
             controls.AddThemeConstantOverride("h_separation", 10);
             block.AddChild(controls);
-            controls.AddChild(WNote(Text("query.transform.pandora.count")));
-            var quantity = new MapQuantityInput(_palette, _pandoraCountOverride ?? result.AutomaticCount, true)
+            controls.AddChild(WNote(Text("predictor.ancient.transform.preview_count")));
+            var quantity = new MapQuantityInput(_palette, result.PreviewCount, true)
                 { Name = "PandoraCount" };
             controls.AddChild(quantity);
-            var restore = WAction("query.transform.pandora.restore");
+            var restore = WAction("predictor.ancient.transform.reset_count");
             restore.Name = "PandoraAuto";
             restore.Disabled = !_pandoraCountOverride.HasValue;
             controls.AddChild(restore);

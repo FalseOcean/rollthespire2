@@ -24,6 +24,10 @@ internal sealed class UserPreferencesDocument
     public string Language { get; set; } = string.Empty;
     // Explicit UI choice; missing/empty preserves existing follow-game behavior.
     public string LanguageOverride { get; set; } = string.Empty;
+    public float? MainMenuLauncherX { get; set; }
+    public float? MainMenuLauncherY { get; set; }
+    public bool MainMenuLauncherHidden { get; set; }
+    public Godot.Key MainMenuLauncherShortcut { get; set; } = SearchWorkspace.DefaultMainMenuLauncherShortcut;
     public float PanelWidth { get; set; }
     public float PanelHeight { get; set; }
     public string SearchMode { get; set; } = "Auto";

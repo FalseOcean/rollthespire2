@@ -7,15 +7,17 @@ namespace RolltheSpire2.Core.Prediction;
 internal enum SeedAncientTransformStatus
 {
     Ready, UnsupportedVersion, UnsupportedParty, ContextUnavailable, OpeningUnavailable,
-    MaterialsUnknown, InsufficientBasics, StreamUnknown, PoolUnknown, DrawBudgetExceeded
+    StreamUnknown, PoolUnknown, DrawBudgetExceeded
 }
 
 internal sealed record SeedAncientTransformResult(SeedAncientTransformStatus Status,
-    IReadOnlyList<TransformationRelicCard> Cards, int? AutomaticCount = null);
+    IReadOnlyList<TransformationRelicCard> Cards, int? PreviewCount = null);
 
-/// <summary>Conditional on obtaining the relic and no further personal transform draws or material changes after the opening.</summary>
+/// <summary>Previews consecutive replacements of same-character Basic cards from the selected opening cursor.</summary>
 internal static class SeedAncientTransformPredictor
 {
+    internal const int DefaultPandoraPreviewCount = 10;
+
     internal static SeedAncientTransformResult Project(ulong root, SeedPredictionRequest request, SeedPredictionFacts facts,
         ModelKey relic, int? openingChoiceSlot, string openingRouteId, int? pandoraCount = null)
     {
@@ -39,24 +41,23 @@ internal static class SeedAncientTransformPredictor
 
         var opening = ResolveOpening(request, facts, openingChoiceSlot, openingRouteId);
         if (opening is null) return new(SeedAncientTransformStatus.OpeningUnavailable, []);
-        int? automatic = astrolabe ? TransformationRelicProjector.AstrolabeTargetCount : opening.BasicStrikeDefendCount;
-        int? count = pandoraCount ?? automatic;
-        // An empty Pandora target list never reads RNG. For a nonempty list
-        // the older shared Niche cursor cannot be known from the opening alone.
-        if (count == 0) return new(SeedAncientTransformStatus.Ready, [], automatic);
         if (semantics != RngSemanticProfileId.Modern113)
-            return new(SeedAncientTransformStatus.UnsupportedVersion, [], automatic);
-        if (astrolabe && opening.BasicCount < TransformationRelicProjector.AstrolabeTargetCount)
-            return new(SeedAncientTransformStatus.InsufficientBasics, []);
-        if (count is null || astrolabe && opening.BasicCount is null)
-            return new(SeedAncientTransformStatus.MaterialsUnknown, []);
+        {
+            // Legacy uses the shared Niche stream. Only an empty box is settled without that cursor.
+            int? legacyCount = astrolabe ? null : pandoraCount ?? opening.BasicStrikeDefendCount;
+            return new(legacyCount == 0 ? SeedAncientTransformStatus.Ready : SeedAncientTransformStatus.UnsupportedVersion,
+                [], legacyCount);
+        }
+
+        int count = astrolabe ? TransformationRelicProjector.AstrolabeTargetCount : pandoraCount ?? DefaultPandoraPreviewCount;
+        if (count == 0) return new(SeedAncientTransformStatus.Ready, [], count);
         if (count > TransformationRelicProjector.ProjectionDrawBudget)
-            return new(SeedAncientTransformStatus.DrawBudgetExceeded, [], automatic);
-        if (opening.StreamOffset is not { } offset) return new(SeedAncientTransformStatus.StreamUnknown, [], automatic);
+            return new(SeedAncientTransformStatus.DrawBudgetExceeded, [], count);
+        if (opening.StreamOffset is not { } offset) return new(SeedAncientTransformStatus.StreamUnknown, [], count);
         var projector = TransformationRelicProjector.Capture(authority.EffectAuthority);
-        if (projector is null) return new(SeedAncientTransformStatus.PoolUnknown, [], automatic);
+        if (projector is null) return new(SeedAncientTransformStatus.PoolUnknown, [], count);
         return new(SeedAncientTransformStatus.Ready, projector.Project(Beta111Profile.Instance, root, request.PlayerSlotIndex,
-            semantics, offset, count.Value, upgrade: astrolabe), automatic);
+            semantics, offset, count, upgrade: astrolabe), count);
     }
 
     private static OpeningTransformationContinuation? ResolveOpening(SeedPredictionRequest request, SeedPredictionFacts facts,

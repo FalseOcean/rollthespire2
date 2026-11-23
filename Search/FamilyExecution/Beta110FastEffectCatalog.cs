@@ -63,6 +63,7 @@ internal sealed record Beta110FastEffectCatalog(
     Beta110FastRelicBucket[] PlayerRelicBuckets,
     Beta110FastCardPool CharacterRewardPool,
     Beta110FastCardPool ColorlessRewardPool,
+    // One slot per donor selected by Kaleidoscope, with that slot's effective candidates.
     Beta110FastCardPool[] OtherCharacterPools,
     ushort[] LeafyStrikeTransformPool,
     ushort[] LeafyDefendTransformPool,
@@ -125,12 +126,13 @@ internal static class Beta110FastEffectCatalogCompiler
 
         IReadOnlyList<NeowEffectRelicSnapshot> shared = authority?.SharedRelicPoolSource ?? Array.Empty<NeowEffectRelicSnapshot>();
         IReadOnlyList<NeowEffectRelicSnapshot> character = authority?.CharacterRelicPoolSource ?? Array.Empty<NeowEffectRelicSnapshot>();
+        IReadOnlyList<CharacterCardPoolSnapshot> kaleidoscopePools = authority?.EffectiveKaleidoscopePools ?? Array.Empty<CharacterCardPoolSnapshot>();
         foreach (NeowEffectRelicSnapshot relic in shared.Concat(character)) dense.GetOrAdd(relic.RelicKey);
         foreach (NeowEffectCardSnapshot card in authority?.CharacterRewardPool ?? Array.Empty<NeowEffectCardSnapshot>()) dense.GetOrAdd(card.CardKey);
         foreach (NeowEffectCardSnapshot card in authority?.ColorlessRewardPool ?? Array.Empty<NeowEffectCardSnapshot>()) dense.GetOrAdd(card.CardKey);
         foreach (NeowEffectCardSnapshot card in authority?.TransformPool ?? Array.Empty<NeowEffectCardSnapshot>()) dense.GetOrAdd(card.CardKey);
         foreach (NeowEffectPotionSnapshot potion in authority?.PotionPool ?? Array.Empty<NeowEffectPotionSnapshot>()) dense.GetOrAdd(potion.PotionKey);
-        foreach (CharacterCardPoolSnapshot pool in authority?.OtherCharacterPools ?? Array.Empty<CharacterCardPoolSnapshot>())
+        foreach (CharacterCardPoolSnapshot pool in kaleidoscopePools)
         {
             foreach (NeowEffectCardSnapshot card in pool.Cards) dense.GetOrAdd(card.CardKey);
         }
@@ -173,9 +175,10 @@ internal static class Beta110FastEffectCatalogCompiler
             .Where(c => c.IsMultiplayerOnly).DistinctBy(c => c.CardKey).Select((c, i) => c with { PoolOrder = i }), dense);
         Beta110FastCardPool colorlessPool = BuildCardPool(
             authority?.ColorlessRewardPool ?? Array.Empty<NeowEffectCardSnapshot>(), dense);
-        Beta110FastCardPool[] otherPools = (authority?.OtherCharacterPools ?? Array.Empty<CharacterCardPoolSnapshot>())
+        Beta110FastCardPool[] otherPools = kaleidoscopePools
             .OrderBy(pool => pool.PoolOrder)
-            .Select(pool => BuildCardPool(pool.Cards, dense))
+            // An incomplete donor cannot prove a fixed reward draw count.
+            .Select(pool => BuildCardPool(pool.CandidateCaptureIssue is null ? pool.Cards : [], dense))
             .ToArray();
 
         (ushort[] leafyStrikePool, ushort[] leafyDefendPool, ushort[] newLeafPool,
@@ -210,10 +213,11 @@ internal static class Beta110FastEffectCatalogCompiler
         ModelKey[] keys = dense.ToArray();
         bool keyCountSupported = !dense.Overflowed && keys.Length <= MaximumDenseKeys;
         var cardRarityByDenseId = new byte[keys.Length];
-        foreach (NeowEffectCardSnapshot card in (authority?.CharacterRewardPool ?? Array.Empty<NeowEffectCardSnapshot>())
+        // An offer-specific card model can have a different rarity from the ordinary card.
+        foreach (NeowEffectCardSnapshot card in kaleidoscopePools.SelectMany(pool => pool.Cards)
+                     .Concat(authority?.CharacterRewardPool ?? Array.Empty<NeowEffectCardSnapshot>())
                      .Concat(authority?.ColorlessRewardPool ?? Array.Empty<NeowEffectCardSnapshot>())
-                     .Concat(authority?.TransformPool ?? Array.Empty<NeowEffectCardSnapshot>())
-                     .Concat((authority?.OtherCharacterPools ?? Array.Empty<CharacterCardPoolSnapshot>()).SelectMany(pool => pool.Cards)))
+                     .Concat(authority?.TransformPool ?? Array.Empty<NeowEffectCardSnapshot>()))
         {
             if (!dense.TryGet(card.CardKey, out ushort id) || id >= cardRarityByDenseId.Length) continue;
             cardRarityByDenseId[id] = card.Rarity switch
@@ -237,7 +241,7 @@ internal static class Beta110FastEffectCatalogCompiler
         bool colorlessExact = authority?.HasExactColorlessRewardPool == true &&
                               colorlessPool.TotalCount > 0 &&
                               keyCountSupported;
-        bool otherExact = authority?.HasExactOtherCharacterPools == true &&
+        bool otherExact = authority?.HasExactKaleidoscopePools == true &&
                           otherPools.Length is >= 3 and <= MaximumOtherCharacterPools &&
                           otherPools.All(pool => pool.TotalCount > 0) &&
                           keyCountSupported;

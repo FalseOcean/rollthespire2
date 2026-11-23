@@ -69,12 +69,17 @@ internal sealed partial class QueryWorkbenchFrame
             CombatRewardEditor = _combatEditor.ExportEditorState(), MapEditor = _actInformationEditor.ExportMapState() };
     }
 
+    private WorkbenchSearchDraft CaptureAuthoredDraft() => _multiplayer
+        ? CapturePartyDraft(forStorage: true) with { ManualFamilyOrder = _manualFamilyOrder?.ToArray() }
+        : CaptureDraft();
+
     internal void RestoreDraft(WorkbenchSearchDraft draft, bool render = true, bool migrateLegacyTransformations = true)
     {
         using var observation = _editorInputs.Observe(_runtime);
         if (draft.Version is not (1 or 2 or 3 or 4)) throw new InvalidOperationException("integration.load_version");
         _manualFamilyOrder = draft.ManualFamilyOrder?.ToArray();
         if (draft.Players.Count > 0) { RestorePartyDraft(draft, render); return; }
+        if (draft.RequiresLobbyRead) throw new InvalidOperationException("Party.DraftModeMismatch");
         ValidateRepresentable(draft.Query);
         _multiplayer = false; _seat = 0; _soloCharacter = draft.Character; _soloAscension = draft.Ascension;
         _fishingRodDrawResearch = draft.Query.FishingRodDrawResearch;
@@ -246,6 +251,10 @@ internal sealed partial class QueryWorkbenchFrame
         // An unfinished local transformation condition is actionable editor
         // state. It must still block export, but is not a system/save failure.
         if (!IsUnfinishedTransformation(ex)) _persistence.RecordPresentationFailure(ex, stage);
+        if (ex.Message.StartsWith("Party.UnlocksUnread:", StringComparison.Ordinal))
+            return _text.Format("query.context.slot_unlocks_needed", ex.Message["Party.UnlocksUnread:".Length..]);
+        if (ex.Message == "Party.LobbyChangedReadUnlocksAgain") return _text.Get("query.context.roster_changed");
+        if (ex.Message == "Party.LobbySizeMismatch") return _text.Get("query.context.roster_size_mismatch");
         if (ex.Message.StartsWith(RolltheSpire2.Compatibility.ProfileSeedGenerator.UnavailableCode, StringComparison.Ordinal))
             return SeedProfileUnavailableMessage();
         if (TransformationContinuationIssueKey(ex.Message) is { } continuationKey) return _text.Get(continuationKey);
@@ -285,7 +294,7 @@ internal sealed partial class QueryWorkbenchFrame
         {
             // Unavailable catalogs must not replace the saved intent on panel closure.
             _ = RolltheSpire2.Compatibility.ProfileSeedGenerator.CreateProbeSeed(_runtime.Profile);
-            var draft=CaptureDraft().WithoutCapturedAuthority();
+            var draft=CaptureAuthoredDraft().WithoutCapturedAuthority();
             stage = "DraftSave";
             string serialized = JsonSerializer.Serialize(draft);
             if (_restoredCaptureStamp == serialized || _lastSaved == serialized) return;
@@ -328,6 +337,9 @@ internal sealed partial class QueryWorkbenchFrame
         }
         catch (Exception exception)
         {
+            if (_multiplayer && (exception.Message.StartsWith("Party.UnlocksUnread", StringComparison.Ordinal) ||
+                exception.Message is "Party.LobbySizeMismatch" or "Party.LobbyChangedReadUnlocksAgain"))
+                SaveDraft();
             _lastIssue = exception.Message;
             if (_start is not null) _start.Disabled = true;
             if (_status is not null) _status.Text = Explain(exception, "DraftCapture");
@@ -423,7 +435,7 @@ internal sealed partial class QueryWorkbenchFrame
             int count = ResultCount;
             if (!_showResults && !_persistence.Runtime.Receiving)
             {
-                try { count = _persistence.ResultCountForQuery(CaptureDraft()); }
+                try { count = _persistence.ResultCountForQuery(CaptureAuthoredDraft()); }
                 catch { count = 0; }
             }
             _savedResultsEntry.Text = _text.Format("workflow.results.view_last", count);
@@ -440,7 +452,7 @@ internal sealed partial class QueryWorkbenchFrame
             try
             {
                 _persistence.EnsureEnvironment(SearchEnvironmentSignatureBuilder.Capture(_runtime));
-                _persistence.ActivateQueryResults(CaptureDraft());
+                _persistence.ActivateQueryResults(CaptureAuthoredDraft());
             }
             catch (Exception ex) { ReceiptText(Explain(ex)); return; }
         }

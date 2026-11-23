@@ -99,6 +99,18 @@ internal static class TransformationTakeoverEditorChecks
                 editor.ExportCondition(query)!.ResultRequirements.Count == 1, "An explicit removal releases only the saved extra requirement");
 
             var bones = BaseGameModelKeys.Relics.NeowsBones;
+            ModelKey[] openingPair = [BaseGameModelKeys.Relics.PrecariousShears, leafy.Identity];
+            var shearsQuery = SearchQuery.Empty with
+            {
+                OpeningRoute = new(bones),
+                OpeningRouteRelicRequirement = new(bones, openingPair)
+            };
+            editor.ImportQuery(shearsQuery);
+            editor.Refresh("zh", text, 0, [pandora, lab], [card], startingStrikeDefendCount: 9, openingRelics: openingPair);
+            Check(editor.GetAutomaticPandoraCount(pandora) == 7 &&
+                editor.ExportCondition(shearsQuery, [new(pandora, [card])]) is { AncientOpportunityCount: 7, PandoraCountOverride: null } &&
+                editor.ExportCondition(shearsQuery, [new(lab, [card])]) is { AncientOpportunityCount: 3 },
+                "The Shears and Leafy Poultice opening exports the displayed Pandora count or three Astrolabe rolls");
             var joint = new TransformationAggregateCondition(TransformationOpening.BonesLeafyNewLeaf, TransformationPickupOrder.Any,
                 false, false, false, TransformationAggregatePredicate.ContainsMultiset, 0, [card]);
             var jointQuery = SearchQuery.Empty with

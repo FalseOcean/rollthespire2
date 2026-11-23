@@ -48,7 +48,7 @@ internal static class PredictorWorldInitialization
                 a.RoomShapeExact && a.GenerateAllEncountersOrderExact && a.EncounterClassificationExact &&
                 a.EncounterTagIdentityExact && a.EncounterTagComparerExact &&
                 a.EncounterReferenceIdentityExact && a.EncounterWeightModelExact &&
-                a.EncounterRetryShapeExact && a.EncounterCatalogOfficialVanilla &&
+                a.EncounterRetryShapeExact &&
                 a.EliteEncounterSlots == 15 && a.EventRngConsumptionExact &&
                 a.WeakEncounters.Count > 0 && a.RegularEncounters.Count > 0 &&
                 a.EliteEncounters.Count > 0 && a.Bosses.Count > 0 &&

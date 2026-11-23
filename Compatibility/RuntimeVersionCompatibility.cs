@@ -1,5 +1,7 @@
 namespace RolltheSpire2.Compatibility;
 
+public enum GameReleaseChannel { Stable, Beta }
+
 public enum RuntimeVersionSupportKind
 {
     AuditedExact,
@@ -33,6 +35,9 @@ public sealed record RuntimeVersionResolution(
     string EvidenceCode)
 {
     public string RulesAdaptedThroughVersion { get; init; } = string.Empty;
+    // Set on the game branches targeted by this RT2 release. Older standalone
+    // adapters may have a rule version without a current release target.
+    public GameReleaseChannel? AdaptedReleaseChannel { get; init; }
     public bool IsReleaseSupported { get; init; }
 
     public bool IsAuditedExact => SupportKind == RuntimeVersionSupportKind.AuditedExact;
@@ -166,12 +171,12 @@ public static class RuntimeVersionCompatibility
             CompatibilityConfidence.ProvisionalUnverified, CompatibilityDomainMask.None,
             RuntimeVersionSupportKind.ProvisionalVersionedRules, Beta113Version, Beta113Version,
             "provisional-versioned-rng:" + Beta113Version)
-        { RulesAdaptedThroughVersion = SupportedBetaVersion },
+        { RulesAdaptedThroughVersion = SupportedBetaVersion, AdaptedReleaseChannel = GameReleaseChannel.Beta },
         new(new(Beta111Version), RuntimeProfileId.Beta111, RngSemanticProfileId.Modern110,
             CompatibilityConfidence.AuditedCompatible, CompatibilityDomainMask.None,
             RuntimeVersionSupportKind.AcceptedCompatible, Beta111Version, Beta111Version,
             "semantic-compatible-patch:source-audited+compile-load+authority-smoke:" + Beta111Version)
-        { RulesAdaptedThroughVersion = SupportedStableVersion }
+        { RulesAdaptedThroughVersion = SupportedStableVersion, AdaptedReleaseChannel = GameReleaseChannel.Stable }
     ];
     private static readonly RuntimeVersionResolution[] SupportedReleases =
         Array.ConvertAll(MaintainedRuleReferences, AdaptedRelease);

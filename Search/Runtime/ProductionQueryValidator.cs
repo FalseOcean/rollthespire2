@@ -973,14 +973,26 @@ public static partial class ProductionQueryValidator
         SearchQueryEvaluation variants = EvaluateVariantBossBranches(plan.Evaluation.VariantBossBranches, world, authority);
         if (variants.Disposition == SearchDisposition.NoMatch) return variants;
         evidence.AddRange(variants.Evidence);
+        // A menu/target can be unknown for one Ancient while another requested
+        // act already proves a mismatch. Keep its original cause, then finish
+        // the other independently observed World predicates before returning it.
+        SearchQueryEvaluation? unresolved = variants.Disposition == SearchDisposition.Match ? null : variants;
 
         foreach (ActModelKeySetFilter filter in plan.Evaluation.BossFilters)
         {
             SearchQueryEvaluation status = ValidateDomain(world?.BossStatus, world?.BossIssueCode, "Boss");
-            if (status.Disposition != SearchDisposition.Match) return status;
+            if (status.Disposition != SearchDisposition.Match)
+            {
+                unresolved ??= status;
+                continue;
+            }
             BossPredictionResult[] bosses = world!.Bosses.Where(item => item.Act == filter.Act).ToArray();
             var result = QueryKeySetPredicate.MatchActBosses(bosses, filter.Act, plan.Ascension, filter.Keys);
-            if (result == SearchDisposition.Unknown) return SearchQueryEvaluation.Unknown("BossIdentityNotReplayable:Act" + filter.Act);
+            if (result == SearchDisposition.Unknown)
+            {
+                unresolved ??= SearchQueryEvaluation.Unknown("BossIdentityNotReplayable:Act" + filter.Act);
+                continue;
+            }
             if (result == SearchDisposition.NoMatch) return SearchQueryEvaluation.NoMatch("BossFilterRejected:Act" + filter.Act);
             evidence.AddRange(bosses.Where(IsBossIdentityUsableForSearch).Select(boss => new SearchMatchEvidence(
                 boss.IdentityPrecision == PredictionPrecision.Exact
@@ -996,10 +1008,17 @@ public static partial class ProductionQueryValidator
         foreach (ActOrdinalModelKeySetFilter filter in plan.Evaluation.BossOrdinalFilters)
         {
             SearchQueryEvaluation status = ValidateDomain(world?.BossStatus, world?.BossIssueCode, "Boss");
-            if (status.Disposition != SearchDisposition.Match) return status;
+            if (status.Disposition != SearchDisposition.Match)
+            {
+                unresolved ??= status;
+                continue;
+            }
             BossPredictionResult? boss = world!.Bosses.FirstOrDefault(item => item.Act == filter.Act && item.Ordinal == filter.Ordinal);
             if (boss is null || !IsBossIdentityUsableForSearch(boss))
-                return SearchQueryEvaluation.Unknown($"BossOrdinalNotReplayable:Act{filter.Act}:Ordinal{filter.Ordinal}");
+            {
+                unresolved ??= SearchQueryEvaluation.Unknown($"BossOrdinalNotReplayable:Act{filter.Act}:Ordinal{filter.Ordinal}");
+                continue;
+            }
             if (!QueryKeySetPredicate.MatchesKeySet(new[] { boss.BossKey }, filter.Keys))
                 return SearchQueryEvaluation.NoMatch($"BossOrdinalFilterRejected:Act{filter.Act}:Ordinal{filter.Ordinal}");
             evidence.Add(new SearchMatchEvidence(
@@ -1017,12 +1036,17 @@ public static partial class ProductionQueryValidator
                  plan.Evaluation.AncientBranchConditions.GroupBy(condition => condition.Act).OrderBy(group => group.Key))
         {
             SearchQueryEvaluation status = ValidateDomain(world?.AncientStatus, world?.AncientIssueCode, "Ancient");
-            if (status.Disposition != SearchDisposition.Match) return status;
+            if (status.Disposition != SearchDisposition.Match)
+            {
+                unresolved ??= status;
+                continue;
+            }
 
             AncientPredictionResult? ancient = world!.Ancients.FirstOrDefault(item => item.Act == actBranches.Key);
             if (ancient is null || ancient.IdentityPrecision != PredictionPrecision.Exact)
             {
-                return SearchQueryEvaluation.Unknown("AncientBranchIdentityNotExact:Act" + actBranches.Key);
+                unresolved ??= SearchQueryEvaluation.Unknown("AncientBranchIdentityNotExact:Act" + actBranches.Key);
+                continue;
             }
 
             var rows = actBranches.Where(item => item.AncientKey == ancient.AncientKey).ToArray();
@@ -1066,7 +1090,10 @@ public static partial class ProductionQueryValidator
             {
                 var disposition = QueryKeySetPredicate.MatchVisibleAncientOptions(ancient.OptionsEvaluationStatus, ancient.Options, new(branch.OptionAny, [], []));
                 if (disposition == SearchDisposition.Unknown)
-                    return SearchQueryEvaluation.Unknown("AncientBranchOptionsNotExact:Act" + branch.Act);
+                {
+                    unresolved ??= SearchQueryEvaluation.Unknown("AncientBranchOptionsNotExact:Act" + branch.Act);
+                    continue;
+                }
                 AncientOptionPredictionResult[] visibleOptions = ancient.Options
                     .Where(option => option.IsVisible && option.OptionPrecision == PredictionPrecision.Exact)
                     .ToArray();
@@ -1091,7 +1118,8 @@ public static partial class ProductionQueryValidator
             {
                 if (!AncientOptionsEvaluated(ancient.OptionsEvaluationStatus))
                 {
-                    return SearchQueryEvaluation.Unknown("AncientBranchSeaGlassOptionsNotEvaluated:Act" + branch.Act);
+                    unresolved ??= SearchQueryEvaluation.Unknown("AncientBranchSeaGlassOptionsNotEvaluated:Act" + branch.Act);
+                    continue;
                 }
                 AncientOptionPredictionResult? seaGlass = ancient.Options.FirstOrDefault(option =>
                     option.IsVisible && option.OptionKey == SeaGlassKey);
@@ -1102,7 +1130,8 @@ public static partial class ProductionQueryValidator
                 AncientOptionCharacterTargetProjection? target = seaGlass.CharacterTarget;
                 if (target is null || target.Precision != PredictionPrecision.Exact || !target.CharacterKey.HasValue)
                 {
-                    return SearchQueryEvaluation.Unknown("AncientBranchSeaGlassTargetNotExact:Act" + branch.Act);
+                    unresolved ??= SearchQueryEvaluation.Unknown("AncientBranchSeaGlassTargetNotExact:Act" + branch.Act);
+                    continue;
                 }
                 if (!branch.SeaGlassTargetAny.Contains(target.CharacterKey.Value, ModelKeyComparer.Instance))
                 {
@@ -1118,10 +1147,17 @@ public static partial class ProductionQueryValidator
         foreach (ActModelKeySetFilter filter in plan.Evaluation.AncientIdentityFilters)
         {
             SearchQueryEvaluation status = ValidateDomain(world?.AncientStatus, world?.AncientIssueCode, "Ancient");
-            if (status.Disposition != SearchDisposition.Match) return status;
+            if (status.Disposition != SearchDisposition.Match)
+            {
+                unresolved ??= status;
+                continue;
+            }
             AncientPredictionResult? ancient = world!.Ancients.FirstOrDefault(item => item.Act == filter.Act);
             if (ancient is null || ancient.IdentityPrecision != PredictionPrecision.Exact)
-                return SearchQueryEvaluation.Unknown("AncientIdentityNotExact:Act" + filter.Act);
+            {
+                unresolved ??= SearchQueryEvaluation.Unknown("AncientIdentityNotExact:Act" + filter.Act);
+                continue;
+            }
             if (!QueryKeySetPredicate.MatchesKeySet(new[] { ancient.AncientKey }, filter.Keys))
                 return SearchQueryEvaluation.NoMatch("AncientIdentityFilterRejected:Act" + filter.Act);
             evidence.Add(new SearchMatchEvidence(
@@ -1138,7 +1174,10 @@ public static partial class ProductionQueryValidator
             {
                 var neow = (document.Neow?.Choices ?? []).ToArray();
                 if (neow.Length == 0 || neow.Any(c => c.IdentityPrecision != PredictionPrecision.Exact))
-                    return SearchQueryEvaluation.Unknown("Act1NeowOptionsNotExact");
+                {
+                    unresolved ??= SearchQueryEvaluation.Unknown("Act1NeowOptionsNotExact");
+                    continue;
+                }
                 var offered = neow.Select(c => c.RelicKey).ToArray();
                 if (!QueryKeySetPredicate.MatchesKeySet(offered, filter.Keys))
                     return SearchQueryEvaluation.NoMatch("Act1NeowOptionFilterRejected");
@@ -1147,13 +1186,23 @@ public static partial class ProductionQueryValidator
                 continue;
             }
             SearchQueryEvaluation status = ValidateDomain(world?.AncientStatus, world?.AncientIssueCode, "Ancient");
-            if (status.Disposition != SearchDisposition.Match) return status;
+            if (status.Disposition != SearchDisposition.Match)
+            {
+                unresolved ??= status;
+                continue;
+            }
             AncientPredictionResult? ancient = world!.Ancients.FirstOrDefault(item => item.Act == filter.Act);
             if (ancient is null || ancient.IdentityPrecision != PredictionPrecision.Exact)
-                return SearchQueryEvaluation.Unknown("AncientIdentityNotExact:Act" + filter.Act);
+            {
+                unresolved ??= SearchQueryEvaluation.Unknown("AncientIdentityNotExact:Act" + filter.Act);
+                continue;
+            }
             var disposition = QueryKeySetPredicate.MatchVisibleAncientOptions(ancient.OptionsEvaluationStatus, ancient.Options, filter.Keys);
             if (disposition == SearchDisposition.Unknown)
-                return SearchQueryEvaluation.Unknown("AncientOptionsNotExact:Act" + filter.Act);
+            {
+                unresolved ??= SearchQueryEvaluation.Unknown("AncientOptionsNotExact:Act" + filter.Act);
+                continue;
+            }
             if (disposition == SearchDisposition.NoMatch)
                 return SearchQueryEvaluation.NoMatch("AncientOptionFilterRejected:Act" + filter.Act);
             ModelKey[] options = ancient.Options.Where(option => option.IsVisible && option.OptionPrecision == PredictionPrecision.Exact)
@@ -1177,10 +1226,17 @@ public static partial class ProductionQueryValidator
                 continue;
             }
             SearchQueryEvaluation status = ValidateDomain(world?.AncientStatus, world?.AncientIssueCode, "Ancient");
-            if (status.Disposition != SearchDisposition.Match) return status;
+            if (status.Disposition != SearchDisposition.Match)
+            {
+                unresolved ??= status;
+                continue;
+            }
             AncientPredictionResult? ancient = world!.Ancients.FirstOrDefault(item => item.Act == filter.Act);
             if (ancient is null || !AncientOptionsEvaluated(ancient.OptionsEvaluationStatus))
-                return SearchQueryEvaluation.Unknown("AncientOptionsNotEvaluatedForSeaGlass:Act" + filter.Act);
+            {
+                unresolved ??= SearchQueryEvaluation.Unknown("AncientOptionsNotEvaluatedForSeaGlass:Act" + filter.Act);
+                continue;
+            }
             AncientOptionPredictionResult? seaGlass = ancient.Options.FirstOrDefault(option => option.IsVisible && option.OptionKey == SeaGlassKey);
             if (seaGlass is null)
             {
@@ -1194,7 +1250,10 @@ public static partial class ProductionQueryValidator
             }
             AncientOptionCharacterTargetProjection? target = seaGlass.CharacterTarget;
             if (target is null || target.Precision != PredictionPrecision.Exact || !target.CharacterKey.HasValue)
-                return SearchQueryEvaluation.Unknown("SeaGlassTargetNotExact:Act" + filter.Act);
+            {
+                unresolved ??= SearchQueryEvaluation.Unknown("SeaGlassTargetNotExact:Act" + filter.Act);
+                continue;
+            }
             if (!QueryKeySetPredicate.MatchesKeySet(new[] { target.CharacterKey.Value }, filter.Keys))
                 return SearchQueryEvaluation.NoMatch("SeaGlassTargetFilterRejected:Act" + filter.Act);
             evidence.Add(new SearchMatchEvidence(
@@ -1203,7 +1262,7 @@ public static partial class ProductionQueryValidator
                 ConditionId: $"sea-glass-target-act-{filter.Act}"));
         }
 
-        return variants.Disposition != SearchDisposition.Match ? variants : SearchQueryEvaluation.Match(evidence);
+        return unresolved ?? SearchQueryEvaluation.Match(evidence);
     }
 
     private static SearchQueryEvaluation EvaluateVariantBossBranches(
@@ -1917,7 +1976,8 @@ public static partial class ProductionQueryValidator
         }
         if (source.Precision is PredictionPrecision.Unknown or PredictionPrecision.Unsupported)
         {
-            return StructuredNeowConditionEvaluation.Unknown("StructuredEffectSourcePrecisionUnknown");
+            return StructuredNeowConditionEvaluation.Unknown(condition.SourceRelicKey == BaseGameModelKeys.Relics.Kaleidoscope &&
+                source.Evidence.IsValid ? source.Evidence.Value : "StructuredEffectSourcePrecisionUnknown");
         }
 
         PredictedEffectGroup[] groups = FilterGroupsForScope(source.Groups, condition.Scope).ToArray();
@@ -2224,7 +2284,8 @@ public static partial class ProductionQueryValidator
                 true,
                 route.Choice.EffectGroups,
                 route.Choice.ProductRelevantProjectionPrecision,
-                route.Choice.ProductRelevantProjectionStatus);
+                route.Choice.ProductRelevantProjectionStatus,
+                route.Choice.EffectEvidenceCode);
         }
 
         if (route.BonesRoute is not null)
@@ -2237,7 +2298,8 @@ public static partial class ProductionQueryValidator
                     true,
                     scoped.EffectGroups,
                     scoped.ProductRelevantProjectionPrecision,
-                    scoped.ProductRelevantProjectionStatus);
+                    scoped.ProductRelevantProjectionStatus,
+                    scoped.EvidenceCode);
             }
         }
 
@@ -2281,7 +2343,8 @@ public static partial class ProductionQueryValidator
         bool IsPresent,
         IReadOnlyList<PredictedEffectGroup> Groups,
         PredictionPrecision Precision,
-        ProductRelevantProjectionStatus Status);
+        ProductRelevantProjectionStatus Status,
+        EvidenceCode Evidence = default);
     private sealed record StructuredNeowConditionEvaluation(
         SearchDisposition Disposition,
         string FailureCode,

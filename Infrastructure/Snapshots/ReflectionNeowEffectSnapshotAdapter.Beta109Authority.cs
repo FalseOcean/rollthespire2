@@ -54,10 +54,6 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
     {
         public int? InitialRelicShuffleCount { get; init; }
         public IReadOnlyList<int>? SharedAncientReferenceIds { get; init; }
-        public bool WorldMethodsExact { get; init; }
-        public string RoomReplayAssumption { get; init; } = string.Empty;
-        public string InitialRelicReplayAssumption { get; init; } = string.Empty;
-        public int? ObservedInitialRelicShuffleCount { get; init; }
         public Beta109AncientRuleObservation? AncientRules { get; init; }
     }
 
@@ -74,7 +70,6 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         string EvidenceCode)
     {
         public IReadOnlySet<string>? ObservedRarities { get; init; }
-        public bool AllRelicsFromGameAssembly { get; init; }
     }
 
     private sealed record Beta109EncounterCatalogCapture(
@@ -88,33 +83,6 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         bool RetryShapeExact,
         bool OfficialVanillaCatalog,
         string EvidenceCode);
-
-    private static readonly HashSet<string> Beta109KnownPureVanillaActTypes = new(
-        new[]
-        {
-            "MegaCrit.Sts2.Core.Models.Acts.Overgrowth",
-            "MegaCrit.Sts2.Core.Models.Acts.Hive",
-            "MegaCrit.Sts2.Core.Models.Acts.Glory",
-            "MegaCrit.Sts2.Core.Models.Acts.Underdocks",
-            "MegaCrit.Sts2.Core.Models.Acts.DeprecatedAct"
-        },
-        StringComparer.Ordinal);
-
-    private static MethodBase? UnknownRoomGenerationHook(IReadOnlySet<MethodBase> patched,
-        IReadOnlyCollection<Type>? sharedAncientTypes, bool allLocalAncientsNative) =>
-        patched.FirstOrDefault(method => method.DeclaringType?.FullName switch
-        {
-            "MegaCrit.Sts2.Core.Runs.RunManager" or "MegaCrit.Sts2.Core.Models.ActModel" when method.Name == "GenerateRooms" =>
-                !WorldRoomPatchObservation.CanReplay(method, patched, sharedAncientTypes, hook =>
-                    CanReplayCardGuardAncientFilter(hook, patched, sharedAncientTypes, allLocalAncientsNative)),
-            "MegaCrit.Sts2.Core.Models.ActModel" => method.Name is "AddWithoutRepeatingTags" or
-                "SetSharedAncientSubset" or "get_AllWeakEncounters" or "get_AllRegularEncounters" or
-                "get_AllEliteEncounters" or "get_AllBossEncounters",
-            "MegaCrit.Sts2.Core.Rooms.RoomSet" => method.Name is "set_Ancient" or "set_Boss" or "set_SecondBoss",
-            "MegaCrit.Sts2.Core.Helpers.GrabBag`1" => method.Name is "Add" or "GrabAndRemove" or "GrabIndex",
-            "MegaCrit.Sts2.Core.Random.Rng" => method.Name == "NextItem",
-            _ => false
-        });
 
     private static async Task<Beta109StaticAuthorityCapture> ObserveBeta109StaticAuthority(
         RuntimeProfileId profileId,
@@ -148,9 +116,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         (HashSet<ModelKey> discoveredActs, bool discoveredExact) = explicitDiscoveredActs == null
             ? CaptureBeta109DiscoveredActs(assembly)
             : CaptureDeclaredDiscoveredActs(explicitDiscoveredActs, sourceGroups);
-        bool actSelectionMethodExact = !HarmonyLib.Harmony.GetAllPatchedMethods().Any(method =>
-            method.DeclaringType?.FullName == "MegaCrit.Sts2.Core.Models.ActModel" && method.Name == "GetRandomList");
-        bool sourceGroupsExact = actSelectionMethodExact && sourceGroups.Count > 0 && sourceGroups.All(group => group.SourceOrderExact);
+        bool sourceGroupsExact = sourceGroups.Count > 0 && sourceGroups.All(group => group.SourceOrderExact);
 
         var selectionGroups = new List<Beta109ActSelectionGroupSnapshot>();
         foreach (Beta109ActSourceGroup group in sourceGroups.OrderBy(group => group.ActNumber))
@@ -226,7 +192,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                     : Beta109ActSelectionMode.Unsupported;
             }
 
-            bool groupExact = actSelectionMethodExact && group.SourceOrderExact &&
+            bool groupExact = group.SourceOrderExact &&
                               candidates.Count == group.Models.Count &&
                               candidates.All(candidate => candidate.PredicateExact) &&
                               eligible.Count > 0 &&
@@ -299,7 +265,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             assembly,
             unlockState,
             sharedEventsRawCapture);
-        var (orderedActs, allLocalAncientsNative) = await ObserveBeta109ActGenerationSnapshots(
+        var orderedActs = await ObserveBeta109ActGenerationSnapshots(
             sourceGroups,
             unlockState,
             isMultiplayer,
@@ -362,12 +328,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                 unlockState as MegaCrit.Sts2.Core.Unlocks.UnlockState,
                 orderedActs.SelectMany(act => act.OrderedEligibleEvents).ToHashSet())
         };
-        MethodBase? unknownBagHook = UnknownRelicInitializationHook(patchedMethods,
-            sharedRelics.AllRelicsFromGameAssembly, characterRelics.AllRelicsFromGameAssembly);
-        bool bagMethodsExact = unknownBagHook is null;
-        int? observedShuffleCount = initialRelicShuffleCount;
-        if (!bagMethodsExact) initialRelicShuffleCount = null;
-        bool relicInitializationExact = bagMethodsExact && playerRelicPoolCompositionExact &&
+        bool relicInitializationExact = playerRelicPoolCompositionExact &&
                                         relicRarityAuthorityExact &&
                                         relicBucketOrderExact;
         string relicAuthorityEvidenceCode = string.Join("|", new[]
@@ -381,8 +342,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             playerRelicPoolCompositionExact ? "PlayerRelicPoolCompositionExact" : "MissingPlayerRelicPoolComposition",
             relicBucketOrderExact ? "RelicBucketOrderExact" : "MissingRelicBucketOrder",
             "InitialRelicShuffleCount=" + initialRelicShuffleCount,
-            bagMethodsExact ? "NativeBagInitialization" :
-                $"RelicInitializationMethodPatched:{unknownBagHook!.DeclaringType?.FullName}.{unknownBagHook.Name}"
+            "NativeBagInitialization"
         });
 
         bool actsExact = orderedActs.Count > 0 && orderedActs.All(act => act.HasExactGenerationInputs);
@@ -400,12 +360,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         // as MissingUnlockAuthority and must not contaminate otherwise exact Act,
         // Event, or Ancient unlock facts.
         bool unlockFactsExact = unlockStateExact && actSelectionExact;
-        var unknownRoomHook = UnknownRoomGenerationHook(patchedMethods,
-            unlockedSharedAncientsCapture.AncientTypes, allLocalAncientsNative);
-        bool worldMethodsExact = bagMethodsExact && unknownRoomHook is null;
-
         var issues = new List<string>();
-        if (!actSelectionMethodExact) issues.Add("UnknownActSelectionHook");
         if (sourceGroups.Count == 0) issues.Add("MissingActCatalog");
         else if (!sourceGroupsExact) issues.Add("MissingActsByIndexOrder");
         if (!unlockStateExact) issues.Add("MissingUnlockState");
@@ -442,10 +397,9 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         if (!relicBucketOrderExact) issues.Add("MissingRelicBucketOrder");
         if (!relicInitializationExact) issues.Add("MissingRelicInitialization");
         if (!unlockFactsExact) issues.Add("MissingUnlockAuthority");
-        if (!worldMethodsExact) issues.Add("UnknownWorldGenerationHook");
 
         sharedEventEvidence.Write(profileId.ToString(), character.CharacterKey.Serialized, modelDb,
-            sharedEventsRawCapture.Exact, eventCatalogExact, issues, patchedMethods, unknownRoomHook, unknownBagHook);
+            sharedEventsRawCapture.Exact, eventCatalogExact, issues, patchedMethods);
 
         return new Beta109StaticAuthorityCapture(
             ActSelectionGroups: selectionGroups,
@@ -497,12 +451,6 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         {
             InitialRelicShuffleCount = initialRelicShuffleCount,
             SharedAncientReferenceIds = unlockedSharedAncientsCapture.ReferenceIds,
-            WorldMethodsExact = worldMethodsExact,
-            RoomReplayAssumption = unknownRoomHook is null ? string.Empty :
-                $"RoomGenerationMethodPatched:{unknownRoomHook.DeclaringType?.FullName}.{unknownRoomHook.Name}",
-            InitialRelicReplayAssumption = unknownBagHook is null ? string.Empty :
-                $"RelicInitializationMethodPatched:{unknownBagHook.DeclaringType?.FullName}.{unknownBagHook.Name}",
-            ObservedInitialRelicShuffleCount = observedShuffleCount,
             AncientRules = ObserveAncientRules(modelDb, unlockedSharedAncientsCapture.UnknownAncientGenerators)
         };
     }
@@ -612,7 +560,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             .ToArray();
     }
 
-    private static async Task<(IReadOnlyList<Beta109ActGenerationSnapshot> Acts, bool AllLocalAncientsNative)> ObserveBeta109ActGenerationSnapshots(
+    private static async Task<IReadOnlyList<Beta109ActGenerationSnapshot>> ObserveBeta109ActGenerationSnapshots(
         IReadOnlyList<Beta109ActSourceGroup> groups,
         object? unlockState,
         bool isMultiplayer,
@@ -620,17 +568,13 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         Beta109EventCatalogAuthoritySnapshot eventAuthority, NativeObservationSchedule schedule)
     {
         var output = new List<Beta109ActGenerationSnapshot>();
-        bool allLocalAncientsNative = true;
         foreach (Beta109ActSourceGroup group in groups.OrderBy(group => group.ActNumber))
         {
             foreach (object model in group.Models)
             {
                 await schedule.Checkpoint("ActGeneration").ConfigureAwait(false);
                 if (!TryModelKey(model, out ModelKey actKey))
-                {
-                    allLocalAncientsNative = false;
                     continue;
-                }
 
                 ModelListCapture rawEvents = CapturePossiblyEmptyInstanceModelsWorld(
                     model,
@@ -648,8 +592,6 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                     "AllAncients",
                     "Ancients",
                     "AncientEvents");
-                allLocalAncientsNative &= ancients.Exact && ancients.AncientTypes is { } types &&
-                    types.All(t => t.Assembly == typeof(MegaCrit.Sts2.Core.Models.AncientEventModel).Assembly);
                 Beta109EncounterCatalogCapture encounterCapture =
                     await ObserveBeta109GenerateAllEncounters(model, schedule).ConfigureAwait(false);
                 IReadOnlyList<Beta109EncounterEntrySnapshot> encounters =
@@ -660,17 +602,14 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                     isMultiplayer,
                     modeFactsExact);
 
-                bool official = IsOfficialSts2ModelWorld(model);
-                bool catalogExact = official &&
-                                    ancients.Exact &&
+                bool catalogExact = ancients.Exact &&
                                     encounterCapture.OrderExact &&
                                     encounterCapture.ClassificationExact &&
                                     encounterCapture.TagIdentityExact &&
                                     encounterCapture.TagComparerExact &&
                                     encounterCapture.ReferenceIdentityExact &&
                                     encounterCapture.WeightRuleExact &&
-                                    encounterCapture.RetryShapeExact &&
-                                    encounterCapture.OfficialVanillaCatalog;
+                                    encounterCapture.RetryShapeExact;
                 output.Add(new Beta109ActGenerationSnapshot(
                     group.ActNumber,
                     actKey,
@@ -704,7 +643,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                 });
             }
         }
-        return (output, allLocalAncientsNative);
+        return output;
     }
 
     private static async Task<Beta109EncounterCatalogCapture> ObserveBeta109GenerateAllEncounters(
@@ -712,27 +651,11 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
     {
         Type actType = actModel.GetType();
         string fullName = actType.FullName ?? string.Empty;
-        bool knownPureVanillaAct = Beta109KnownPureVanillaActTypes.Contains(fullName) &&
-                                   IsOfficialSts2ModelWorld(actModel);
-        if (!knownPureVanillaAct)
-        {
-            return new Beta109EncounterCatalogCapture(
-                Array.Empty<Beta109EncounterEntrySnapshot>(),
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                "UnsupportedModEncounter");
-        }
-
+        bool officialAct = IsOfficialSts2ModelWorld(actModel);
         // Read the same cached enumerable used by the native partition getters.
         object? source = ReadProperty(actModel, "AllEncounters");
         if (source is not System.Collections.IEnumerable enumerable || source is string)
-            return new Beta109EncounterCatalogCapture([], false, false, false, false, false, false, false, true,
+            return new Beta109EncounterCatalogCapture([], false, false, false, false, false, false, false, officialAct,
                 "MissingGenerateAllEncountersMember");
         var models = new List<object>();
         try
@@ -740,7 +663,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             foreach (object? encounter in enumerable)
             {
                 if (encounter is null)
-                    return new Beta109EncounterCatalogCapture([], false, false, false, false, false, false, false, true,
+                    return new Beta109EncounterCatalogCapture([], false, false, false, false, false, false, false, officialAct,
                         "NullEncounterCatalogEntry");
                 models.Add(encounter);
             }
@@ -748,7 +671,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         catch (Exception ex)
         {
             RecordCaptureFailure(ex, fullName + ".AllEncounters");
-            return new Beta109EncounterCatalogCapture([], false, false, false, false, false, false, false, true,
+            return new Beta109EncounterCatalogCapture([], false, false, false, false, false, false, false, officialAct,
                 "EncounterCatalogEnumerationFailed");
         }
 
@@ -810,14 +733,14 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                 false,
                 true,
                 true,
-                true,
+                officialAct && baseEntries.All(e => e.IsOfficialVanilla),
                 "EncounterCatalogProjectionIncomplete");
         }
 
         bool comparerExact = true;
         var withConflicts = new List<Beta109EncounterEntrySnapshot>(baseEntries.Count);
-        var nativeEncounterType = actType.Assembly.GetType("MegaCrit.Sts2.Core.Models.EncounterModel");
-        var sharesTagsWith = nativeEncounterType?.GetMethod("SharesTagsWith", [nativeEncounterType]);
+        var nativeEncounterType = typeof(MegaCrit.Sts2.Core.Models.EncounterModel);
+        var sharesTagsWith = nativeEncounterType.GetMethod("SharesTagsWith", [nativeEncounterType]);
         for (int i = 0; i < models.Count; i++)
         {
             await schedule.Checkpoint("EncounterComparerRow:" + i).ConfigureAwait(false);
@@ -877,6 +800,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             })
             .ToList();
 
+        bool nativeCatalog = officialAct && withConflicts.All(e => e.IsOfficialVanilla);
         return new Beta109EncounterCatalogCapture(
             withConflicts,
             OrderExact: true,
@@ -886,8 +810,8 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             ReferenceIdentityExact: true,
             WeightRuleExact: true,
             RetryShapeExact: true,
-            OfficialVanillaCatalog: true,
-            EvidenceCode: "Beta109VanillaGenerateAllEncountersDirectSource");
+            OfficialVanillaCatalog: nativeCatalog,
+            EvidenceCode: nativeCatalog ? "Beta109VanillaGenerateAllEncountersDirectSource" : "RuntimeAllEncountersAndTagComparisons");
     }
 
     private static (int WeakSlots, int TotalRooms, bool Exact) CaptureBeta109RoomShape(
@@ -918,7 +842,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                 total = null;
             }
         }
-        bool exact = IsOfficialSts2ModelWorld(actModel) && weak.HasValue && total.HasValue;
+        bool exact = weak is >= 0 && total >= weak;
         return (Math.Max(0, weak ?? 0), Math.Max(weak ?? 0, total ?? 0), exact);
     }
 
@@ -976,7 +900,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
     }
 
     private static ModelListCapture CapturePossiblyEmptyModelListWorld(object? value, bool captureReferences = false,
-        bool captureAncientTypes = false, SharedEventCaptureEvidence? evidence = null)
+        SharedEventCaptureEvidence? evidence = null)
     {
         if (value is not System.Collections.IEnumerable source || value is string)
             return new ModelListCapture([], false);
@@ -984,7 +908,6 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         var referenceIds = captureReferences ? new Dictionary<object, int>(ReferenceEqualityComparer.Instance) : null;
         var occurrences = captureReferences ? new List<int>() : null;
         var unknownGenerators = new HashSet<ModelKey>(ModelKeyComparer.Instance);
-        HashSet<Type>? ancientTypes = captureAncientTypes || captureReferences ? [] : null;
         bool exact = true;
         try
         {
@@ -994,11 +917,6 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                 evidence?.ObserveEntry(model, hasKey ? key.Serialized : null);
                 if (!hasKey) { exact = false; continue; }
                 keys.Add(key);
-                if (ancientTypes is not null)
-                {
-                    if (model is MegaCrit.Sts2.Core.Models.AncientEventModel ancient) ancientTypes.Add(ancient.GetType());
-                    else ancientTypes = null;
-                }
                 if (referenceIds is not null)
                 {
                     if (!referenceIds.TryGetValue(model!, out int id)) referenceIds[model!] = id = referenceIds.Count;
@@ -1020,8 +938,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         }
         return new ModelListCapture(keys, exact)
         {
-            UnknownAncientGenerators = unknownGenerators.ToArray(), ReferenceIds = occurrences,
-            AncientTypes = exact ? ancientTypes : null
+            UnknownAncientGenerators = unknownGenerators.ToArray(), ReferenceIds = occurrences
         };
     }
 
@@ -1086,7 +1003,6 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         bool raritiesExact = true;
         bool shopEligibilityExact = true;
         int externalModelCount = 0;
-        var patched = HarmonyLib.Harmony.GetAllPatchedMethods().ToHashSet();
         foreach (object? model in models)
         {
             string rarityCode = model == null ? string.Empty : ReadEnumName(model, "Rarity");
@@ -1102,7 +1018,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             bool? isAllowedInShops = TryReadBool(model, "IsAllowedInShops");
             var runEligibility = model.GetType().GetMethod("IsAllowedInternal", PublicInstance | BindingFlags.NonPublic);
             bool unknownRunEligibility = runEligibility is { } rule &&
-                (rule.DeclaringType?.Assembly != typeof(MegaCrit.Sts2.Core.Models.RelicModel).Assembly || patched.Contains(rule));
+                rule.DeclaringType?.Assembly != typeof(MegaCrit.Sts2.Core.Models.RelicModel).Assembly;
             if (!isAllowedInShops.HasValue) shopEligibilityExact = false;
             output.Add(new Beta109RelicSourceEntry(
                 key,
@@ -1118,8 +1034,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             externalModelCount.ToString(System.Globalization.CultureInfo.InvariantCulture) +
             ":Captured=" + output.Count + "/" + models.Length)
         {
-            ObservedRarities = raritiesExact ? rarities : null,
-            AllRelicsFromGameAssembly = output.Count == models.Length && externalModelCount == 0
+            ObservedRarities = raritiesExact ? rarities : null
         };
     }
 
@@ -1383,7 +1298,6 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         if (acts.Any(act => !act.EventEpochMembershipExact)) return "MissingEventEpochMembership";
         if (acts.Any(act => !act.EventEpochRevealFactsExact)) return "MissingEventEpochAuthority";
         if (acts.Any(act => !act.EligibleEventOrderExact)) return "MissingEventEligibleOrder";
-        if (acts.Any(act => !act.EncounterCatalogOfficialVanilla)) return "UnsupportedModEncounter";
         if (acts.Any(act => act.OrderedGenerateAllEncounters is null)) return "MissingEncounterCatalog";
         if (acts.Any(act => string.Equals(
                 act.EncounterAuthorityEvidenceCode,

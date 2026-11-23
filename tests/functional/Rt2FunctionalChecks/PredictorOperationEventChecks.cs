@@ -188,6 +188,7 @@ internal static partial class PredictorOperationEventChecks
             healthResult.Waiting.EventOptions[0].Key == "GRAB_" + expectedDish,
             "Conveyor next dish ignored automatic BookOfFiveRings healing before eligibility");
         CheckEventProjection(context, combatState, eventRng);
+        CheckWuppyBoundaries(context, combatState, eventRng);
         Console.WriteLine("OPERATION_EVENT Bridge progressed RNG/skips/count + Tablet midpoint + paid Morphic picker + Future token/Driftwood upgrade PASS");
     }
 

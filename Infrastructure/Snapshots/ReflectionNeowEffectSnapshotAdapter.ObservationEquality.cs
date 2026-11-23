@@ -23,13 +23,14 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         a.Failure is null && b.Failure is null &&
         a with { ObservedAtUtc=b.ObservedAtUtc, SelectedCards=b.SelectedCards, ColorlessCards=b.ColorlessCards, CurseCards=b.CurseCards,
             CharacterPotions=b.CharacterPotions, SharedPotions=b.SharedPotions, CharacterRelics=b.CharacterRelics,
-            SharedRelics=b.SharedRelics, OtherCharacterPools=b.OtherCharacterPools, Deck=b.Deck,
+            SharedRelics=b.SharedRelics, OtherCharacterPools=b.OtherCharacterPools, KaleidoscopePools=b.KaleidoscopePools, Deck=b.Deck,
             UnlockDescriptors=b.UnlockDescriptors, NativeCharacterPoolOrder=b.NativeCharacterPoolOrder, ColorfulCandidateColors=b.ColorfulCandidateColors } == b &&
         PoolEqual(a.SelectedCards,b.SelectedCards) && PoolEqual(a.ColorlessCards,b.ColorlessCards) &&
         PoolEqual(a.CurseCards,b.CurseCards) && PoolEqual(a.CharacterPotions,b.CharacterPotions) &&
         PoolEqual(a.SharedPotions,b.SharedPotions) && PoolEqual(a.CharacterRelics,b.CharacterRelics) &&
         PoolEqual(a.SharedRelics,b.SharedRelics) && Same(a.Deck,b.Deck) && Same(a.UnlockDescriptors,b.UnlockDescriptors) &&
         Same(a.NativeCharacterPoolOrder,b.NativeCharacterPoolOrder) && Same(a.ColorfulCandidateColors,b.ColorfulCandidateColors) &&
+        Same(a.KaleidoscopePools,b.KaleidoscopePools,(x,y) => x with { Cards=y.Cards } == y && Same(x.Cards,y.Cards)) &&
         Same(a.OtherCharacterPools,b.OtherCharacterPools,(x,y) => x with { Cards=y.Cards } == y && Same(x.Cards,y.Cards));
 
     internal static bool WorldInputsEqual(WorldObservedInputs a, WorldObservedInputs b) =>
@@ -78,8 +79,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             Same(a.ActSelectionGroups,b.ActSelectionGroups,SelectionEqual) && Same(a.OrderedActs,b.OrderedActs,GenerationEqual);
     }
     private static bool AncientRulesEqual(Beta109AncientRuleObservation? a, Beta109AncientRuleObservation? b) =>
-        ReferenceEquals(a,b) || a is not null && b is not null && a.StandardOptionWrapper == b.StandardOptionWrapper &&
-        Same(a.PaelRelics,b.PaelRelics) && Same(a.PatchedAncientGenerators,b.PatchedAncientGenerators) &&
+        ReferenceEquals(a,b) || a is not null && b is not null && Same(a.PaelRelics,b.PaelRelics) &&
         Same(a.SharedAncientsWithUnknownGenerator,b.SharedAncientsWithUnknownGenerator);
     private static bool BucketEqual(Beta109RelicBucketSnapshot a, Beta109RelicBucketSnapshot b) =>
         a with { OrderedRelics=b.OrderedRelics, OrderedEntries=b.OrderedEntries } == b &&

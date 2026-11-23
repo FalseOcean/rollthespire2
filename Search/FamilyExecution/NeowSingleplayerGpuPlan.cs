@@ -203,10 +203,12 @@ internal static class NeowSingleplayerGpuPlan
         // including in the colorless pool that starts at Uncommon.
         static bool PreventsRareFallback(Beta110FastCardPool pool, int draws) =>
             pool.Uncommon.Distinct().Count() >= draws;
+        bool RareKaleidoscopeTarget(ushort id) => c.OtherCharacterPools.All(pool =>
+            !pool.Common.Contains(id) && !pool.Uncommon.Contains(id));
         if (direct && a.AllCharacterCardPoolsUnlocked &&
             plan.Selected == Beta110FastRelicCatalog.Kaleidoscope && plan.StructuredConditions.Length == 1 &&
             plan.StructuredConditions[0] is var k && k.Kind == Beta110FastStructuredConditionKind.KaleidoscopeIndependentOfferTargets &&
-            k.TargetCount == 2 && c.CardRarityByDenseId[k.Target0] == 3 && c.CardRarityByDenseId[k.Target1] == 3)
+            k.TargetCount == 2 && RareKaleidoscopeTarget(k.Target0) && RareKaleidoscopeTarget(k.Target1))
         {
             bool canGateRare = !a.UsesChildShuffle || c.OtherCharacterPools.All(pool => PreventsRareFallback(pool, 1));
             gpu = gpu with { DirectNestedMode = selectedMode switch {
@@ -290,7 +292,7 @@ internal static class NeowSingleplayerGpuPlan
         {
             bool rareK = plan.StructuredConditions.Any(x => x.SourceRelicId == Beta110FastRelicCatalog.Kaleidoscope &&
                 x.Kind == Beta110FastStructuredConditionKind.KaleidoscopeIndependentOfferTargets &&
-                c.CardRarityByDenseId[x.Target0] == 3 && (x.TargetCount == 1 || c.CardRarityByDenseId[x.Target1] == 3));
+                RareKaleidoscopeTarget(x.Target0) && (x.TargetCount == 1 || RareKaleidoscopeTarget(x.Target1)));
             if (bonesMode == "early-accept" || bonesMode == "rare-local" && rareK)
                 gpu = gpu with { DirectNestedMode = bonesMode == "early-accept" ? 100 : 101 };
             if (bonesMode is "" or "pair-local")

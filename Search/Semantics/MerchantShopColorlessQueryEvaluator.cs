@@ -82,14 +82,23 @@ internal static class MerchantShopColorlessQueryEvaluator
                 .ToArray();
             if (actual.Length < condition.Count)
             {
-                if (condition.OrderMode == CombatRewardSequenceOrderMode.Ordered &&
-                    actual.Where((key, index) => condition.Slots[index] is { } target && key != target).Any())
-                    return SearchQueryEvaluation.NoMatch($"MerchantColorlessSequenceRejected:{condition.Slot}:{sequenceIndex}");
-                unresolved = true;
-                sequenceIndex++;
-                continue;
+                if (condition.OrderMode == CombatRewardSequenceOrderMode.Ordered)
+                {
+                    if (actual.Where((key, index) => condition.Slots[index] is { } target && key != target).Any())
+                        return SearchQueryEvaluation.NoMatch($"MerchantColorlessSequenceRejected:{condition.Slot}:{sequenceIndex}");
+                    // Empty authored positions impose no observation obligation.
+                    unresolved |= condition.Slots.Skip(actual.Length).Any(key => key.HasValue);
+                }
+                else
+                {
+                    int missing = condition.Slots.Where(key => key.HasValue).GroupBy(key => key!.Value)
+                        .Sum(group => Math.Max(0, group.Count() - actual.Count(key => key == group.Key)));
+                    if (missing > condition.Count - actual.Length)
+                        return SearchQueryEvaluation.NoMatch($"MerchantColorlessSequenceRejected:{condition.Slot}:{sequenceIndex}");
+                    unresolved |= missing > 0;
+                }
             }
-            if (!ShopSequenceSemantics.Matches(actual, condition.Count, condition.OrderMode, condition.Slots))
+            else if (!ShopSequenceSemantics.Matches(actual, condition.Count, condition.OrderMode, condition.Slots))
                 return SearchQueryEvaluation.NoMatch($"MerchantColorlessSequenceRejected:{condition.Slot}:{sequenceIndex}");
 
             evidence.Add(new SearchMatchEvidence(

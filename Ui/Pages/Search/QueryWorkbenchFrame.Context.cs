@@ -171,6 +171,7 @@ internal sealed partial class QueryWorkbenchFrame
     {
         Array.Clear(_lobbyUnlocks); Array.Fill(_unlockReadStatus, 2);
         Array.Fill(_partyUnlockSources, "CapturedLobbySlot");
+        _lobbyReadExpired = false;
         _readLobby = null; _readRoster = "";
         string result;
         try

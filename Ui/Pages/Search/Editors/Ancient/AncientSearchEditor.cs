@@ -141,7 +141,7 @@ internal sealed partial class AncientSearchEditor : Control
         string unlockKey = sharedContext?.Key ?? (players == 1
             ? System.Text.Json.JsonSerializer.Serialize(SaveManager.Instance.GenerateUnlockStateFromProgress().ToSerializable())
             : unlocks is null ? "unread" : System.Text.Json.JsonSerializer.Serialize(unlocks));
-        string context = $"{character}/{ascension}/{players}/{seat}/{unlockKey}/{partyAuthority?.WorldSnapshotFingerprint}";
+        string context = $"{character}/{ascension}/{players}/{seat}/{unlockKey}/{partyAuthority?.WorldSnapshotFingerprint}/{partyAuthority?.CatalogFingerprint}";
         if (_draft.Context != context)
         {
             _draft.Context = context;
@@ -160,7 +160,7 @@ internal sealed partial class AncientSearchEditor : Control
                     if (partyAuthority is not null)
                     {
                         _draft.Catalog = AncientSearchUiCatalog.FromAuthority(_runtime.Profile.ProfileId, character, partyAuthority.WorldAuthority);
-                        _draft.NeowCatalog = NeowSearchUiCatalog.FromAuthority(_runtime.Profile.ProfileId, character, partyAuthority.EffectAuthority);
+                        _draft.NeowCatalog = NeowSearchUiCatalog.FromAuthority(partyAuthority);
                     }
                     else CaptureCatalogs(character, ascension, players, seat, resolved);
                     if (_draft.Catalog is null || _draft.Catalog.Sections.Count == 0)
@@ -179,14 +179,11 @@ internal sealed partial class AncientSearchEditor : Control
     private void CaptureCatalogs(ModelKey character, int ascension, int players, int seat, UnlockState unlocks)
     {
         string seed = RolltheSpire2.Compatibility.ProfileSeedGenerator.CreateProbeSeed(_runtime.Profile);
-        var effects = ReflectionNeowEffectSnapshotAdapter.Capture(_runtime.Profile, seed,
-            CharacterIdentity.FromKey(character), ascension, players, seat, _runtime.Profile.ProfileId,
-            _runtime.Detection.DisplayVersion, RolltheSpire2.Compatibility.RuntimeProfilePolicies.EffectCatalogRules(_runtime.Profile.ProfileId), unlocks);
-        var world = ReflectionNeowEffectSnapshotAdapter.CaptureWorld(_runtime.Profile, seed,
-            CharacterIdentity.FromKey(character), ascension, players, seat, noRunModifiers: true,
-            effects.EffectAuthority, gameVersion: _runtime.Detection.DisplayVersion);
-        _draft.Catalog = AncientSearchUiCatalog.FromAuthority(_runtime.Profile.ProfileId, character, world);
-        _draft.NeowCatalog = NeowSearchUiCatalog.FromAuthority(_runtime.Profile.ProfileId, character, effects.EffectAuthority);
+        var authority = RuntimeContextAuthorityCapture.CaptureRuntimeReadOnly(_runtime.Profile, seed,
+            CharacterIdentity.FromKey(character), ascension, _runtime.Detection.DisplayVersion, players, seat,
+            explicitUnlockState: unlocks);
+        _draft.Catalog = AncientSearchUiCatalog.FromAuthority(_runtime.Profile.ProfileId, character, authority.WorldAuthority);
+        _draft.NeowCatalog = NeowSearchUiCatalog.FromAuthority(authority);
     }
 
     private void Render()

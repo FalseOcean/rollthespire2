@@ -49,8 +49,7 @@ internal sealed class SharedEventCaptureEvidence(Assembly gameAssembly)
     internal void EnumerationFailed(Exception error) => _enumerationFailure = Limit(error.GetType().FullName);
 
     internal void Write(string profile, string character, Type modelDb, bool sharedOrderExact, bool eventCatalogExact,
-        IReadOnlyList<string> issues, IReadOnlySet<MethodBase> patchedMethods,
-        MethodBase? unknownRoomHook, MethodBase? unknownBagHook)
+        IReadOnlyList<string> issues, IReadOnlySet<MethodBase> patchedMethods)
     {
         try
         {
@@ -59,10 +58,16 @@ internal sealed class SharedEventCaptureEvidence(Assembly gameAssembly)
             string? patchEvidenceFailure = null;
             try
             {
-                foreach (var target in patchedMethods.Where(method => method == unknownRoomHook || method == unknownBagHook ||
-                             method.DeclaringType == modelDb && method.Name is "get_AllSharedEvents" or "get_SharedEvents" ||
-                             method.Name == "GenerateRooms" && method.DeclaringType?.FullName is
-                                 "MegaCrit.Sts2.Core.Models.ActModel" or "MegaCrit.Sts2.Core.Runs.RunManager")
+                foreach (var target in patchedMethods.Where(method => method.DeclaringType?.FullName switch
+                         {
+                             "MegaCrit.Sts2.Core.Models.ActModel" => method.Name is "GetRandomList" or "GenerateRooms",
+                             "MegaCrit.Sts2.Core.Runs.RunManager" => method.Name is "InitializeNewRun" or "GenerateRooms",
+                             "MegaCrit.Sts2.Core.Runs.RelicGrabBag" => method.Name is "Shuffle" or "Populate",
+                             "MegaCrit.Sts2.Core.Models.AncientEventModel" => method.Name == "GenerateInitialOptionsWrapper",
+                             _ => method.DeclaringType == modelDb && method.Name is "get_AllSharedEvents" or "get_SharedEvents" ||
+                                 method.Name == "GenerateInitialOptions" && method.DeclaringType is { } type &&
+                                 typeof(MegaCrit.Sts2.Core.Models.AncientEventModel).IsAssignableFrom(type)
+                         })
                          .OrderBy(MethodName, StringComparer.Ordinal))
                 {
                     var patches = Harmony.GetPatchInfo(target);
@@ -110,8 +115,6 @@ internal sealed class SharedEventCaptureEvidence(Assembly gameAssembly)
                 ExternalCount = _external,
                 Anomalies = _anomalies,
                 EnumerationFailure = _enumerationFailure,
-                UnknownRoomTarget = unknownRoomHook is null ? null : MethodName(unknownRoomHook),
-                UnknownBagTarget = unknownBagHook is null ? null : MethodName(unknownBagHook),
                 PatchEvidenceFailure = patchEvidenceFailure,
                 PatchCount = patchCount,
                 Patches = patchEntries

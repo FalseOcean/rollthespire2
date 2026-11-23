@@ -60,11 +60,11 @@ internal static class ModernNeowIdentityPredictor
         ModernNeowCursePool pool = preparation.ForCurse(curse);
         var positives = pool.FixedCandidates.ToList();
         foreach (ModernNeowBinaryChoice choice in pool.AppendChoices)
-            positives.Add(rng.NextBool() ? choice.TrueCandidate : choice.FalseCandidate);
+            if (choice.Candidate(rng.NextBool()) is { } candidate) positives.Add(candidate);
         rng.UnstableShuffle(positives, authority.VersionResolution.SemanticProfileId);
 
         return new ModernNeowIdentityResult(
-            new[] { positives[0], positives[1], curse },
+            positives.Count >= 2 ? [positives[0], positives[1], curse] : [.. positives, curse],
             rng.CallCount,
             exactAuthority,
             preparation.UnknownEligibilityAffectedPool);

@@ -32,6 +32,32 @@ internal sealed partial class SearchWorkspace
 
     public UserPreferencesDocument Preferences => _preferences;
 
+    internal const Key DefaultMainMenuLauncherShortcut = Key.F7 | (Key)KeyModifierMask.MaskCtrl;
+
+    internal void SetMainMenuLauncherShortcut(Key chord)
+    {
+        if (_preferences.MainMenuLauncherShortcut == chord) return;
+        _preferences.MainMenuLauncherShortcut = chord;
+        MarkPreferencesDirty();
+        FlushPreferences();
+    }
+
+    internal void SetMainMenuLauncherHidden(bool hidden)
+    {
+        if (_preferences.MainMenuLauncherHidden == hidden) return;
+        _preferences.MainMenuLauncherHidden = hidden;
+        MarkPreferencesDirty();
+        FlushPreferences();
+    }
+
+    internal void SaveMainMenuLauncherPosition(float x, float y)
+    {
+        _preferences.MainMenuLauncherX = x;
+        _preferences.MainMenuLauncherY = y;
+        MarkPreferencesDirty();
+        FlushPreferences();
+    }
+
     internal void SetCrystalSphereOptions(bool? avoidCurse = null, bool? includeDriftwood = null,
         bool? includeEnchantments = null, bool? transparentMask = null)
     {

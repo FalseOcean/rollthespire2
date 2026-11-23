@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Text.Json.Serialization;
 using RolltheSpire2.Core.Authority;
 using RolltheSpire2.Core.Identity;
 
@@ -6,12 +7,29 @@ namespace RolltheSpire2.Core.Neow;
 
 // Runtime order (including multiplicity) before the documented Neow exclusions.
 public sealed record NeowOfferCatalog(ImmutableArray<ModelKey> Positives, ImmutableArray<ModelKey> Curses,
-    ImmutableArray<ModelKey>? AllPossibleRelics);
+    ImmutableArray<ModelKey>? AllPossibleRelics)
+{
+    [JsonInclude]
+    internal ImmutableArray<ModernNeowBinaryChoice> BinaryChoices { get; init; } = ModernNeowIdentityRules.BinaryChoices;
+    public ImmutableArray<ModelKey> UnresolvedEligibility { get; init; } = [];
+
+    internal bool MatchesDefaultInputs => UnresolvedEligibility.IsEmpty &&
+        Positives.SequenceEqual(ModernNeowIdentityRules.PositiveCandidates) &&
+        Curses.SequenceEqual(ModernNeowIdentityRules.CurseCandidates) &&
+        BinaryChoices.SequenceEqual(ModernNeowIdentityRules.BinaryChoices) &&
+        AllPossibleRelics is { } all && all.SequenceEqual(BaseGameModelKeys.Relics.AllNeow);
+}
 
 internal sealed record ModernNeowBinaryChoice(
     ModelKey TrueCandidate,
     ModelKey FalseCandidate,
-    ModelKey? SuppressedByCurse = null);
+    ModelKey? SuppressedByCurse = null)
+{
+    internal bool TrueEligible { get; init; } = true;
+    internal bool FalseEligible { get; init; } = true;
+    internal ModelKey? Candidate(bool draw) =>
+        draw ? (TrueEligible ? TrueCandidate : null) : (FalseEligible ? FalseCandidate : null);
+}
 
 internal sealed record ModernNeowCursePool(
     ModelKey Curse,
@@ -116,16 +134,24 @@ internal static class ModernNeowIdentityRules
     }
 
     internal static ModernNeowIdentityPreparation PrepareCatalog(ImmutableArray<ModelKey> positives,
-        ImmutableArray<ModelKey> curseSource, int playersCount, bool? colorsAllowed, bool? scrollsAllowed)
+        ImmutableArray<ModelKey> curseSource, int playersCount, bool? colorsAllowed, bool? scrollsAllowed,
+        IReadOnlyCollection<ModelKey>? unresolvedEligibility = null, ImmutableArray<ModernNeowBinaryChoice>? binarySource = null)
     {
+        bool? Allowed(ModelKey key) => unresolvedEligibility?.Contains(key) == true ? null :
+            IsAllowed(key, playersCount, colorsAllowed, scrollsAllowed);
+        var binary = (binarySource ?? BinaryChoices).Select(c => c with
+        {
+            TrueEligible = Allowed(c.TrueCandidate) != false,
+            FalseEligible = Allowed(c.FalseCandidate) != false
+        }).ToImmutableArray();
         var curses = curseSource.Where(key =>
-            IsAllowed(key, playersCount, colorsAllowed, scrollsAllowed) != false).ToImmutableArray();
+            Allowed(key) != false).ToImmutableArray();
         var pools = curseSource.Distinct().Select(curse => new ModernNeowCursePool(curse,
             positives.Where(key => !Conflicts.Any(pair => pair.Curse == curse && pair.Positive == key) &&
-                IsAllowed(key, playersCount, colorsAllowed, scrollsAllowed) != false).ToImmutableArray(),
-            BinaryChoices.Where(choice => choice.SuppressedByCurse != curse).ToImmutableArray())).ToImmutableArray();
-        return new(curses, pools, positives.Concat(curseSource).Any(k =>
-            !IsAllowed(k, playersCount, colorsAllowed, scrollsAllowed).HasValue));
+                Allowed(key) != false).ToImmutableArray(),
+            binary.Where(choice => choice.SuppressedByCurse != curse).ToImmutableArray())).ToImmutableArray();
+        return new(curses, pools, positives.Concat(curseSource).Any(k => !Allowed(k).HasValue) ||
+            pools.Any(pool => pool.AppendChoices.Any(c => !Allowed(c.TrueCandidate).HasValue || !Allowed(c.FalseCandidate).HasValue)));
     }
 
     internal static bool CanCoOffer(IEnumerable<ModelKey> targets)
@@ -186,8 +212,8 @@ internal static class ModernNeowIdentityRules
                 for (int slot = 0; slot < pool.AppendChoices.Length; slot++)
                 {
                     ModernNeowBinaryChoice choice = pool.AppendChoices[slot];
-                    positives.Add((variant & (1 << (pool.AppendChoices.Length - slot - 1))) == 0
-                        ? choice.TrueCandidate : choice.FalseCandidate);
+                    bool draw = (variant & (1 << (pool.AppendChoices.Length - slot - 1))) == 0;
+                    if (choice.Candidate(draw) is { } candidate) positives.Add(candidate);
                 }
                 int n = positives.Count;
                 if (n < 2) return false;

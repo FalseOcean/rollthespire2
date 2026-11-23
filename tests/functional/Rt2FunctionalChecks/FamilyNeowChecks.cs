@@ -11,6 +11,7 @@ using RolltheSpire2.Core.Neow;
 using RolltheSpire2.Core.World.Snapshots;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Search.Semantics;
+using RolltheSpire2.Search.Selectivity;
 using RolltheSpire2.Search.Runtime;
 using RolltheSpire2.Search.Compilation;
 using RolltheSpire2.Tests.FastSearch;
@@ -47,6 +48,7 @@ internal static partial class FamilyNeowChecks
             Console.WriteLine($"Rfull focused fixtures: {rfullFixtures.Count};PASS");
             return 0;
         }
+        CheckEffectiveKaleidoscopePools();
         // These independent historical seeds belong to the original four-relic
         // source fixture, separate from the broader R numerical-shape fixture.
         var capsuleFixture = Beta110LargeCapsuleSemanticFixture.Validate(fixedSeedAuthority, scenarios[0].Request.Model.Detection);
@@ -537,6 +539,90 @@ internal static partial class FamilyNeowChecks
             keep |= current;
         }
         return keep;
+    }
+
+    private static void CheckEffectiveKaleidoscopePools()
+    {
+        var authority = Beta110FastSearchFixtureAuthority.CreateBeta111(BaseGameModelKeys.Characters.Ironclad, 10, 0, 1);
+        var effects = authority.EffectAuthority!;
+        var ownCard = effects.CharacterRewardPool!.First(card => card.Rarity == EffectCardRarity.Common);
+        var donors = effects.OtherCharacterPools!;
+        var effective = effects with
+        {
+            KaleidoscopePools = donors.Select(pool => pool with { Cards = [ownCard] }).ToArray()
+        };
+        var search = new NeowStructuredEffectSearchCondition(BaseGameModelKeys.Relics.Kaleidoscope,
+            NeowStructuredConditionKind.IndependentOfferGroupTargets, NeowStructuredEffectScope.SelectableOfferGroups,
+            NeowStructuredOutputKind.Card, [ownCard.CardKey, ownCard.CardKey], AllowDuplicateOutputs: true);
+        var original = Beta110FastEffectCatalogCompiler.Compile(effects, search.OutputKeys);
+        var catalog = Beta110FastEffectCatalogCompiler.Compile(effective, search.OutputKeys);
+        if (NeowNumericCompilation.TryCompileStructuredCondition(search, original, out _, out _) ||
+            !NeowNumericCompilation.TryCompileStructuredCondition(search, catalog, out var condition, out _) ||
+            !catalog.TryGetDenseId(ownCard.CardKey, out ushort ownId) ||
+            catalog.OtherCharacterPools.Length != donors.Count ||
+            catalog.OtherCharacterPools.Any(pool => pool.TotalCount != 1 || pool.Common[0] != ownId) ||
+            !catalog.CharacterRewardPool.Common.SequenceEqual(original.CharacterRewardPool.Common) ||
+            catalog.Fingerprint == original.Fingerprint)
+            throw new InvalidOperationException("Kaleidoscope effective donor compilation mismatch.");
+
+        var rewards = new Beta110FastRng(7);
+        var nonCombat = new Beta110FastRng(8);
+        Span<ushort> offers = stackalloc ushort[6];
+        Span<byte> matched = stackalloc byte[1];
+        matched.Clear();
+        if (!NeowLocalOperators.GenerateKaleidoscopeOffers(10, catalog, ref rewards, ref nonCombat, offers,
+                semanticProfile: RngSemanticProfileId.Modern113) || offers.IndexOfAnyExcept(ownId) >= 0)
+            throw new InvalidOperationException("Kaleidoscope effective donor replay mismatch.");
+        NeowLocalOperators.MatchKaleidoscopeConditions([condition], offers, matched);
+        if (matched[0] != 1)
+            throw new InvalidOperationException("Kaleidoscope repeated effective target failed to match both groups.");
+
+        var missing = Beta110FastEffectCatalogCompiler.Compile(effects with { KaleidoscopePoolIssue = "fixture unavailable" }, search.OutputKeys);
+        if (missing.OtherCharacterCardAuthorityExact || !missing.CharacterRewardAuthorityExact)
+            throw new InvalidOperationException("Missing effective donor capture affected the wrong numerical authority.");
+
+        var partial = effective.KaleidoscopePools!.ToArray();
+        partial[0] = partial[0] with { CandidateCaptureIssue = "fixture partial donor" };
+        var partialCatalog = Beta110FastEffectCatalogCompiler.Compile(effects with { KaleidoscopePools = partial }, search.OutputKeys);
+        if (partialCatalog.OtherCharacterCardAuthorityExact || partialCatalog.OtherCharacterPools[0].TotalCount != 0)
+            throw new InvalidOperationException("A partial donor proved Kaleidoscope generation from its observed cards.");
+
+        partial[0] = partial[0] with { Cards = [], CandidateCaptureIssue = null };
+        SearchModel BuildModel(IReadOnlyList<CharacterCardPoolSnapshot> candidates, NeowStructuredEffectSearchCondition target)
+        {
+            var context = new SearchContext(RuntimeProfileId.Beta111, authority.Character.CharacterKey, 10,
+                authority.WithEffectAuthority(effects with { KaleidoscopePools = candidates }),
+                new("0.111.0", "0.111.0", "beta", "Kaleidoscope-donor-fixture", true, ""), SearchEvaluationAssumptions.BroadDefault);
+            var compiled = SearchCompiler.Compile(SearchQuery.Empty with
+            {
+                OpeningRoute = new(BaseGameModelKeys.Relics.Kaleidoscope),
+                StructuredOpeningEffects = [target]
+            }, context);
+            return new(compiled, CompiledSearchEvaluationProjector.Project(compiled).Evaluation,
+                CombatRewardRoutePolicyContract.None, compiled.SemanticFingerprint);
+        }
+        var model = BuildModel(partial, search);
+        var estimate = NeowStructuredEffectProbabilityEstimator.Estimate(model.CompiledSearch);
+        if (estimate.IsPriced || !estimate.EvidenceCode.EndsWith("KaleidoscopePoolOfferIncomplete", StringComparison.Ordinal))
+            throw new InvalidOperationException("An empty donor received a price for a complete Kaleidoscope offer.");
+        var plan = NeowReplayPlan.Compile(model, false);
+        ulong root = Enumerable.Range(0, 4096).Select(i => Beta110Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal((ulong)i)))
+            .First(candidate => NeowFamilyReplay.Observe(candidate, plan).IdentityPass);
+        if (plan.StructuredConditions.Length != 0 || plan.ExactOnly.Length == 0 || !NeowFamilyReplay.Matches(root, plan))
+            throw new InvalidOperationException("A root with an empty donor was discarded before Production Exact.");
+
+        var donorCard = donors[0].Cards.First(card => card.Rarity == EffectCardRarity.Common);
+        var mixed = donors.Select((pool, index) => pool with { Cards =
+        [
+            pool.Cards.First(card => card.Rarity == EffectCardRarity.Uncommon),
+            donorCard with { Rarity = index == 0 ? EffectCardRarity.Common : EffectCardRarity.Rare },
+            ownCard with { Rarity = EffectCardRarity.Rare }
+        ] }).ToArray();
+        var mixedPlan = NeowReplayPlan.Compile(BuildModel(mixed, search with { OutputKeys = [donorCard.CardKey, donorCard.CardKey] }), false);
+        var mixedCatalog = mixedPlan.Authority.EffectCatalog;
+        if (!mixedCatalog.TryGetDenseId(ownCard.CardKey, out ushort normalId) || mixedCatalog.CardRarityByDenseId[normalId] != 1 ||
+            !NeowSingleplayerGpuPlan.TryCreate(mixedPlan, out var gpu, out _) || gpu is null || gpu.DirectNestedMode is >= 1 and <= 3)
+            throw new InvalidOperationException("Kaleidoscope's varying donor rarities were flattened into one rarity gate.");
     }
 
     private static void CheckPhysicalPreparationIsolation()

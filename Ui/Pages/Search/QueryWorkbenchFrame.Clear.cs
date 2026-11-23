@@ -17,7 +17,7 @@ internal sealed partial class QueryWorkbenchFrame
     {
         try
         {
-            if (_multiplayer) return System.Text.Json.JsonSerializer.Serialize(CapturePartyDraft());
+            if (_multiplayer) return System.Text.Json.JsonSerializer.Serialize(CapturePartyDraft(forStorage: true));
             // Undo compares authored state, including incomplete T declarations.
             // Compiling T here would collapse every missing-source edit into the
             // same failure stamp and allow an old snapshot to overwrite new work.

@@ -189,6 +189,7 @@ if (args.Contains("--compatibility-reference", StringComparer.Ordinal)) return C
 if (args.Contains("--shop-ordered", StringComparer.Ordinal)) return ShopOrderedChecks.Run();
 if (args.Contains("--wwp-commitment", StringComparer.Ordinal)) return WwpCommitmentChecks.Run();
 if (args.Contains("--exact-boundary", StringComparer.Ordinal)) return ExactBoundaryChecks.Run();
+if (args.Contains("--world-ancient-independent", StringComparer.Ordinal)) return ExactBoundaryChecks.RunWorldAncientIndependent();
 if (args.Contains("--replay-non-hit-sample", StringComparer.Ordinal)) return ExactBoundaryChecks.RunReplayNonHitSample();
 if (args.Contains("--exact-cancellation", StringComparer.Ordinal)) return ExactBoundaryChecks.RunCancellation();
 if (args.Contains("--party-exact-independent", StringComparer.Ordinal)) return ExactBoundaryChecks.RunPartyIndependentMismatch();

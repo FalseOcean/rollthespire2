@@ -83,6 +83,15 @@ internal static class PredictorSettlementEffects
         {
             // Opening handlers completed these obtains before publishing state.
             if (relic.Key.Entry is "GOLDEN_PEARL" or "ARCANE_SCROLL" or "LOST_COFFER" or "PHIAL_HOLSTER" or "SMALL_CAPSULE") continue;
+            // Modern113 native items already held at this captured boundary.
+            // Their combat/pet hooks do not change local reward or obtain RNG;
+            // captured rest options already include Restore/Evolve. Local event
+            // battles are Monster rooms, so Bath Robes' Boss-entry heal cannot
+            // run here. Player-side pet creation also skips the enemy HP draw.
+            // Keep this separate from acquisition: Byrdine.AfterObtained must
+            // transform Byrd Swoop, and future routes need additional state.
+            if (context?.Operation != null && relic.Key.Category == "RELIC" && relic.Key.Entry is
+                ("WUPPY" or "BATH_TOWEL" or "BATH_ROBES" or "BYRDINE" or "MIGHTY_WINGS")) continue;
             RequireImplementedRelic(relic.Key, crystalBestEffort, context);
         }
         foreach (long id in state.Deck) RequireImplementedCard(state.Card(id), crystalBestEffort, context);

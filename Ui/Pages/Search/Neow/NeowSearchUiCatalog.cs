@@ -125,7 +125,7 @@ internal sealed partial record NeowSearchUiCatalog(
             .Where(IsRegularRewardRarity)
             .ToArray();
         ModelKey[] otherCards = Keys(
-            (authority.OtherCharacterPools ?? Array.Empty<CharacterCardPoolSnapshot>())
+            (authority.EffectiveKaleidoscopePools ?? Array.Empty<CharacterCardPoolSnapshot>())
                 .SelectMany(pool => pool.Cards)
                 .Where(IsRegularRewardRarity)
                 .Select(card => card.CardKey));
@@ -217,7 +217,8 @@ internal sealed partial record NeowSearchUiCatalog(
             pools.Add(NeowCandidatePoolKind.ColorlessCards);
         if (pools.Contains(NeowCandidatePoolKind.CharacterCards) && pools.Contains(NeowCandidatePoolKind.ColorlessCards))
             pools.Add(NeowCandidatePoolKind.MultiplayerCards);
-        if (authority.OtherCharacterPools is not null && authority.OtherCharacterPoolsExact && authority.OtherCharacterRewardHooksNoOpExact)
+        if (authority.EffectiveKaleidoscopePools is { } candidates && candidates.All(p => p.CandidateCaptureIssue is null) &&
+            authority.OtherCharacterPoolsExact && authority.OtherCharacterRewardHooksNoOpExact)
             pools.Add(NeowCandidatePoolKind.OtherCharacterCards);
         if (authority.TransformPool is not null && authority.TransformPoolsExact && authority.OrderedDeck is not null && authority.DeckExact)
             pools.UnionWith([NeowCandidatePoolKind.TransformCards, NeowCandidatePoolKind.NewLeafTransformCards]);

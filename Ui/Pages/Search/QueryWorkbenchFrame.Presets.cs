@@ -217,7 +217,7 @@ internal sealed partial class QueryWorkbenchFrame
     internal SearchPresetCapture CapturePreset(WorkbenchSearchDraft? authored = null)
     {
         if (_loadFailed) throw new InvalidOperationException("integration.load_shape");
-        var draft = (authored ?? CaptureDraft()).WithoutCapturedAuthority();
+        var draft = (authored ?? CaptureAuthoredDraft()).WithoutCapturedAuthority();
         var time = DateTimeOffset.UtcNow;
         var probability = SearchPresetProbabilitySnapshot.Unavailable(time);
         var provenance = SearchPresetProvenance.Unknown(_runtime.Detection.NormalizedVersion, time);

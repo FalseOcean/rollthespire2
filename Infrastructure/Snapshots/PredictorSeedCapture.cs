@@ -205,6 +205,9 @@ internal static class PredictorSeedCapture
         return context with { AccountWongoPoints = context.AccountWongoPoints ?? MegaCrit.Sts2.Core.Saves.SaveManager.Instance.Progress.WongoPoints,
             PotionPool = potions, OpeningEligibleRelics = effects.BonesEligibleRelics?.ToImmutableArray() ?? [], Catalog = context.Catalog! with
         { Encounters = encounters, AllCharacterCards = allCards, CardDefinitions = definitions, TransformationPools = transformPools,
+            KaleidoscopePools = effects.KaleidoscopePools?.OrderBy(p => p.PoolOrder).Select(p =>
+                new PredictorKaleidoscopePool(p.PoolId, p.Cards.ToImmutableArray(), p.CandidateCaptureIssue)).ToImmutableArray(),
+            KaleidoscopePoolIssue = effects.KaleidoscopePoolIssue,
             UnlockedCurseCards = curses, ModifierCurseCards = modifierCurses, ShopRelics = shopRelics, CharacterPools = characterPools,
             CharacterStrikeKey = effects.CharacterStrikeKey, CharacterDefendKey = effects.CharacterDefendKey,
             TradableRelicTypes = ModelDb.AllRelics.Where(r => !r.HasUponPickupEffect && !r.SpawnsPets &&

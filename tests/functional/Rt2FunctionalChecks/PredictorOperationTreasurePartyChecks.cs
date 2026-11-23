@@ -35,6 +35,10 @@ internal static class PredictorOperationTreasurePartyChecks
         const BindingFlags members = BindingFlags.Instance | BindingFlags.NonPublic;
         var nativeConstructor = typeof(TreasureRoomRelicSynchronizer).GetConstructors().Single();
         bool modern = nativeConstructor.GetParameters()[0].ParameterType == typeof(IRunState);
+        // This is a direct installed-native parity fixture, unlike legacy
+        // source-reference samples. Match the native constructor/version cut.
+        var semanticProfile = modern ? RolltheSpire2.Compatibility.RngSemanticProfileId.Modern113
+            : baseline.Context.VersionResolution.SemanticProfileId;
         var original = baseline.Working.Streams.Single(s => s.Stream == PredictorStream.TreasureRoomRelics);
         var copiedRng = original.Restore();
         bool observedTie = false, observedConsolation = false, observedSkipped = false;
@@ -70,7 +74,7 @@ internal static class PredictorOperationTreasurePartyChecks
                 {
                     var scene = new PredictorOperationTreasurePartyScene(players.Select(p => p.NetId).ToImmutableArray(), players[0].NetId,
                         relics, players.Select((p, i) => new PredictorOperationTreasureVote(p.NetId, true, votes[i])).ToImmutableArray(), cursor, true)
-                    { SemanticProfile = baseline.Context.VersionResolution.SemanticProfileId };
+                    { SemanticProfile = semanticProfile };
                     var predicted = PredictorOperationTreasureParty.Query(scene, votes[0]);
                     var nativeRng = new Rng(new SerializableRng { state0 = cursor.S0, state1 = cursor.S1, state2 = cursor.S2,
                         state3 = cursor.S3, counter = cursor.Calls });
@@ -118,7 +122,7 @@ internal static class PredictorOperationTreasurePartyChecks
             var pendingScene = new PredictorOperationTreasurePartyScene(players.Select(p => p.NetId).ToImmutableArray(), players[0].NetId,
                 relics, players.Select(p => new PredictorOperationTreasureVote(p.NetId, false, null)).ToImmutableArray(),
                 new(original.S0, original.S1, original.S2, original.S3, original.Calls), false)
-            { OptimisticLocalVote = new(players[0].NetId, true, 1) };
+            { OptimisticLocalVote = new(players[0].NetId, true, 1), SemanticProfile = semanticProfile };
             var pending = PredictorOperationTreasureParty.Query(pendingScene, 0);
             Check(pending.PendingPlayers.SequenceEqual(players.Skip(1).Select(p => p.NetId)) && pending.Awards.IsEmpty &&
                 pending.RngAfter == pendingScene.Rng && pendingScene.Votes.All(v => !v.Received),

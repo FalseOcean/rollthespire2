@@ -44,19 +44,10 @@ internal sealed partial class TransformationAncientNumericalPlan
             evaluation.NeowRoute is not null)
             return null;
 
-        // The selected Ancient uses the initial personal cursor. Independent
-        // event effects do not move it, but earlier Basic transforms may change
-        // the material count when the user leaves that quantity automatic.
-        if (!condition.PandoraCountOverride.HasValue && HasEarlierEventTransform(evaluation, condition.AncientAct))
-            return null;
-
-        var initial = OpeningTransformationContinuation.Initial(authority.EffectAuthority);
-        bool astrolabe = condition.AncientSource == TransformationAncientSource.Astrolabe;
-        if (astrolabe && initial.BasicCount is null) return null;
-        if (astrolabe && initial.BasicCount < TransformationRelicProjector.AstrolabeTargetCount) return Impossible;
-        int? drawCount = astrolabe ? TransformationRelicProjector.AstrolabeTargetCount :
-            condition.PandoraCountOverride ?? initial.BasicStrikeDefendCount;
-        if (drawCount is null or > TransformationRelicProjector.ProjectionDrawBudget) return null;
+        // With no selected opening the personal stream starts at zero. The query
+        // already carries the draw count shown in the editor.
+        int drawCount = condition.AncientOpportunityCount;
+        if (drawCount > TransformationRelicProjector.ProjectionDrawBudget) return null;
         if (drawCount == 0) return Impossible;
 
         var projector = TransformationRelicProjector.Capture(authority.EffectAuthority);
@@ -91,7 +82,7 @@ internal sealed partial class TransformationAncientNumericalPlan
             requiresRareRemainder = true;
             foreach (var (key, rare) in rarities)
                 if (!rare)
-                    nonRareMaximums[key] = Math.Min(targets.GetValueOrDefault(key), nonRareMaximums.GetValueOrDefault(key, drawCount.Value));
+                    nonRareMaximums[key] = Math.Min(targets.GetValueOrDefault(key), nonRareMaximums.GetValueOrDefault(key, drawCount));
         }
 
         long minimumTargets = minimums.Values.Sum(value => (long)value);
@@ -101,7 +92,7 @@ internal sealed partial class TransformationAncientNumericalPlan
         foreach (var (key, rare) in rarities)
         {
             int minimum = minimums.GetValueOrDefault(key);
-            int maximum = nonRareMaximums.GetValueOrDefault(key, drawCount.Value);
+            int maximum = nonRareMaximums.GetValueOrDefault(key, drawCount);
             if (minimum > maximum) return Impossible;
             byCard.Add(key, new(minimum > 0 || maximum > 0 && maximum < drawCount ? counterCount++ : -1, minimum, maximum, rare));
         }
@@ -111,15 +102,8 @@ internal sealed partial class TransformationAncientNumericalPlan
             candidateRules[index] = byCard[ordered[index].CardKey];
         // Beta111 named streams add their name hash to the player root.
         ulong streamSeedOffset = Beta111Profile.Instance.DeriveNamedStreamSeed((ulong)authority.PlayerSlotIndex, "transformations");
-        return new(streamSeedOffset, drawCount.Value, candidateRules, counterCount, (int)minimumTargets, minimumRare, requiresRareRemainder);
+        return new(streamSeedOffset, drawCount, candidateRules, counterCount, (int)minimumTargets, minimumRare, requiresRareRemainder);
     }
-
-    private static bool HasEarlierEventTransform(ExactSearchEvaluationProjection evaluation, int ancientAct) =>
-        evaluation.EventResultConditions.Any(result =>
-            EventResultTransformSemantics.IsTransform(result.Kind) &&
-            evaluation.EventSequenceConditions.Any(queue => !queue.IsEmpty && queue.Act < ancientAct &&
-                (queue.Keys.All.Any(key => key.Entry == EventResultTransformSemantics.Entry(result.Kind)) ||
-                 queue.Keys.Any.Count == 1 && queue.Keys.Any[0].Entry == EventResultTransformSemantics.Entry(result.Kind))));
 
     internal bool Matches(ulong root)
     {

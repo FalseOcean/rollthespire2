@@ -19,10 +19,12 @@ public static class PartyRuntimeAuthorityCapture
         // Runtime capture resolves each supplied identity and its actual pools.
         // A registered Mod character is not missing authority merely by origin.
         var states = unlocks.Select(UnlockState.FromSerializable).ToArray();
+        var partyRoster = characters.Select((character, slot) => (Character: character, Unlocks: states[slot])).ToArray();
         // Supplied profiles are retained. The UI may explicitly supply the full-unlock assumption; missing profiles never default here.
         var players = characters.Select((key, slot) => RuntimeContextAuthorityCapture.CaptureRuntimeReadOnly(
             profile, seed, CharacterIdentity.FromKey(key), ascension, version, characters.Count, slot,
-            WorldGameMode.Multiplayer, PredictionGameModeAuthority.ExplicitRequest, states[slot], characters)).ToArray();
+            WorldGameMode.Multiplayer, PredictionGameModeAuthority.ExplicitRequest, states[slot], characters,
+            explicitDiscoveredActs: null, partyRoster: partyRoster)).ToArray();
         var union = new UnlockState(states);
         var world = ReflectionNeowEffectSnapshotAdapter.CaptureWorld(profile, seed, CharacterIdentity.FromKey(characters[0]),
             ascension, characters.Count, 0, true, players[0].EffectAuthority, WorldGameMode.Multiplayer,

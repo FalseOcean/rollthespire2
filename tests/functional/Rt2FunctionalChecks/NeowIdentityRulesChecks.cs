@@ -3,16 +3,17 @@ using RolltheSpire2.Core.Authority;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Neow;
 using RolltheSpire2.Core.Rng;
+using RolltheSpire2.Core.Prediction;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using RolltheSpire2.Core.Seed;
 using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.FamilyExecution;
 using RolltheSpire2.Search.Semantics;
 using RolltheSpire2.Tests.FastSearch;
 using MegaCrit.Sts2.Core.Extensions;
-using MegaCrit.Sts2.Core.Events;
 using HarmonyLib;
 using RolltheSpire2.Infrastructure.Snapshots;
-using NativeNeow = MegaCrit.Sts2.Core.Models.Events.Neow;
 using R = RolltheSpire2.Core.Identity.BaseGameModelKeys.Relics;
 
 internal static class NeowIdentityRulesChecks
@@ -163,27 +164,33 @@ internal static class NeowIdentityRulesChecks
         return 0;
     }
 
-    private static void ReverseOffers(ref IEnumerable<EventOption> __result) => __result = __result.Reverse();
-    private static void ReverseLiveOffers(NativeNeow __instance, ref IEnumerable<EventOption> __result)
+    private sealed class CatalogFixture
     {
-        if (__instance.IsMutable) __result = __result.Reverse();
+        public bool Reverse { get; init; }
+        public IEnumerable<object> PositiveOptions => new[] { "ONE", "TWO", "TWO" }
+            .Select(entry => (object)new { Relic = new { Id = new { Category = "RELIC", Entry = entry } } });
+    }
+
+    private static void ReorderOffers(CatalogFixture __instance, ref IEnumerable<object> __result)
+    {
+        if (__instance.Reverse) __result = __result.Reverse();
     }
 
     private static void CheckLiveGetterStability(Action<bool, string> check)
     {
-        var getter = AccessTools.PropertyGetter(typeof(NativeNeow), "PositiveOptions");
-        var harmony = new Harmony("rt2.tests.neow.getter-stability");
+        var getter = AccessTools.PropertyGetter(typeof(CatalogFixture), nameof(CatalogFixture.PositiveOptions));
+        var harmony = new Harmony("rt2.tests.neow.read-ordered-rows");
         try
         {
-            foreach (var (method, stable) in new[] { (nameof(ReverseOffers), true), (nameof(ReverseLiveOffers), false) })
+            harmony.Patch(getter, postfix: new HarmonyMethod(typeof(NeowIdentityRulesChecks), nameof(ReorderOffers)));
+            foreach (bool reverse in new[] { false, true })
             {
-                harmony.Patch(getter, postfix: new HarmonyMethod(typeof(NeowIdentityRulesChecks), method));
-                var patches = Harmony.GetAllPatchedMethods().ToHashSet();
-                check(ReflectionNeowEffectSnapshotAdapter.HasStaticNeowList(typeof(NativeNeow), "PositiveOptions", patches) == stable,
-                    method + ".LiveOrderProof");
-                check(ReflectionNeowEffectSnapshotAdapter.HasStaticNeowList(typeof(NativeNeow), "CurseOptions", patches),
-                    method + ".OtherGetter");
-                harmony.Unpatch(getter, HarmonyPatchType.Postfix, harmony.Id);
+                var unresolved = new HashSet<ModelKey>();
+                check(ReflectionNeowEffectSnapshotAdapter.TryReadNeowOptionRelics(new CatalogFixture { Reverse = reverse },
+                    nameof(CatalogFixture.PositiveOptions), true, unresolved, out var actual), "ReadablePatchedContent");
+                check(actual.Select(k => k.Entry).SequenceEqual(reverse ? ["TWO", "TWO", "ONE"] : ["ONE", "TWO", "TWO"]),
+                    "ReadActualOrderAndMultiplicity");
+                check(unresolved.SetEquals(actual), "UnknownEligibilityPreservesIdentities");
             }
         }
         finally { harmony.Unpatch(getter, HarmonyPatchType.Postfix, harmony.Id); }
@@ -195,10 +202,100 @@ internal static class NeowIdentityRulesChecks
         var extra = new ModelKey("RELIC", "CUSTOM_OPTION");
         var catalog = new NeowOfferCatalog([R.LavaRock, extra, R.NewLeaf, R.GoldenPearl],
             [R.LeafyPoultice, R.LargeCapsule], null);
-        var changed = new RuntimeContextAuthoritySnapshot(baseline.Character, 0, 0, 1, true, false, null, null, null,
-            "0.113.1", baseline.ProfileId, true, null, "sts2", baseline.SourceAuthority, baseline.Completeness,
-            baseline.ResolutionStatus, baseline.EffectAuthority, capturedNeowOffers: catalog);
+        RuntimeContextAuthoritySnapshot Capture(NeowOfferCatalog offers, string version = "0.113.1") => new(baseline.Character, 0, 0, 1, true, false, null, null, null,
+            version, baseline.ProfileId, true, null, "sts2", baseline.SourceAuthority, baseline.Completeness,
+            baseline.ResolutionStatus, baseline.EffectAuthority, capturedNeowOffers: offers);
+        var changed = Capture(catalog);
         check(changed.HasExactModernNeowIdentityInputs && changed.IsBeta111NeowIdentityAuthorityExact, "ChangedCatalogAuthority");
+        var uncertain = Capture(catalog with { UnresolvedEligibility = [extra] });
+        check(!uncertain.HasExactModernNeowIdentityInputs &&
+            SeedModelAssumptions.TryCreate(uncertain, out var model, out var reasons, SeedPredictionDomainSelection.Neow) &&
+            model.NeowPreparation.ForCurse(R.LargeCapsule).FixedCandidates.Contains(extra) &&
+            reasons[SeedPredictionDomainSelection.Neow].Contains("UnresolvedEligibilityIncluded"),
+            "UnmodeledEligibilityKeepsActualPoolAndAssumption");
+        var shortPool = Capture(catalog with { Positives = [], Curses = [R.LargeCapsule],
+            BinaryChoices = [
+                new(R.SmallCapsule, R.LavaRock, R.LargeCapsule),
+                new(R.MassiveScroll, R.MassiveScroll), // Neither side is eligible in solo.
+                new(extra, R.MassiveScroll)
+            ] });
+        var menuSizes = new HashSet<int>();
+        for (ulong seed = 0; seed < 32; seed++)
+        {
+            var game = new MegaCrit.Sts2.Core.Random.Rng(seed, "NEOW");
+            game.NextInt(1);
+            game.NextBool();
+            bool extraPresent = game.NextBool();
+            var menu = ModernNeowIdentityPredictor.PredictModernCore(seed, shortPool, Beta111Profile.Instance, true);
+            check(menu.RelicKeys.SequenceEqual(extraPresent ? [extra, R.LargeCapsule] : [R.LargeCapsule]),
+                "ReadBinaryAlternativesAndRespectEligibility." + seed);
+            menuSizes.Add(menu.RelicKeys.Count);
+        }
+        check(menuSizes.SetEquals([1, 2]), "NativeTakeDoesNotRequireTwoPositives");
+        var nativeCatalog = new NeowOfferCatalog(ModernNeowIdentityRules.PositiveCandidates,
+            ModernNeowIdentityRules.CurseCandidates, [.. BaseGameModelKeys.Relics.AllNeow]);
+        var implicitDefault = new RuntimeContextAuthoritySnapshot(baseline.Character, 0, 0, 1, true, true, true, 16, 16,
+            "0.113.1", baseline.ProfileId, true, null, "sts2", baseline.SourceAuthority, baseline.Completeness,
+            baseline.ResolutionStatus, baseline.EffectAuthority);
+        RuntimeContextAuthoritySnapshot Explicit(NeowOfferCatalog input) => new(baseline.Character, 0, 0, 1, true, true,
+            true, 16, 16, "0.113.1", baseline.ProfileId, true, null, "sts2", baseline.SourceAuthority, baseline.Completeness,
+            baseline.ResolutionStatus, baseline.EffectAuthority, capturedNeowOffers: input);
+        check(Explicit(nativeCatalog).CapturedNeowOffers == null &&
+            Explicit(nativeCatalog).CatalogFingerprint == implicitDefault.CatalogFingerprint, "DefaultCaptureKeepsHistoricalFingerprint");
+        check(Explicit(nativeCatalog with { UnresolvedEligibility = [R.SmallCapsule] }).CatalogFingerprint !=
+            implicitDefault.CatalogFingerprint && Capture(catalog).CatalogFingerprint != uncertain.CatalogFingerprint,
+            "ChangedEligibilityHasDistinctFingerprint");
+        var overlap = catalog with
+        {
+            Positives = [R.LavaRock], Curses = [R.LargeCapsule],
+            BinaryChoices = [
+                new(R.LavaRock, R.SmallCapsule, R.LargeCapsule),
+                new(R.SmallCapsule, R.SmallCapsule),
+                new(R.MassiveScroll, R.MassiveScroll)
+            ]
+        };
+        check(Capture(overlap).CatalogFingerprint != Capture(overlap with { BinaryChoices = ModernNeowIdentityRules.BinaryChoices })
+            .CatalogFingerprint, "ChangedBinaryContentHasDistinctFingerprint");
+        var options = ProductionSearchReplay.JsonOptions;
+        var staged = Capture(overlap with { UnresolvedEligibility = [extra] });
+        var restored = JsonSerializer.Deserialize<RuntimeContextAuthoritySnapshot>(
+            JsonSerializer.Serialize(staged, options), options)!;
+        check(restored.CapturedNeowOffers!.BinaryChoices.SequenceEqual(overlap.BinaryChoices) &&
+            restored.CapturedNeowOffers.UnresolvedEligibility.SequenceEqual([extra]) &&
+            restored.CatalogFingerprint == staged.CatalogFingerprint, "MutableOfferContentRoundTripsInReplay");
+        var historical = JsonSerializer.SerializeToNode(overlap, options)!.AsObject();
+        historical.Remove(nameof(NeowOfferCatalog.BinaryChoices));
+        historical.Remove(nameof(NeowOfferCatalog.UnresolvedEligibility));
+        var earlier = historical.Deserialize<NeowOfferCatalog>(options)!;
+        check(earlier.BinaryChoices.SequenceEqual(ModernNeowIdentityRules.BinaryChoices) &&
+            earlier.UnresolvedEligibility.IsEmpty, "OlderSavedCatalogUsesHistoricalBinaryDefaults");
+        historical[nameof(NeowOfferCatalog.BinaryChoices)] = new JsonArray();
+        check(historical.Deserialize<NeowOfferCatalog>(options)!.BinaryChoices.IsEmpty, "ExplicitEmptyBinaryListPreserved");
+        var oldShape = RolltheSpire2.Core.Authority.Runtime.RuntimePredictionInputIdentity.AuthorityPayload(changed)!["CapturedNeowOffers"]!;
+        var newShape = RolltheSpire2.Core.Authority.Runtime.RuntimePredictionInputIdentity.AuthorityPayload(staged)!["CapturedNeowOffers"]!;
+        check(oldShape["BinaryChoices"] == null && oldShape["UnresolvedEligibility"] == null &&
+            newShape["BinaryChoices"] is JsonArray { Count: 3 } && newShape["UnresolvedEligibility"] is JsonArray { Count: 1 },
+            "ContinuationPreservesLegacyInputsAndDistinguishesChangedBinaryContent");
+        var oldRules = JsonSerializer.Deserialize<RolltheSpire2.Core.World.Snapshots.Beta109AncientRuleObservation>(
+            """{"PaelRelics":[],"SharedAncientsWithUnknownGenerator":[],"PatchedAncientGenerators":["PAEL"],"StandardOptionWrapper":false}""", options)!;
+        check(!JsonSerializer.Serialize(oldRules, options).Contains("StandardOptionWrapper"), "OlderAncientPatchFlagsConsumed");
+        foreach (var version in new[] { "0.111.1", "0.113.1" })
+        {
+            var captured = Capture(overlap, version);
+            var picker = RolltheSpire2.Ui.Pages.Search.Neow.NeowSearchUiCatalog.FromAuthority(captured);
+            check(captured.HasExactModernNeowIdentityInputs && picker.RouteRelics.ToHashSet().SetEquals(
+                [R.LavaRock, R.SmallCapsule, R.LargeCapsule]), version + ".PickerUsesCapturedOfferBranches");
+            check(ModernNeowIdentityRules.TryEstimateOfferProbability(captured,
+                (a, b, c) => new[] { a, b, c }.ToHashSet().SetEquals(picker.RouteRelics), out var probability, out _) &&
+                Math.Abs(probability - 1) < 1e-12, version + ".ModelAllowsFormerBinarySiblingsTogether");
+            var offers = ModernNeowIdentityPredictor.PredictModernCore(17, captured, Beta111Profile.Instance, true);
+            check(offers.RelicKeys.ToHashSet().SetEquals(picker.RouteRelics), version + ".OrderedInputsReachPrediction");
+            var altered = new SearchContext(captured.ProfileId, captured.Character.CharacterKey, 0, captured,
+                new(version, version, "stable", "ChangedBinary", true, ""), SearchEvaluationAssumptions.BroadDefault);
+            var fast = NeowNumericCompilation.BuildAuthority(altered,
+                Beta110FastEffectCatalogCompiler.Compile(captured.EffectAuthority, []), false);
+            check(!fast.IdentityAuthorityExact && !fast.CurseIdentityAuthorityExact, version + ".FixedFastRetires");
+        }
         var context = new SearchContext(changed.ProfileId, changed.Character.CharacterKey, 0, changed,
             new("0.113.1", "0.113.1", "beta", "ChangedNeowCatalog", true, ""), SearchEvaluationAssumptions.BroadDefault);
         var numeric = NeowNumericCompilation.BuildAuthority(context, Beta110FastEffectCatalogCompiler.Compile(changed.EffectAuthority, []), false);

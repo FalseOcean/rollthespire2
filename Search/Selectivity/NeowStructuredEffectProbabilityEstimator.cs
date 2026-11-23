@@ -876,8 +876,13 @@ internal static partial class NeowStructuredEffectProbabilityEstimator
             condition.Kind == NeowStructuredConditionKind.IndependentOfferGroupTargets &&
             targets.Length is 1 or 2)
         {
-            if (authority.HasExactOtherCharacterPools != true || authority.OtherCharacterPools is null || authority.OtherCharacterPools.Count < 3)
-                return FailCondition("KaleidoscopeOtherCharacterPoolsMissing", out detail, out issue);
+            var pools = authority.EffectiveKaleidoscopePools;
+            if (!authority.HasExactKaleidoscopePools || pools is null || pools.Count < 3)
+                return FailCondition(authority.KaleidoscopePoolIssue ?? "KaleidoscopeOtherCharacterPoolsMissing", out detail, out issue);
+            if (pools.FirstOrDefault(p => p.CandidateCaptureIssue is not null)?.CandidateCaptureIssue is { } candidateIssue)
+                return FailCondition(candidateIssue, out detail, out issue);
+            if (pools.Any(pool => !pool.Cards.Any(card => card.Rarity is EffectCardRarity.Common or EffectCardRarity.Uncommon or EffectCardRarity.Rare)))
+                return FailCondition("KaleidoscopePoolOfferIncomplete", out detail, out issue);
 
             if (condition.KaleidoscopeGroupOrder == KaleidoscopeGroupOrderMode.ExactOrder)
             {
@@ -889,7 +894,7 @@ internal static partial class NeowStructuredEffectProbabilityEstimator
                 ModelKey[] concrete = slots.Where(key => key.HasValue).Select(key => key!.Value).ToArray();
                 if (concrete.Length == 0)
                     return FailCondition("KaleidoscopeExactOrderHasNoConcreteTarget", out detail, out issue);
-                if (!TryKaleidoscopeGroupStats(plan, authority.OtherCharacterPools, concrete, out double orderedA, out double orderedB, out _, out string orderedIssue))
+                if (!TryKaleidoscopeGroupStats(plan, pools, concrete, out double orderedA, out double orderedB, out _, out string orderedIssue))
                     return FailCondition(orderedIssue, out detail, out issue);
                 probability = concrete.Length == 1
                     ? orderedA
@@ -900,7 +905,7 @@ internal static partial class NeowStructuredEffectProbabilityEstimator
                 return true;
             }
 
-            if (!TryKaleidoscopeGroupStats(plan, authority.OtherCharacterPools, targets, out double pFirst, out double pSecond, out double pBoth, out string statsIssue))
+            if (!TryKaleidoscopeGroupStats(plan, pools, targets, out double pFirst, out double pSecond, out double pBoth, out string statsIssue))
                 return FailCondition(statsIssue, out detail, out issue);
             probability = targets.Length == 1
                 ? 1d - (1d - pFirst) * (1d - pFirst)

@@ -23,10 +23,10 @@ internal static partial class RewardSequenceForecast
             var ordinaryOdds = room switch { PredictorCombatKind.Elite => PredictorCardOdds.Elite,
                 PredictorCombatKind.Boss => PredictorCardOdds.Boss, _ => PredictorCardOdds.Regular };
             // Native RewardsSet, TheHunt and PrayerWheel all use ForRoom.
-            // Compare the authored recipe, never the visible cards or inventory
-            // alone. Capture materializes the native ordered pool separately.
+            // Pool and option count are captured inputs to this recipe. SameRecipe
+            // still compares both before grouping or labeling alternative orders.
             bool NativePlan(PredictorCardOdds odds) => SamePlan(plan with { CardPoolOverride = default },
-                new(PredictorRewardKind.Card, Odds: odds, EncounterSource: true, IsFromCombat: plan.IsFromCombat));
+                new(PredictorRewardKind.Card, CardCount: plan.CardCount, Odds: odds, EncounterSource: true, IsFromCombat: plan.IsFromCombat));
             if (plan.Odds == ordinaryOdds && NativePlan(ordinaryOdds))
                 return CandyApplies(snapshot, plan, reward.RerollIsCardReward) ? Candy : Driftwood;
             if (room == PredictorCombatKind.Elite && !plan.IsFromCombat && NativePlan(PredictorCardOdds.Boss) &&

@@ -118,6 +118,10 @@ internal static partial class UiSurfaceChecks
                     if (active && target == 1)
                     {
                         var scene = (PredictorOperationRewardsScene)snapshot.Scene;
+                        var wider = snapshot with { Scene = scene with { Rewards = scene.Rewards.Select(row =>
+                            row.Id == nativeBase.Id ? row with { RerollRecipe = row.RerollRecipe! with { CardCount = 4 } } : row).ToImmutableArray() } };
+                        CheckCombatRerollReference(SurfaceOperationPreview.BuildRewardAlternative(wider, ids[target], "REROLL", null),
+                            ids[target], Icon(ids[target]), CombatRerollReference(wider, ids, ids[target], Icon, check), check);
                         var missing = snapshot with { Scene = scene with { Rewards = scene.Rewards.Select(row => row.Id == nativeStar.Id ? row with { RerollRecipe = null } : row).ToImmutableArray() } };
                         var unavailable = SurfaceOperationPreview.BuildRewardAlternative(missing, ids[target], "REROLL", null);
                         check(unavailable.Faults.Any(fault => fault.Exception.Message == "PredictorCardRewardRerollRecipeMissing") &&

@@ -1312,7 +1312,10 @@ internal static partial class PredictorObtainSources
     {
         var catalog = context.Catalog ?? throw new InvalidOperationException("PredictorCatalogMissing");
         var ownPool = catalog.CharacterCards.FirstOrDefault()?.PoolId;
-        var pools = catalog.AllCharacterCards.Where(c => c.IsUnlockedInCapturedPool && c.PoolId != ownPool)
+        if (catalog.KaleidoscopePoolIssue is { } captureIssue)
+            throw new InvalidOperationException("KaleidoscopePoolsUnavailable:" + captureIssue);
+        var observed = catalog.KaleidoscopePools;
+        var pools = observed?.Select(p => p.Cards).ToList() ?? catalog.AllCharacterCards.Where(c => c.IsUnlockedInCapturedPool && c.PoolId != ownPool)
             .GroupBy(c => c.PoolId).OrderBy(g => g.Key, StringComparer.Ordinal)
             .Select(g => g.ToImmutableArray()).ToList();
         if (pools.Count < 3) throw new InvalidOperationException("PredictorKaleidoscopePoolsMissing");
@@ -1325,7 +1328,10 @@ internal static partial class PredictorObtainSources
             var cards = ImmutableArray.CreateBuilder<PredictorCard>();
             foreach (int pool in order.Take(3))
             {
-                var options = pools[pool].Where(c => context.Operation?.PlayerCount > 1 || !c.IsMultiplayerOnly).ToArray();
+                if (observed is { } captured && captured[pool].Issue is { } issue)
+                    throw new InvalidOperationException($"KaleidoscopePoolUnavailable:{captured[pool].Source}:{issue}");
+                var options = observed.HasValue ? pools[pool] :
+                    pools[pool].Where(c => context.Operation?.PlayerCount > 1 || !c.IsMultiplayerOnly).ToImmutableArray();
                 var rawCard = PredictorRewardGeneration.GenerateCard(context, ref state,
                     new(PredictorRewardKind.Card, Odds: PredictorCardOdds.Regular), options);
                 cards.Add(PredictorRewardGeneration.ModifyManualCardRewardOptions(context, ref state, [rawCard], isCardReward: false)[0]);

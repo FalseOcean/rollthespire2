@@ -1,3 +1,4 @@
+using MegaCrit.Sts2.Core.Unlocks;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Core.Identity;
@@ -21,7 +22,8 @@ internal static class NeowEffectRuntimeSnapshotCapture
         string gameVersion,
         int playersCount,
         int playerSlotIndex,
-        object? frozenUnlockState = null)
+        object? frozenUnlockState = null,
+        IReadOnlyList<(ModelKey Character, UnlockState Unlocks)>? partyRoster = null)
     {
         ArgumentNullException.ThrowIfNull(profile);
         RuntimeSnapshotThreadGuard.RequireMainThread();
@@ -37,9 +39,10 @@ internal static class NeowEffectRuntimeSnapshotCapture
 
         try
         {
-            if (frozenUnlockState is not null)
+            if (frozenUnlockState is not null || partyRoster is not null)
                 return ReflectionNeowEffectSnapshotAdapter.Capture(profile, rawSeed, character, ascension,
-                    playersCount, playerSlotIndex, adapter.ProfileId, gameVersion, RuntimeProfilePolicies.EffectCatalogRules(profile.ProfileId), frozenUnlockState);
+                    playersCount, playerSlotIndex, adapter.ProfileId, gameVersion, RuntimeProfilePolicies.EffectCatalogRules(profile.ProfileId),
+                    frozenUnlockState, partyRoster);
             return adapter.Capture(
                 profile,
                 rawSeed,

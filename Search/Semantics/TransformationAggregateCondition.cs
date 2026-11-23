@@ -119,11 +119,14 @@ public sealed record TransformationAggregateCondition(
             s.Targets[0].OrderedSourceCandidates is not { Count: 0 };
     }
 
+    internal const string AncientRollPremiseRevision = "ancient-roll-premise-v1";
+
     internal string SemanticIdentity => string.Join("|", Opening, PickupOrder, MorphicGrove, AromaOfChaos,
         WhisperingHollow, Symbiote, TrialNondescript, CompanionRelic, Predicate, MinimumRareCount,
         string.Join(',', TargetMultiset.Select(k => k.Serialized)), EventScenario?.Fingerprint ?? "none") +
         (UsesExtendedRequirements ? "|scoped.v1|" + string.Join('|', AncientSource, AncientAct, PandoraCountOverride, PandoraAutomaticCount,
-            System.Text.Json.JsonSerializer.Serialize(ResultRequirements)) : "");
+            System.Text.Json.JsonSerializer.Serialize(ResultRequirements)) : "") +
+        (UsesAncient ? "|" + AncientRollPremiseRevision : "");
 
     internal static void ValidateExclusiveOwnership(SearchQuery query)
     {

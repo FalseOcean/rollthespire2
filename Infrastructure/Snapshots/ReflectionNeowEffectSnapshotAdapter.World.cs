@@ -254,7 +254,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                     // An empty unlocked result is a valid exact catalog. The old
                     // helper treated every empty enumerable as missing and forced
                     // a fallback to the unfiltered backing collection.
-                    return CapturePossiblyEmptyModelListWorld(value, captureAncientTypes: exactMethodName == "GetUnlockedAncients");
+                    return CapturePossiblyEmptyModelListWorld(value);
                 }
                 catch (Exception ex)
                 {
@@ -731,7 +731,8 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             acceptedFixtureStatus.ToString(),
             string.Join(",", acceptedFixtureIds),
             authority.DiagnosticCode,
-            authority.InitialRelicReplayAssumption, authority.RoomReplayAssumption,
+            // Keep the two former hook slots empty so equivalent saved inputs retain their identity.
+            string.Empty, string.Empty,
             noRunModifiers.ToString() ?? string.Empty
         });
 
@@ -802,11 +803,9 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             CharacterRelicPoolOrderExact = authority.CharacterRelicPoolOrderExact,
             SharedAncientReferenceIds = authority.SharedAncientReferenceIds,
             AncientRules = authority.AncientRules,
-            WorldGenerationHooksExact = noRunModifiers == true && authority.WorldMethodsExact,
-            RoomReplayAssumption = authority.RoomReplayAssumption,
-            InitialRelicReplayAssumption = string.Join("|", new[] { authority.InitialRelicReplayAssumption,
-                noRunModifiers == true ? string.Empty : "UnknownHookOrModifier" }.Where(s => s.Length > 0)),
-            ObservedInitialRelicShuffleCount = authority.ObservedInitialRelicShuffleCount,
+            WorldGenerationHooksExact = noRunModifiers == true,
+            InitialRelicReplayAssumption = noRunModifiers == true ? string.Empty : "UnknownHookOrModifier",
+            ObservedInitialRelicShuffleCount = authority.InitialRelicShuffleCount,
             RelicRarityAuthorityExact = authority.RelicRarityAuthorityExact,
             InitialRelicShuffleCount = authority.InitialRelicShuffleCount,
             RelicShopEligibilityAuthorityExact = authority.RelicShopEligibilityAuthorityExact,
@@ -844,7 +843,6 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
 
     internal sealed record ModelListCapture(IReadOnlyList<ModelKey> Keys, bool Exact)
     {
-        public IReadOnlyCollection<Type>? AncientTypes { get; init; }
         public IReadOnlyList<int>? ReferenceIds { get; init; }
         public IReadOnlyList<ModelKey> UnknownAncientGenerators { get; init; } = [];
     }

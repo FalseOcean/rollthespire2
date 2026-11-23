@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using MegaCrit.Sts2.Core.Unlocks;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Authority;
 using RolltheSpire2.Core.Identity;
@@ -127,6 +128,7 @@ internal sealed record RuntimeContextObservedInputs(
         SameSupport(SupportEvidence,other.SupportEvidence);
     private static bool SameNeow(NeowOfferCatalog? left, NeowOfferCatalog? right) => left == right ||
         left != null && right != null && left.Positives.SequenceEqual(right.Positives) && left.Curses.SequenceEqual(right.Curses) &&
+        left.UnresolvedEligibility.SequenceEqual(right.UnresolvedEligibility) && left.BinaryChoices.SequenceEqual(right.BinaryChoices) &&
         (left.AllPossibleRelics is { } a ? right.AllPossibleRelics is { } b && a.SequenceEqual(b) : !right.AllPossibleRelics.HasValue);
     private static bool SameSupport(RequestSupportEvidence a, RequestSupportEvidence b) =>
         a with { LoadedOtherMods=b.LoadedOtherMods, Unlock=b.Unlock, Discovery=b.Discovery } == b &&
@@ -145,21 +147,27 @@ internal sealed record RuntimeContextObservedInputs(
         // Native Bones enumerates Neow.AllPossibleOptions, which in turn reads
         // the same positive, curse and binary getters as the opening offer.
         if (captured.EffectAuthority is { } effects && (CapturedNeowOffers != null ||
-            VanillaNeowCatalogExact != true && RuntimeVersionCompatibility.Resolve(GameVersion).SemanticProfileId ==
-                RngSemanticProfileId.Modern113))
+            VanillaNeowCatalogExact != true && RuntimeProfilePolicies.UsesSlicedAuthorityObservation(profile.ProfileId)))
         {
             bool? scroll = captured.UnlockedCommonCards.HasValue && captured.UnlockedUncommonCards.HasValue
                 ? captured.UnlockedCommonCards >= 4 && captured.UnlockedUncommonCards >= 2 : null;
             var pool = CapturedNeowOffers?.AllPossibleRelics?.Where(k => k != BaseGameModelKeys.Relics.NeowsBones)
-                .Select(k => (Key: k, Allowed: ModernNeowIdentityRules.IsAllowed(k, PlayersCount, captured.AllCharacterCardPoolsUnlocked, scroll)))
+                .Select(k => (Key: k, Allowed: CapturedNeowOffers.UnresolvedEligibility.Contains(k) ? null :
+                    ModernNeowIdentityRules.IsAllowed(k, PlayersCount, captured.AllCharacterCardPoolsUnlocked, scroll)))
                 .ToArray();
             var eligible = pool?.Where(p => p.Allowed != false).Select(p => p.Key).ToArray();
-            captured = captured with { EffectAuthority = effects with
+            bool exactPool = pool != null && pool.All(p => p.Allowed.HasValue);
+            if (effects.BonesEligibilityExact != exactPool || (eligible == null ? effects.BonesEligibleRelics != null :
+                effects.BonesEligibleRelics == null || !effects.BonesEligibleRelics.SequenceEqual(eligible)))
             {
-                BonesEligibleRelics = eligible, BonesEligibilityExact = pool != null && pool.All(p => p.Allowed.HasValue),
-                SnapshotFingerprint = OrderedPartyAuthority.Hash(effects.SnapshotFingerprint + "|runtime-bones|" +
-                    (eligible == null ? "unobserved" : string.Join(",", eligible.Select(k => k.Serialized))))
-            }};
+                captured = captured with { EffectAuthority = effects with
+                {
+                    BonesEligibleRelics = eligible, BonesEligibilityExact = exactPool,
+                    SnapshotFingerprint = OrderedPartyAuthority.Hash(effects.SnapshotFingerprint + "|runtime-bones|" +
+                        (eligible == null ? "unobserved" : string.Join(",", eligible.Select(k => k.Serialized))) +
+                        (exactPool ? "" : "|unresolved"))
+                }};
+            }
         }
         var world = ReflectionNeowEffectSnapshotAdapter.DeriveWorld(profile, RawSeed, Character,
             Ascension, PlayersCount, PlayerSlotIndex, true, captured.EffectAuthority, GameMode,
@@ -186,7 +194,8 @@ public static partial class RuntimeContextAuthorityCapture
         WorldGameMode predictionGameMode = WorldGameMode.Unknown,
         PredictionGameModeAuthority predictionGameModeAuthority = PredictionGameModeAuthority.Unknown,
         object? explicitUnlockState = null, IReadOnlyList<ModelKey>? orderedCharacters = null,
-        IReadOnlyList<ModelKey>? explicitDiscoveredActs = null)
+        IReadOnlyList<ModelKey>? explicitDiscoveredActs = null,
+        IReadOnlyList<(ModelKey Character, UnlockState Unlocks)>? partyRoster = null)
     {
         RuntimeSnapshotThreadGuard.RequireMainThread();
         if (!RuntimeProfilePolicies.UsesSlicedAuthorityObservation(profile.ProfileId))
@@ -194,6 +203,7 @@ public static partial class RuntimeContextAuthorityCapture
         // Freeze account provenance through the existing ingress. Passing these
         // facts to adapters does not relabel them as an explicit user premise.
         var roster = orderedCharacters?.ToArray();
+        var effectRoster = partyRoster?.ToArray();
         var discoveredActs = explicitDiscoveredActs?.ToArray();
         return new(async schedule =>
         {
@@ -202,13 +212,13 @@ public static partial class RuntimeContextAuthorityCapture
             var support = RequestSupportEvidenceCapture.Capture(request);
             var effect = await ReflectionNeowEffectSnapshotAdapter.ObserveEffect(profile, rawSeed, character,
                 ascension, playersCount, playerSlotIndex, gameVersion, request.UnlockState, schedule,
-                failSoft: explicitUnlockState is null).ConfigureAwait(false);
+                failSoft: explicitUnlockState is null, partyRoster: effectRoster).ConfigureAwait(false);
             var world = await ReflectionNeowEffectSnapshotAdapter.ObserveWorld(profile, character, playersCount,
                 playerSlotIndex, predictionGameMode, predictionGameModeAuthority, request.UnlockState,
                 roster, request.DiscoveredActs, schedule).ConfigureAwait(false);
             await schedule.Checkpoint("NeowCatalog").ConfigureAwait(false);
             bool? neow = ReflectionNeowEffectSnapshotAdapter.CaptureVanillaNeowCatalogExact(
-                RuntimeVersionCompatibility.Resolve(gameVersion).SemanticProfileId == RngSemanticProfileId.Modern113,
+                RuntimeProfilePolicies.UsesSlicedAuthorityObservation(profile.ProfileId),
                 out var capturedOffers, out string evidence);
             if (neow != true && capturedOffers == null && Interlocked.Exchange(ref _neowCatalogWarning, 1) == 0)
                 Bootstrap.RuntimeLog.TryBackgroundWarning($"runtimeNeowCatalogAuthority={neow?.ToString() ?? "Unknown"};evidence={evidence};scope=Neow;noInventedCatalog=true");

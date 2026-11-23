@@ -1,5 +1,9 @@
 using System.Collections.Immutable;
 using System.Text.Json;
+using HarmonyLib;
+using MegaCrit.Sts2.Core.Runs;
+using MegaCrit.Sts2.Core.Unlocks;
+using RolltheSpire2.Compatibility;
 using MegaCrit.Sts2.Core.Extensions;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Random;
@@ -45,15 +49,44 @@ internal static class NeowOperationPreviewChecks
                 "each retained native Kaleidoscope/Capsule order must obtain both and expose both actual Kaleidoscope groups");
     }
 
+    private static void CheckExternalCandidateOrder()
+    {
+        const string version = "0.113.1";
+        var profile = RuntimeProfileRegistry.Select(version);
+        var character = CharacterIdentity.FromKey(BaseGameModelKeys.Characters.Ironclad);
+        IReadOnlyList<CharacterCardPoolSnapshot> Capture() =>
+            NeowEffectRuntimeSnapshotCapture.Capture(profile, "000000000002", character, 10, version, 1, 0,
+                UnlockState.all).EffectAuthority?.EffectiveKaleidoscopePools
+            ?? throw new InvalidOperationException("Kaleidoscope candidate capture unavailable");
+
+        var original = Capture();
+        Check(original.Count >= 3 && original.All(p => p.Cards.Count > 1), "candidate-order fixture pools");
+        var manager = new Harmony("rt2.tests.external-candidate-order");
+        var method = AccessTools.Method(typeof(CardCreationOptions), nameof(CardCreationOptions.GetPossibleCards));
+        manager.Patch(method, postfix: new HarmonyMethod(typeof(NeowOperationPreviewChecks), nameof(ReverseCandidates)));
+        try
+        {
+            var changed = Capture();
+            Check(changed.Count == original.Count && original.Zip(changed).All(pair =>
+                pair.First.PoolId == pair.Second.PoolId && pair.Second.CandidateCaptureIssue is null &&
+                pair.First.Cards.Reverse().Select(c => c.CardKey).SequenceEqual(pair.Second.Cards.Select(c => c.CardKey))),
+                "external candidate manager must preserve the source and change its ordered candidates");
+        }
+        finally { manager.Unpatch(method, HarmonyPatchType.Postfix, manager.Id); }
+    }
+
+    private static void ReverseCandidates(ref IEnumerable<CardModel> __result) => __result = __result.Reverse();
+
     internal static void Run(PredictorRun baseline)
     {
+        CheckExternalCandidateOrder();
         var simple = Snapshot(baseline, "WHETSTONE");
         RunCaptured(simple, OfferId(simple));
         var preview = RelicOperationPreview.Build(simple, OfferId(simple));
         var native = Native(simple.State.Streams.Single(s => s.Stream == PredictorStream.Niche));
         var candidates = simple.State.Deck.Select(simple.State.Card).Where(c => c.Type == EffectCardType.Attack && c.UpgradeLevel < c.MaxUpgradeLevel)
             .Select(c => new SortCard(c)).ToList();
-        candidates.StableShuffle(native);
+        PredictorOperationSceneChecks.SourceStableShuffle(candidates, native, simple.Context);
         var upgraded = Rows(preview).Where(r => r.Action == OperationPreviewAction.UpgradeCard).SelectMany(r => r.Cards).ToArray();
         Check(preview.Branches is [{ FullyEnumerated: true }] && upgraded.Select(c => c.Id).Order()
             .SequenceEqual(candidates.Take(2).Select(c => c.Card.Id).Order()) &&

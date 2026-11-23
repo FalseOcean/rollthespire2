@@ -599,13 +599,13 @@ internal sealed partial class NeowEffectProjectionEngine
 
     private NeowEffectProjection ProjectKaleidoscope(ModelKey relicKey, NeowEffectWorkingState? state)
     {
-        if (state?.Authority.HasExactOtherCharacterPools != true ||
-            state.Authority.OtherCharacterPools is null)
+        if (state?.Authority.HasExactKaleidoscopePools != true ||
+            state.Authority.EffectiveKaleidoscopePools is not { } effectivePools)
         {
-            return Unknown(relicKey, "other-character-pools-required");
+            return Unknown(relicKey, state?.Authority.KaleidoscopePoolIssue ?? "other-character-pools-required");
         }
 
-        if (state.Authority.OtherCharacterPools.Count < 3)
+        if (effectivePools.Count < 3)
         {
             return Unknown(relicKey, "insufficient-other-character-pools");
         }
@@ -613,7 +613,7 @@ internal sealed partial class NeowEffectProjectionEngine
         var groups = new List<PredictedEffectGroup>();
         for (int groupIndex = 0; groupIndex < 2; groupIndex++)
         {
-            List<CharacterCardPoolSnapshot> pools = state.Authority.OtherCharacterPools
+            List<CharacterCardPoolSnapshot> pools = effectivePools
                 .OrderBy(pool => pool.PoolOrder)
                 .ToList();
             (state.Rng.NonCombatGeneration ?? state.Rng.Niche).UnstableShuffle(pools, _rngSemantics);
@@ -621,6 +621,7 @@ internal sealed partial class NeowEffectProjectionEngine
             int itemOrder = 0;
             foreach (CharacterCardPoolSnapshot pool in pools.Take(3))
             {
+                if (pool.CandidateCaptureIssue is { } issue) return Unknown(relicKey, issue);
                 GeneratedCard? card = NeowRewardGenerator.CreateCard(
                     state.Rng.Rewards, pool.Cards, _analysisAuthority.Ascension,
                     new HashSet<string>(StringComparer.Ordinal), forcedRarity: null, consumeUpgradeRoll: true,

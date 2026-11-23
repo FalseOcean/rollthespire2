@@ -159,7 +159,7 @@ internal static class TransformationAncientPrefilterChecks
         }
 
         Compare("eight materials and three identical targets", Model(box), true);
-        Compare("uses captured quantity when display cache differs", Model(box with { PandoraAutomaticCount = 12 }), true);
+        Compare("uses the displayed automatic quantity even when the captured deck differs", Model(box with { PandoraAutomaticCount = 12 }), true);
         Compare("legacy single predicate and manual count above auto", Model(box with
             { PandoraCountOverride = 11, ResultRequirements = [] }), true);
         Compare("three upgraded Astrolabe draws with mixed criteria", Model(astro), true);
@@ -186,10 +186,14 @@ internal static class TransformationAncientPrefilterChecks
         Compare("automatic materials missing but manual count closes the premise",
             Model(box with { PandoraCountOverride = 8 }, authorityEffects: effects with { OrderedDeck = null }), true);
 
+        Compare("automatic quantity without a captured remaining deck",
+            Model(box, authorityEffects: effects with { OrderedDeck = null }), true);
+        Compare("three Astrolabe draws with an empty remaining deck",
+            Model(astro, authorityEffects: effects with { OrderedDeck = [] }), true);
+
         var unresolved = new[]
         {
             Model(box, older),
-            Model(box, authorityEffects: effects with { OrderedDeck = null }),
             Model(box, authorityEffects: effects with { TransformPool = null }),
             Model(box with { PandoraCountOverride = TransformationRelicProjector.ProjectionDrawBudget + 1 }),
             Model(box, authorityEffects: effects with
@@ -216,8 +220,8 @@ internal static class TransformationAncientPrefilterChecks
                 EventSequenceConditions = [new(1, null, SearchSequenceRangeMode.FirstN, 4, new([grove], [], []))]
             }
         };
-        Check(TransformationAncientNumericalPlan.TryCreate(withEarlierEvent) is null,
-            "an earlier event transform may change automatic material count");
+        Check(TransformationAncientNumericalPlan.TryCreate(withEarlierEvent) is not null,
+            "earlier event-local draws preserve the personal cursor and the authored automatic quantity");
         var later = withEarlierEvent with
         {
             Evaluation = withEarlierEvent.Evaluation with

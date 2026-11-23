@@ -1,7 +1,6 @@
 using System.Collections;
 using System.Reflection;
-using HarmonyLib;
-using MegaCrit.Sts2.Core.Hooks;
+using MegaCrit.Sts2.Core.Unlocks;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Authority;
 using RolltheSpire2.Core.Effects.Coverage;
@@ -31,6 +30,8 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         public PoolCapture CharacterRelics { get; init; } = new(null, false, false, "unobserved");
         public PoolCapture SharedRelics { get; init; } = new(null, false, false, "unobserved");
         public IReadOnlyList<CharacterCardPoolSnapshot>? OtherCharacterPools { get; init; }
+        public IReadOnlyList<CharacterCardPoolSnapshot>? KaleidoscopePools { get; init; }
+        public string? KaleidoscopePoolIssue { get; init; }
         public IReadOnlyList<ModelKey>? NativeCharacterPoolOrder { get; init; }
         public bool OtherPoolsExact { get; init; }
         public IReadOnlyList<NeowEffectCardSnapshot>? Deck { get; init; }
@@ -91,6 +92,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         colorlessCards = StampCardCatalogProfile(colorlessCards, profile.ProfileId);
         curseCards = StampCardCatalogProfile(curseCards, profile.ProfileId);
         otherCharacterPools = StampCardCatalogProfile(otherCharacterPools, profile.ProfileId);
+        var kaleidoscopePools = StampCardCatalogProfile(observed.KaleidoscopePools, profile.ProfileId);
         deck = StampCardCatalogProfile(deck, profile.ProfileId);
 
         IReadOnlyList<NeowEffectCardSnapshot>? transformPool = selectedCards.Cards;
@@ -146,41 +148,20 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         IReadOnlyList<NeowEffectCardSnapshot>? merchantColorlessOrderedPool = colorlessCards.Cards?
             .OrderBy(card => card.PoolOrder)
             .ToArray();
+        // Replay the standard shop rules over the captured ordered identities.
+        // A patch on the game or a card's defining assembly does not remove its
+        // observed rarity, type, or position in the stock.
         bool merchantColorlessOrderedPoolExact =
             RuntimeProfilePolicies.SupportsMerchantColorlessModel(profile.ProfileId) &&
-            colorlessCards.Exact &&
-            merchantColorlessOrderedPool is not null &&
-            merchantColorlessOrderedPool.All(IsAuditedBaseGameCardSnapshot);
-        // Shop Colorless v1 uses observable-domain authority, not a generic Merchant-hook gate.
-        // Beta111 source audit establishes that the base ModifyMerchantCardPool path preserves
-        // Colorless identity and that the only first-party pool override (CharacterCards) is
-        // NoImpact for the Colorless pool. The base ModifyMerchantCardRarity path is identity-
-        // preserving and Beta111 has no first-party rarity override. Third-party/non-base pool
-        // authority remains Unsupported because merchantColorlessOrderedPoolExact is false.
-        bool merchantPoolRuleObserved = MerchantHookUnpatched(nameof(Hook.ModifyMerchantCardPool));
-        bool merchantRarityRuleObserved = MerchantHookUnpatched(nameof(Hook.ModifyMerchantCardRarity));
-        bool merchantResultRuleObserved = MerchantHookUnpatched(nameof(Hook.ModifyMerchantCardCreationResults));
-        bool merchantColorlessPoolIdentityHooksExact =
-            RuntimeProfilePolicies.SupportsMerchantColorlessModel(profile.ProfileId) &&
-            isAuditedVanilla &&
-            merchantColorlessOrderedPoolExact && merchantPoolRuleObserved && merchantResultRuleObserved;
-        bool merchantColorlessRarityIdentityHooksExact =
-            RuntimeProfilePolicies.SupportsMerchantColorlessModel(profile.ProfileId) &&
-            isAuditedVanilla &&
-            merchantColorlessOrderedPoolExact && merchantRarityRuleObserved;
+            colorlessCards.IdentityExact && merchantColorlessOrderedPool is not null;
+        bool merchantColorlessPoolIdentityHooksExact = merchantColorlessOrderedPoolExact;
+        bool merchantColorlessRarityIdentityHooksExact = merchantColorlessOrderedPoolExact;
 
-        // The canonical v1 observable is five consecutive successful normal initial inventories,
-        // not route occurrence. Prove only the fixed Shops-consumption shape needed to reach and
-        // continue past Colorless U/R. For the audited single-player Beta111 base pool, the five
-        // character slots have sufficient distinct Attack/Skill/Power candidates and Colorless
-        // U/R are non-empty; external/custom behavior never receives this authority here.
+        // Reaching the colorless slots still requires the earlier character slots
+        // to be fillable. Modern113 also draws the potions before the cards.
         bool merchantInitialInventoryShapeExact =
-            RuntimeProfilePolicies.SupportsMerchantColorlessModel(profile.ProfileId) &&
-            isAuditedVanilla &&
-            merchantPoolRuleObserved && merchantRarityRuleObserved && merchantResultRuleObserved &&
-            playersCount >= 1 &&
-            selectedCards.Exact && selectedCards.Cards is not null &&
-            selectedCards.Cards.All(IsAuditedBaseGameCardSnapshot) &&
+            merchantColorlessOrderedPoolExact && playersCount >= 1 &&
+            selectedCards.IdentityExact && selectedCards.Cards is not null &&
             selectedCards.Cards.Count(card => card.CardType == EffectCardType.Attack && !card.IsBasic) >= 2 &&
             selectedCards.Cards.Count(card => card.CardType == EffectCardType.Skill && !card.IsBasic) >= 2 &&
             selectedCards.Cards.Count(card => card.CardType == EffectCardType.Power && !card.IsBasic) >= 1 &&
@@ -210,10 +191,6 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             merchantInitialInventoryShapeExact = Core.Merchant.Beta111NormalMerchantShopsContinuation
                 .HasUnconditionalPotionStock(merchantPotionStock);
         }
-
-        static bool MerchantHookUnpatched(string methodName) =>
-            AccessTools.Method(typeof(Hook), methodName) is { } method &&
-            Harmony.GetPatchInfo(method)?.Owners.Count is null or 0;
 
         ModelKey? strikeKey = UniqueDeckKey(deck, card => card.IsBasic && card.IsStrike);
         ModelKey? defendKey = UniqueDeckKey(deck, card => card.IsBasic && card.IsDefend);
@@ -257,6 +234,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         string cardPoolFingerprint = Fingerprint(
             RuntimeProfilePolicies.CatalogFingerprintPrefix(profile.ProfileId) + "-cards-v2",
             EnumerateCardDescriptors(selectedCards.Cards, colorlessCards.Cards, otherCharacterPools)
+                .Concat(EnumerateKaleidoscopeDescriptors(kaleidoscopePools, observed.KaleidoscopePoolIssue))
                 .Concat(observed.NativeCharacterPoolOrder is { } nativeOrder
                     ? new[] { "native-character-pool-order=" + string.Join(">", nativeOrder.Select(key => key.Serialized)) }
                     : new[] { "native-character-pool-order=unobserved" }));
@@ -361,6 +339,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             MerchantPotionStock = merchantPotionStock,
             ObservedMerchantPotionStock = observedMerchantPotionStock,
             OtherCharacterIdentityPoolsExact = observed.OtherIdentityExact,
+            KaleidoscopePools = kaleidoscopePools, KaleidoscopePoolIssue = observed.KaleidoscopePoolIssue,
             EventCatalogParts = observed.EventCatalogParts,
             ColorfulCandidateColors = observed.ColorfulCandidateColors
         };
@@ -408,12 +387,14 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
 
     internal static async Task<EffectObservedInputs> ObserveEffect(IRuntimeProfile profile, string rawSeed,
         CharacterIdentity character, int ascension, int playersCount, int playerSlotIndex,
-        string gameVersion, object? explicitUnlockState, NativeObservationSchedule schedule, bool failSoft = true)
+        string gameVersion, object? explicitUnlockState, NativeObservationSchedule schedule, bool failSoft = true,
+        IReadOnlyList<(ModelKey Character, UnlockState Unlocks)>? partyRoster = null)
     {
         try
         {
             var observed = await ObserveEffectCore(profile, rawSeed, character, ascension, playersCount,
-                playerSlotIndex, gameVersion, explicitUnlockState, schedule, RuntimeProfilePolicies.EffectCatalogRules(profile.ProfileId)).ConfigureAwait(false);
+                playerSlotIndex, gameVersion, explicitUnlockState, schedule, RuntimeProfilePolicies.EffectCatalogRules(profile.ProfileId),
+                partyRoster).ConfigureAwait(false);
             return observed with { FailSoft = failSoft };
         }
         catch (OperationCanceledException) { throw; }
@@ -430,7 +411,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
     private static async Task<EffectObservedInputs> ObserveEffectCore(IRuntimeProfile profile, string rawSeed,
         CharacterIdentity character, int ascension, int playersCount, int playerSlotIndex,
         string gameVersion, object? explicitUnlockState, NativeObservationSchedule schedule,
-        EffectCatalogRules rules)
+        EffectCatalogRules rules, IReadOnlyList<(ModelKey Character, UnlockState Unlocks)>? partyRoster)
     {
         RuntimeSnapshotThreadGuard.RequireMainThread();
         if (!ProfileSeedRules.TryCanonicalizePredictionSeed(profile, rawSeed, out string canonicalSeed, out _))
@@ -459,6 +440,8 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         var curses = await Pool(StaticPool("CardPool","CardPools","CurseCardPool"), "curse", ConvertCardModel).ConfigureAwait(false);
         var (others, otherExact, otherIdentityExact) = await ObserveOtherCharacterPools(unlockState, character.CharacterKey, playersCount,
             rules, schedule).ConfigureAwait(false);
+        var kaleidoscope = await ObserveKaleidoscopePools(model, unlockState, others, playersCount, ascension,
+            playerSlotIndex, canonicalSeed, schedule, partyRoster).ConfigureAwait(false);
         var nativeOrder = ObserveNativeCharacterPoolOrder(unlockState);
         var (deck, deckExact) = await ObserveStartingDeck(model, character.CharacterKey, audited, schedule).ConfigureAwait(false);
         var characterPotions = await ObservePoolObject(PropertyPool("PotionPool","CharacterPotionPool","Potions"), unlockState,
@@ -490,7 +473,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         }
         return new() { Rules=rules, ObservedAtUtc=DateTimeOffset.UtcNow, CanonicalSeed=canonicalSeed, IsAuditedVanilla=audited, SelectedCharacterUnlocked=unlocked,
             SelectedCards=selected, ColorlessCards=colorless, CurseCards=curses, OtherCharacterPools=others,
-            NativeCharacterPoolOrder=nativeOrder,
+            KaleidoscopePools=kaleidoscope.Pools, KaleidoscopePoolIssue=kaleidoscope.Issue, NativeCharacterPoolOrder=nativeOrder,
             OtherPoolsExact=otherExact, Deck=deck, DeckExact=deckExact, CharacterPotions=characterPotions,
             SharedPotions=sharedPotions, SharedRelics=sharedRelics, CharacterRelics=characterRelics,
             AllCharacterCardPoolsUnlocked=allUnlocked, AllCharacterPoolsAuthorityExact=allExact,

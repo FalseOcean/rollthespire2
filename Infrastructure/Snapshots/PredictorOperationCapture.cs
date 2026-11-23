@@ -123,6 +123,7 @@ internal static partial class PredictorOperationCapture
         if (timing != null) timing.NativeStampMs = Stopwatch.GetElapsedTime(stage).TotalMilliseconds;
         var unlocks = player.UnlockState.ToSerializable();
         var pools = new CrystalSphereCatalogCapture.CapturePools(run, player);
+        var kaleidoscope = ReadKaleidoscopeSources(run, player, logFailure: true);
         var levels = new CatalogLevels(previous, timing);
         stage = Stopwatch.GetTimestamp();
         SelectionCardCatalog? observed = null;
@@ -134,6 +135,7 @@ internal static partial class PredictorOperationCapture
         stage = Stopwatch.GetTimestamp();
         catalog = CompleteCatalog(catalog, run, player,
             RuntimeProfilePolicies.EffectCatalogRules(RuntimeVersionCompatibility.Resolve(version).ProfileId), pools);
+        if (kaleidoscope is not null) catalog = catalog with { KaleidoscopePools = CopyKaleidoscopePools(kaleidoscope) };
         if (timing != null) timing.CompleteCatalogMs = Stopwatch.GetElapsedTime(stage).TotalMilliseconds;
         var opaque = ModelDb.All.Where(m => m.GetType().Assembly != typeof(CardModel).Assembly).Select(Key)
             .Concat(player.Deck.Cards.Where(c => c.GetType().Assembly != typeof(CardModel).Assembly).Select(Key))
@@ -229,7 +231,7 @@ internal static partial class PredictorOperationCapture
             Hp = player.Creature.CurrentHp, MaxHp = player.Creature.MaxHp });
         // These are exactly ObservationStamp's inputs, already read and checked
         // by this capture. Do not traverse/copy the same native scene again.
-        observationStamp = includeObservationStamp ? Hash(new { Native = before, Scene = (object)scene }) : "";
+        observationStamp = includeObservationStamp ? OperationStamp(before, scene, kaleidoscope) : "";
         if (timing != null)
         {
             timing.HashMs += Stopwatch.GetElapsedTime(stage).TotalMilliseconds;

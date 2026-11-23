@@ -23,7 +23,7 @@ internal static class EncounterQueueMatcher
                     return SearchQueryEvaluation.NoMatch("EncounterQueue.VariantMismatch");
                 var shape = generation.OrderedActCatalog.FirstOrDefault(a => a.ActKey == selected);
                 if (condition.Kind == EncounterQueueKind.Elite && generation.WorldGenerationHooksExact &&
-                    shape is { EncounterCatalogOfficialVanilla: true, EliteEncounterSlots: 15 } && condition.RangeValue > 15)
+                    shape is { EncounterRetryShapeExact: true, EliteEncounterSlots: 15 } && condition.RangeValue > 15)
                     return SearchQueryEvaluation.NoMatch("EncounterQueue.PositionAbsent");
             }
             var sequence = world?.EncounterSequences.SingleOrDefault(s => s.Act == condition.Act);

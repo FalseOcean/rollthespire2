@@ -22,6 +22,19 @@ internal static class RuntimePredictionInputIdentity
     internal static JsonNode? AuthorityPayload(RuntimeContextAuthoritySnapshot authority)
     {
         var payload = JsonSerializer.SerializeToNode(authority);
+        // Search saves contain a hash of this payload. Preserve the original
+        // shape for runs already using the ordinary Ancient generator. A save
+        // that actually suspended the generator hashed different values.
+        if (payload?["WorldAuthority"]?["Beta109Generation"]?["AncientRules"] is JsonObject ancient)
+        {
+            ancient["PatchedAncientGenerators"] = new JsonArray();
+            ancient["StandardOptionWrapper"] = true;
+        }
+        if (authority.CapturedNeowOffers is { } catalog && payload?["CapturedNeowOffers"] is JsonObject offers)
+        {
+            if (catalog.BinaryChoices.SequenceEqual(Neow.ModernNeowIdentityRules.BinaryChoices)) offers.Remove("BinaryChoices");
+            if (catalog.UnresolvedEligibility.IsEmpty) offers.Remove("UnresolvedEligibility");
+        }
         Normalize(payload);
         return payload;
     }

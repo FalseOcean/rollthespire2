@@ -62,11 +62,13 @@ internal static class PresetWorkbenchChecks
         CheckAutomaticRestorePreservesSource(runtime, directory, solo);
         CheckUnvisitedPartyAncientSeat(runtime, directory);
         CheckBossOnlyPreset(runtime, frame, store, solo);
+        CheckRetainedActVariant(runtime, frame, store);
         CheckEncounterPresets(runtime, frame, store, directory);
         WorkbenchSearchDraft? lastParty = null;
         foreach (int count in new[] { 2, 4 })
         {
             var party = BuildDraft(runtime, count);
+            if (count == 2) CheckUnreadLobbyDraft(runtime, directory, party);
             var semanticOnly = party with {
                 PartyAncientEditor = null,
                 Players = party.Players.Select(p => p with { AncientEditor = null }).ToArray(),
@@ -871,6 +873,95 @@ internal static class PresetWorkbenchChecks
             frame.CaptureDraft().Query.LegacyWorld.BossOrdinalFilters.Single().Keys.Any.Single() == boss,
             "Boss-only preset saves/applies without inventing an explicit variant");
         AssertSameIntent(runtime, intended, frame.CaptureDraft(), "Boss-only preset intent");
+    }
+
+    private static void CheckRetainedActVariant(ModRuntimeSnapshot runtime, QueryWorkbenchFrame frame, SearchPresetStore store)
+    {
+        var empty = new WorkbenchSearchDraft(Characters[0], 10, SearchQuery.Empty, AncientOptionConditionProfile.BroadDefault);
+        empty.Compile(runtime, out var context);
+        var catalog = BossMapSearchUiCatalog.FromAuthority(runtime.Profile.ProfileId, 10, context.WorldAuthority);
+        var current = catalog.Sections.Single(s => s.Act == 1).Variants.Single().ActKey;
+        // A saved selection from a progressed profile can name either first Act.
+        // The native host starts with only one eligible variant in this slot.
+        ModelKey[] firstActs = [new("ACT", "OVERGROWTH"), new("ACT", "UNDERDOCKS")];
+        var editor = (ActInformationSearchEditor)typeof(QueryWorkbenchFrame)
+            .GetField("_actInformationEditor", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(frame)!;
+        foreach (var key in firstActs)
+        {
+            var branch = new VariantScopedBossBranch(1, key, ModelKeySetFilter.Empty, ModelKeySetFilter.Empty, false);
+            var draft = empty with { Query = SearchQuery.Empty with { VariantBossBranches = [branch],
+                StandardMaps = [new(1, StandardMapMetric.GuaranteedRest, StandardMapComparison.AtLeast, 1)] } };
+            frame.RestoreDraft(draft, render: false);
+            var preset = store.Save("First Act " + key.Entry, "", [], frame.CapturePreset());
+            frame.ApplyPreset(preset, render: false);
+            editor.SetPage(ActInformationPage.Map);
+            editor.SelectPage(false);
+            var caption = RolltheSpire2.Infrastructure.ContentNames.RuntimeGameContentNameResolver.Create("zh")
+                .Resolve(key, RolltheSpire2.Presentation.ContentNames.GameContentKind.Act);
+            var button = editor.FindChildren("*", "Button", true, false).OfType<Godot.Button>()
+                .SingleOrDefault(b => b.GetChildren().OfType<Godot.Label>().Any(l => l.Text == caption));
+            Check(button is not null, "Saved first Act remains individually editable: " + key + " available=" + (key == current));
+            button!.EmitSignal(Godot.BaseButton.SignalName.Pressed);
+            var edited = frame.CaptureDraft().Query;
+            Check(edited.VariantBossBranches.Count == 0 && edited.StandardMaps.SequenceEqual(draft.Query.StandardMaps),
+                "Removing the retained Act preserves the map condition");
+        }
+    }
+
+    private static void CheckUnreadLobbyDraft(ModRuntimeSnapshot runtime, string directory, WorkbenchSearchDraft party)
+    {
+        var store = new SearchWorkspace(Path.Combine(directory, "unread-lobby"), false);
+        var tree = (Godot.SceneTree)Godot.Engine.GetMainLoop();
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var frame = new QueryWorkbenchFrame(runtime, store);
+        var reopened = new QueryWorkbenchFrame(runtime, store);
+        try
+        {
+            tree.CurrentScene.AddChild(frame);
+            frame.RestoreDraft(party, render: false);
+            var original = JsonSerializer.Serialize(frame.CaptureDraft().Query);
+            var captured = party with { Players = party.Players.Select(p => p with { UnlockSource = "CapturedLobbySlot" }).ToArray() };
+            frame.RestoreDraft(captured, render: false);
+            using var screen = new MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen();
+            var service = new MegaCrit.Sts2.Core.Multiplayer.NetSingleplayerGameService();
+            var standard = MegaCrit.Sts2.Core.Runs.GameMode.Standard;
+            var lobbyType = typeof(MegaCrit.Sts2.Core.Multiplayer.Game.Lobby.StartRunLobby);
+            object[] args = lobbyType.GetConstructors().Any(c => c.GetParameters().Length == 5 &&
+                c.GetParameters()[1].ParameterType == typeof(bool)) ? [standard, false, service, screen, 4] : [standard, service, screen, 4];
+            var departed = (MegaCrit.Sts2.Core.Multiplayer.Game.Lobby.StartRunLobby)Activator.CreateInstance(lobbyType, args)!;
+            for (int slot = 0; slot < captured.Players.Count; slot++)
+                departed.Players.Add(new() { slotId = slot, id = (ulong)(100 + slot), unlockState = captured.Players[slot].RequireUnlocks() });
+            typeof(QueryWorkbenchFrame).GetField("_readLobby", flags)!.SetValue(frame, departed);
+            typeof(QueryWorkbenchFrame).GetField("_readRoster", flags)!.SetValue(frame, LobbyUnlockReadout.Roster(departed));
+            // The lobby is no longer in the tree. Keep the original read for editing;
+            // never associate it with a replacement player in the same numbered seat.
+            frame._Process(2);
+            frame.CloseSearch();
+            var stale = store.LoadWorkbench()!;
+            Check(stale.RequiresLobbyRead && JsonSerializer.Serialize(stale.Query) == original &&
+                stale.Players.All(p => p.UnlockSource == "CapturedLobbySlot") &&
+                stale.Players.Select(p => JsonSerializer.Serialize(p.Unlocks)).SequenceEqual(
+                    captured.Players.Select(p => JsonSerializer.Serialize(p.Unlocks))), "Roster departure saves original unlocks and all conditions");
+            try { stale.Compile(runtime, out _); throw new Exception("Expired lobby accepted for search"); }
+            catch (InvalidOperationException error) when (error.Message == "Party.LobbyChangedReadUnlocksAgain") { }
+            // Reading lobby unlocks from the main menu is an ordinary UI action.
+            typeof(QueryWorkbenchFrame).GetMethod("ReadLobbyUnlocks", flags)!.Invoke(frame, null);
+            frame.CloseSearch();
+            var saved = store.LoadWorkbench()!;
+            Check(saved.RequiresLobbyRead && saved.Players.All(p => p.Unlocks is null) &&
+                JsonSerializer.Serialize(saved.Query) == original, "Saving after an unavailable lobby read keeps the original party conditions");
+            reopened.RestoreDraft(saved, render: false);
+            Check(JsonSerializer.Serialize(reopened.CapturePreset().Workbench!.Query) == original,
+                "Reopened party conditions can be saved as a preset while lobby data is pending");
+            try { reopened.CaptureDraft(); throw new Exception("Unread party was accepted for search"); }
+            catch (InvalidOperationException error) when (error.Message.StartsWith("Party.", StringComparison.Ordinal)) { }
+            typeof(QueryWorkbenchFrame).GetMethod("UseFullyUnlockedParty", flags)!.Invoke(reopened, null);
+            var ready = reopened.CaptureDraft();
+            Check(!ready.RequiresLobbyRead && ready.Players.All(p => p.UnlockSource == "AssumedFullyUnlocked") &&
+                JsonSerializer.Serialize(ready.Query) == original, "Explicitly selecting full unlocks makes the preserved query executable");
+            _ = ready.Compile(runtime, out _);
+        }
+        finally { frame.Free(); reopened.Free(); }
     }
 
     private static void CheckUnavailableAuthoredIdentityRetention(ModRuntimeSnapshot runtime, QueryWorkbenchFrame frame)

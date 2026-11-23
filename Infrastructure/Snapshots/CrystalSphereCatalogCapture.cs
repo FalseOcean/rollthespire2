@@ -80,18 +80,7 @@ internal static class CrystalSphereCatalogCapture
         ImmutableArray<NeowEffectCardSnapshot> Pool(CardPoolModel pool)
         {
             if (projected.TryGetValue(pool, out var cards)) { pools.ProjectionReuses++; return cards; }
-            cards = pools.Read(pool)
-            .Select((c, index) => new NeowEffectCardSnapshot(Key(c).Serialized, Key(c), index,
-                Enum.TryParse<EffectCardRarity>(c.Rarity.ToString(), out var rarity) ? rarity : EffectCardRarity.Special,
-                Enum.TryParse<EffectCardType>(c.Type.ToString(), out var type) ? type : EffectCardType.Other,
-                c.Rarity == CardRarity.Basic, c.Tags.Contains(CardTag.Strike), c.Tags.Contains(CardTag.Defend),
-                c.IsUpgradable, c.IsRemovable, c.CurrentUpgradeLevel, c.MaxUpgradeLevel, PoolId: pool.Id.ToString(),
-                SourceAssembly: c.GetType().Assembly.GetName().Name,
-                CanBeGeneratedByModifiers: c.CanBeGeneratedByModifiers,
-                IsMultiplayerOnly: c.MultiplayerConstraint == CardMultiplayerConstraint.MultiplayerOnly,
-                CanBeGeneratedInCombat: c.CanBeGeneratedInCombat,
-                EligibleForPostCombatRewardByPoolMembership: c.Rarity is CardRarity.Common or CardRarity.Uncommon or CardRarity.Rare,
-                BehaviorMetadataExact: !Modded(c))).ToImmutableArray();
+            cards = pools.Read(pool).Select((c, index) => CardSnapshot(c, index, pool)).ToImmutableArray();
             projected.Add(pool, cards); return cards;
         }
         var unlocked = inputs?.Unlocked ?? player.UnlockState.CharacterCardPools.ToArray();
@@ -120,6 +109,19 @@ internal static class CrystalSphereCatalogCapture
         };
         return (catalog, unmodeled.OrderBy(k => k.Serialized, StringComparer.Ordinal).ToImmutableArray());
     }
+
+    internal static NeowEffectCardSnapshot CardSnapshot(CardModel c, int index, CardPoolModel pool) =>
+        new(Key(c).Serialized, Key(c), index,
+            Enum.TryParse<EffectCardRarity>(c.Rarity.ToString(), out var rarity) ? rarity : EffectCardRarity.Special,
+            Enum.TryParse<EffectCardType>(c.Type.ToString(), out var type) ? type : EffectCardType.Other,
+            c.Rarity == CardRarity.Basic, c.Tags.Contains(CardTag.Strike), c.Tags.Contains(CardTag.Defend),
+            c.IsUpgradable, c.IsRemovable, c.CurrentUpgradeLevel, c.MaxUpgradeLevel, PoolId: pool.Id.ToString(),
+            SourceAssembly: c.GetType().Assembly.GetName().Name,
+            CanBeGeneratedByModifiers: c.CanBeGeneratedByModifiers,
+            IsMultiplayerOnly: c.MultiplayerConstraint == CardMultiplayerConstraint.MultiplayerOnly,
+            CanBeGeneratedInCombat: c.CanBeGeneratedInCombat,
+            EligibleForPostCombatRewardByPoolMembership: c.Rarity is CardRarity.Common or CardRarity.Uncommon or CardRarity.Rare,
+            BehaviorMetadataExact: !Modded(c));
 
     internal static PredictorCardDefinition CaptureCardDefinition(CardModel card,
         Func<CardModel, ImmutableArray<PredictorCardLevelMetadata>> captureLevels)

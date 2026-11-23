@@ -58,6 +58,7 @@
     <Compile Include="PredictorOperationChecks.cs" />
     <Compile Include="NeowOperationPreviewChecks.cs" />
     <Compile Include="PredictorOperationEventChecks.cs" />
+    <Compile Include="PredictorOperationWuppyChecks.cs" />
     <Compile Include="PredictorOperationEventProjectionChecks.cs" />
     <Compile Include="PredictorOperationEventCaptureChecks.cs" />
     <Compile Include="PredictorOperationCaptureChecks.cs" />

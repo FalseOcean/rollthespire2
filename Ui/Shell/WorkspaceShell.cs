@@ -407,6 +407,7 @@ internal sealed partial class WorkspaceShell : Control
     public override void _Input(InputEvent input)
     {
         if (!IsVisibleInTree()) return;
+        if (CaptureLauncherShortcut(input)) return;
         DeferIdlePagePreparation();
         if (input is InputEventMouseButton { Pressed: true } || input is InputEventScreenTouch { Pressed: true })
             WorkspacePalette.SetKeyboardFocusVisible(false);

@@ -156,7 +156,7 @@ internal sealed partial class NeowSearchEditor : Control
         if (_identities.Count == 0) _identities = NeowSearchUiCatalog.AllRuntimeIdentities();
         string unlockKey = sharedContext?.Key ?? (players == 1 ? System.Text.Json.JsonSerializer.Serialize(MegaCrit.Sts2.Core.Saves.SaveManager.Instance.GenerateUnlockStateFromProgress().ToSerializable())
             : unlocks is null ? "unread" : System.Text.Json.JsonSerializer.Serialize(unlocks));
-        string context = $"{character}/{ascension}/{players}/{seat}/{unlockKey}";
+        string context = $"{character}/{ascension}/{players}/{seat}/{unlockKey}/{sharedContext?.Authority.CatalogFingerprint}";
         bool contextChanged = context != _draft.Context;
         if (contextChanged)
         {
@@ -187,7 +187,7 @@ internal sealed partial class NeowSearchEditor : Control
         OpeningChanged?.Invoke();
         RenderEditor();
     }
-    private IReadOnlyList<ModelKey> Sources => _identities.Concat(_source.HasValue ? [_source.Value] : [])
+    private IReadOnlyList<ModelKey> Sources => _identities.Concat(_catalog?.RouteRelics ?? []).Concat(_catalog?.BonesNeowRelics ?? []).Concat(_source.HasValue ? [_source.Value] : [])
         .Concat(_bones).Distinct(ModelKeyComparer.Instance).ToArray();
     private bool IdentityAllowed(ModelKey key) => _catalog is not null && (_source == BaseGameModelKeys.Relics.NeowsBones && key != BaseGameModelKeys.Relics.NeowsBones
         ? _catalog.BonesNeowRelics.Contains(key) : _catalog.RouteRelics.Contains(key));

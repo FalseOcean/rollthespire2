@@ -15,6 +15,8 @@ internal sealed record PredictorCatalog(ImmutableArray<NeowEffectCardSnapshot> C
 {
     public ImmutableArray<PredictorEncounterDefinition> Encounters { get; init; } = [];
     public ImmutableArray<NeowEffectCardSnapshot> AllCharacterCards { get; init; } = [];
+    public ImmutableArray<PredictorKaleidoscopePool>? KaleidoscopePools { get; init; }
+    public string? KaleidoscopePoolIssue { get; init; }
     public ImmutableArray<PredictorCardDefinition> CardDefinitions { get; init; } = [];
     public ImmutableArray<PredictorCardPool> TransformationPools { get; init; } = [];
     public ImmutableArray<ModelKey> UnlockedCurseCards { get; init; } = [];
@@ -31,6 +33,9 @@ internal sealed record PredictorCatalog(ImmutableArray<NeowEffectCardSnapshot> C
 }
 
 internal sealed record PredictorCharacterPool(ModelKey Character, ImmutableArray<ModelKey> Cards, ModelKey? PoolKey = null);
+
+internal sealed record PredictorKaleidoscopePool(string Source, ImmutableArray<NeowEffectCardSnapshot> Cards,
+    string? Issue);
 
 internal sealed record PredictorCardDefinition(PredictorCard Prototype, string Rarity, ModelKey TransformationPool,
     bool IsQuest, bool IsStrike, bool IsDefend)

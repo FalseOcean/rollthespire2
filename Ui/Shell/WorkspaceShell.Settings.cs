@@ -11,6 +11,9 @@ internal sealed partial class WorkspaceShell
     private Control _settingsPage = null!;
     private Workspace _settingsReturn = Workspace.Search;
     private OptionButton _language = null!;
+    private CheckButton? _mainMenuEntry;
+    private Button? _launcherShortcut;
+    private bool _listeningForLauncherShortcut;
     private CheckButton _runPredictionEntry = null!;
     private LineEdit _originInput = null!;
     private LineEdit _logPath = null!;
@@ -173,6 +176,37 @@ internal sealed partial class WorkspaceShell
 
         BuildFontSettings(SettingsSection(general, "settings.font.title", "settings.font.help"));
         yield return null;
+        var launcher = SettingsSection(general, "settings.launcher.title", "settings.launcher.help");
+        _mainMenuEntry = new CheckButton { Name = "SettingsMainMenuEntry", SizeFlagsHorizontal = SizeFlags.ShrinkBegin };
+        _mainMenuEntry.AddThemeFontSizeOverride("font_size", 20);
+        launcher.AddChild(_mainMenuEntry);
+        _settingsButtons.Add((_mainMenuEntry, "settings.launcher.show"));
+        _mainMenuEntry.Toggled += show => _persistence!.SetMainMenuLauncherHidden(!show);
+        var shortcuts = new HFlowContainer();
+        launcher.AddChild(shortcuts);
+        _launcherShortcut = _palette.Button("");
+        _launcherShortcut.Name = "SettingsLauncherShortcut";
+        _launcherShortcut.CustomMinimumSize = new(220, 44);
+        shortcuts.AddChild(_launcherShortcut);
+        _launcherShortcut.Pressed += () =>
+        {
+            _launcherShortcut.GrabFocus();
+            _listeningForLauncherShortcut = true;
+            RefreshLauncherShortcut();
+        };
+        _launcherShortcut.FocusExited += StopLauncherShortcutCapture;
+        _launcherShortcut.VisibilityChanged += () =>
+        {
+            if (!_launcherShortcut.IsVisibleInTree()) StopLauncherShortcutCapture();
+        };
+        var reset = SettingsButton("settings.launcher.reset", () =>
+        {
+            _persistence!.SetMainMenuLauncherShortcut(SearchWorkspace.DefaultMainMenuLauncherShortcut);
+            StopLauncherShortcutCapture();
+        });
+        reset.Name = "SettingsLauncherShortcutReset";
+        shortcuts.AddChild(reset);
+        yield return null;
         var history = SettingsSection(general, "settings.history.title", "settings.history.help");
         history.AddChild(_queryHistoryLimit);
         _queryHistoryLimit.ValueChanged += value =>
@@ -305,6 +339,32 @@ internal sealed partial class WorkspaceShell
         RefreshSettings();
     }
 
+    private bool CaptureLauncherShortcut(InputEvent input)
+    {
+        if (!_listeningForLauncherShortcut || input is not InputEventKey key) return false;
+        GetViewport().SetInputAsHandled();
+        if (!key.Pressed || key.Echo) return true;
+        if (key.Keycode is Key.None or Key.Unknown or Key.Ctrl or Key.Shift or Key.Alt or Key.Meta) return true;
+        if (key.Keycode != Key.Escape)
+            _persistence!.SetMainMenuLauncherShortcut(key.GetKeycodeWithModifiers());
+        StopLauncherShortcutCapture();
+        return true;
+    }
+
+    private void StopLauncherShortcutCapture()
+    {
+        _listeningForLauncherShortcut = false;
+        RefreshLauncherShortcut();
+    }
+
+    private void RefreshLauncherShortcut()
+    {
+        if (_launcherShortcut is null || _settingsText is null || _persistence is null) return;
+        _launcherShortcut.Text = _listeningForLauncherShortcut
+            ? _settingsText.Get("settings.launcher.listen")
+            : _settingsText.Format("settings.launcher.shortcut", OS.GetKeycodeString(_persistence.Preferences.MainMenuLauncherShortcut));
+    }
+
     private Label SettingsLabel(string key, int size, bool secondary = false, bool wrap = false)
     {
         var label = _palette.Label("", size, secondary);
@@ -400,6 +460,8 @@ internal sealed partial class WorkspaceShell
             RefreshMapLossySettings(persistence);
         }
         _queryHistoryLimit?.SetValueNoSignal(persistence.Preferences.QueryHistoryLimit);
+        _mainMenuEntry?.SetPressedNoSignal(!persistence.Preferences.MainMenuLauncherHidden);
+        RefreshLauncherShortcut();
         if (_builtPageViews.Contains(2))
         {
             if (resetInput)

@@ -4,6 +4,18 @@
   "Blocks": [
     {
       "Type": "Heading",
+      "ReleaseVersion": "1.4.8",
+      "Text": "RT2 1.4.8　筛种兼容性与主菜单入口改进"
+    },
+    {
+      "Type": "BulletList",
+      "Items": [
+        "改善了部分模组环境下的筛种兼容性。",
+        "主菜单入口可以拖动、隐藏，并会记住位置和显隐状态。默认按 Ctrl+F7 显示或隐藏入口，可在 RT2 设置中改键。"
+      ]
+    },
+    {
+      "Type": "Heading",
       "ReleaseVersion": "1.4.7",
       "Text": "RT2 1.4.7 更新说明"
     },

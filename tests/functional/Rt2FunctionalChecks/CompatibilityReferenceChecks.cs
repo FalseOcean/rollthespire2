@@ -3,6 +3,10 @@ using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Prediction.Profiles;
+using RolltheSpire2.Search.Compilation;
+using RolltheSpire2.Search.Contracts;
+using RolltheSpire2.Search.Runtime;
+using RolltheSpire2.Search.Semantics;
 
 namespace RolltheSpire2.Tests.FastSearch;
 
@@ -46,20 +50,27 @@ internal static class CompatibilityReferenceChecks
     private static void CheckModernPatchPrediction(Action<bool, string> check)
     {
         const string seed = "000000000001"; // Native 0.113.0 opening includes Phial Holster.
-        var captured = ProductionSearchReplay.Read<ProductionSearchReplayContext>(
-            "tools/ProductionSearchHost/Corpus/v1/context.json").Context.Authority;
+        var source = ProductionSearchReplay.Read<ProductionSearchReplayContext>(
+            "tools/ProductionSearchHost/Corpus/v1/context.json").Context;
+        var captured = source.Authority;
         // Hold the item pools fixed so the combined Neow and reward report exercises both evidence sources.
         var world = captured.WorldAuthority!;
         world = world with { Beta109Generation = world.Beta109Generation! with { RngSemantics = RngSemanticProfileId.Modern113 } };
-        SeedPredictionFacts Observe(string version)
+        SearchContext Context(string version)
         {
             var authority = Beta110FastSearchFixtureAuthority.CreateBeta111(captured.Character.CharacterKey, 10, 0, 1, version)
                 .WithEffectAuthority(captured.EffectAuthority).WithWorldAuthority(world);
             var detection = new GameVersionDetection(version, version, "beta", "CompatibilityReference", true, "");
+            return source with { Authority = authority, Detection = detection };
+        }
+        SeedPredictionFacts Observe(string version)
+        {
+            var context = Context(version);
+            var authority = context.Authority;
             if (!SeedPredictionRequest.TryCreate(seed, authority.Character, 10, 1, 0, authority, null,
                 SeedPredictionDomainSelection.Neow | SeedPredictionDomainSelection.NormalCombatRewards, true, out var request, out var error))
                 throw new InvalidOperationException(error.ToString());
-            return RuntimeProfileRegistry.Observe(detection, request!);
+            return RuntimeProfileRegistry.Observe(context.Detection, request!);
         }
 
         var reference = Observe("0.113.0");
@@ -77,5 +88,18 @@ internal static class CompatibilityReferenceChecks
             "The accepted patch records its own version evidence under the shared adapter");
         check(patch.Diagnostics.Single(d => d.Code == "reward-adapter-audit-fingerprint").Value ==
             RuntimeProfilePolicies.Beta111AuditFingerprint, "The combined report identifies the reward adapter's separate audit");
+
+        var input = TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed);
+        var absent = new[] { BaseGameModelKeys.Relics.NewLeaf, BaseGameModelKeys.Relics.LargeCapsule,
+            BaseGameModelKeys.Relics.NeowsBones, BaseGameModelKeys.Relics.SmallCapsule }.First(key => !offers.Contains(key));
+        foreach (string version in new[] { RuntimeVersionCompatibility.SupportedBetaVersion, "0.114.0", "1.0.0" })
+        foreach (var (target, expected) in new[] { (BaseGameModelKeys.Relics.PhialHolster, SearchDisposition.Match), (absent, SearchDisposition.NoMatch) })
+        {
+            var query = SearchQuery.Empty with { LegacyNeow = LegacyNeowSemanticConstraints.Empty with { NeowRelics = new([target], [], []) } };
+            var prepared = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, Context(version)), new(seed, 1, 1, 1));
+            check(prepared.Success, $"Production search admission on {version}: {prepared.Issue}");
+            var result = ProductionExactSearchEvaluator.Evaluate(prepared.Plan!.Model, input);
+            check(result.Evaluation.Disposition == expected, $"Exact opening on {version} for {target} should be {expected}");
+        }
     }
 }

@@ -4,6 +4,18 @@
   "Blocks": [
     {
       "Type": "Heading",
+      "ReleaseVersion": "1.4.8",
+      "Text": "RT2 1.4.8 · Seed search compatibility and main menu launcher improvements"
+    },
+    {
+      "Type": "BulletList",
+      "Items": [
+        "Improved seed search compatibility with some mod setups.",
+        "Drag the main menu launcher to move it. Its position and visibility are saved between sessions. Press Ctrl+F7 to show or hide it by default. You can change the shortcut in RT2 settings."
+      ]
+    },
+    {
+      "Type": "Heading",
       "ReleaseVersion": "1.4.7",
       "Text": "RT2 1.4.7 Release Notes"
     },

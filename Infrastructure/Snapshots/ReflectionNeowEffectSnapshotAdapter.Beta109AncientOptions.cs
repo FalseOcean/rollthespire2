@@ -23,25 +23,9 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
 
     private static Beta109AncientRuleObservation ObserveAncientRules(Type modelDb, IReadOnlyList<ModelKey> unknownShared)
     {
-        var patches = HarmonyLib.Harmony.GetAllPatchedMethods().ToHashSet();
-        var wrapper = ObserveAncientOptionWrapper(patches);
         const string relicType = "MegaCrit.Sts2.Core.Models.RelicModel";
         bool filtersAllowedRelics = modelDb.Assembly.GetType("MegaCrit.Sts2.Core.Models.AncientEventModel")?
             .GetMethod("GetOptionsFromThreePools", PublicInstance | System.Reflection.BindingFlags.NonPublic) is not null;
-        bool standardEligibility = !patches.Any(m => m.DeclaringType?.FullName == relicType &&
-            m.Name is "IsAllowed" or "IsAllowedInternal" or "IsLateInAct3");
-        bool standardWrapper = wrapper.UnknownReason.Length == 0 && !patches.Any(m => m.DeclaringType?.FullName switch
-        {
-            "MegaCrit.Sts2.Core.Models.AncientEventModel" => m.Name is "get_DebugOption" or "AllowedOptions" or
-                "GetOptionsFromThreePools" or "TryChooseRandomAllowedOption" or "RelicOption",
-            "MegaCrit.Sts2.Core.Models.EventModel" => m.Name is "BeginEvent" or "get_IsShared",
-            "MegaCrit.Sts2.Core.Hooks.Hook" => m.Name == "ShouldAllowAncient",
-            _ => false
-        });
-        var patchedGenerators = Beta109AncientRuntimeTypes.Where(pair =>
-            modelDb.Assembly.GetType(pair.Value) is { } type && !wrapper.CanReplay(type) || patches.Any(method =>
-            method.DeclaringType?.FullName == pair.Value && (method.Name.Contains("Option", StringComparison.Ordinal) ||
-            method.Name == "get_IsShared"))).Select(pair => pair.Key).ToArray();
         // Pael uses ModelDb.Relic<T>() directly. A failure enumerating AllRelics, or an unrelated
         // relic with a custom rule, says nothing about these ten native bindings.
         var getRelic = modelDb.GetMethods(PublicStatic).SingleOrDefault(method =>
@@ -58,7 +42,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                 if (relic is null || !TryModelKey(relic, out ModelKey key)) continue;
                 var rule = relic.GetType().GetMethod("IsAllowedInternal", PublicInstance | System.Reflection.BindingFlags.NonPublic);
                 // Through 0.111 Pael directly called NextItem on each list; 0.113 first filters each list.
-                relics.Add(new(typeName, key, !filtersAllowedRelics || standardEligibility && rule?.DeclaringType?.FullName == relicType));
+                relics.Add(new(typeName, key, !filtersAllowedRelics || rule?.DeclaringType?.FullName == relicType));
             }
             catch (Exception ex)
             {
@@ -66,7 +50,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                     nameof(ReflectionNeowEffectSnapshotAdapter), "PaelRelicOption", "issues.capture_failed", correlationId: typeName);
             }
         }
-        return new(relics, unknownShared, patchedGenerators, standardWrapper);
+        return new(relics, unknownShared);
     }
 
     /// <summary>
@@ -136,9 +120,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                 out string projectionEvidence);
 
             bool modifierFactsExact = noRunModifiers == true;
-            bool knownGenerator = rules is null || rules.StandardOptionWrapper &&
-                !rules.PatchedAncientGenerators.Contains(normalized) &&
-                !rules.SharedAncientsWithUnknownGenerator.Contains(ancient) &&
+            bool knownGenerator = rules is null || !rules.SharedAncientsWithUnknownGenerator.Contains(ancient) &&
                 !orderedActs.Any(a => a.Act == act && a.AncientsWithUnknownGenerator.Contains(ancient));
             Beta109HookDecision hookDecision = modifierFactsExact && isVanilla && knownGenerator
                 ? Beta109HookDecision.Allow

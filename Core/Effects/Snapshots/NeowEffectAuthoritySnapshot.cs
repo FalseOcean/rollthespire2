@@ -123,7 +123,11 @@ public sealed record CharacterCardPoolSnapshot(
     ModelKey CharacterKey,
     string PoolId,
     int PoolOrder,
-    IReadOnlyList<NeowEffectCardSnapshot> Cards);
+    IReadOnlyList<NeowEffectCardSnapshot> Cards)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? CandidateCaptureIssue { get; init; }
+}
 
 /// <summary>
 /// Immutable pure DTO captured on the main thread by a separately audited adapter.
@@ -190,6 +194,17 @@ public sealed record NeowEffectAuthoritySnapshot(
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyList<ModelKey>? NativeCharacterPoolOrder = null)
 {
+    // The relic shuffles the source pools even when a card filter substitutes their contents.
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<CharacterCardPoolSnapshot>? KaleidoscopePools { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? KaleidoscopePoolIssue { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public IReadOnlyList<CharacterCardPoolSnapshot>? EffectiveKaleidoscopePools =>
+        KaleidoscopePoolIssue is null ? KaleidoscopePools ?? OtherCharacterPools : null;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool HasExactKaleidoscopePools => HasExactOtherCharacterPools && KaleidoscopePoolIssue is null;
+
     public bool ColorlessRewardIdentityPoolExact { get; init; }
     public bool OtherCharacterIdentityPoolsExact { get; init; }
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]

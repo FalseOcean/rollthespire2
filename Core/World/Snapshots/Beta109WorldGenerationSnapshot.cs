@@ -268,7 +268,6 @@ public sealed record Beta109ActGenerationSnapshot(
         EncounterReferenceIdentityExact &&
         EncounterWeightModelExact &&
         EncounterRetryShapeExact &&
-        EncounterCatalogOfficialVanilla &&
         EliteEncounterSlots == 15 &&
         OrderedGenerateAllEncounters is not null;
 
@@ -349,9 +348,13 @@ public sealed record Beta109PaelRelicBinding(string TypeName, ModelKey Key, bool
 
 public sealed record Beta109AncientRuleObservation(
     IReadOnlyList<Beta109PaelRelicBinding> PaelRelics,
-    IReadOnlyList<ModelKey> SharedAncientsWithUnknownGenerator,
-    IReadOnlyList<string> PatchedAncientGenerators,
-    bool StandardOptionWrapper);
+    IReadOnlyList<ModelKey> SharedAncientsWithUnknownGenerator)
+{
+    // Older replay files recorded hook-registration flags here. The replay
+    // reader rejects unknown members, so consume those two retired fields.
+    public IReadOnlyList<string>? PatchedAncientGenerators { init { } }
+    public bool StandardOptionWrapper { init { } }
+}
 
 public sealed record Beta109AncientEventContextSnapshot(
     int Act,

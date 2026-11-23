@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
+using MegaCrit.Sts2.Core.Unlocks;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Core.Authority;
@@ -33,7 +34,8 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         RuntimeProfileId expectedProfile,
         string capturedGameVersion,
         EffectCatalogRules rules,
-        object? explicitUnlockState = null)
+        object? explicitUnlockState = null,
+        IReadOnlyList<(ModelKey Character, UnlockState Unlocks)>? partyRoster = null)
     {
         RuntimeSnapshotThreadGuard.RequireMainThread();
         if (profile.ProfileId != expectedProfile)
@@ -47,7 +49,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         // completes on the current main thread, preserving the direct adapter's
         // throwing boundary. NeowEffectRuntimeSnapshotCapture owns any fail-soft policy.
         var observed = ObserveEffectCore(profile, rawSeed, character, ascension, playersCount,
-            playerSlotIndex, capturedGameVersion, explicitUnlockState, new NativeObservationSchedule(), rules)
+            playerSlotIndex, capturedGameVersion, explicitUnlockState, new NativeObservationSchedule(), rules, partyRoster)
             .GetAwaiter().GetResult() with { FailSoft = false };
         return DeriveEffect(profile, rawSeed, character, ascension, playersCount, playerSlotIndex,
             capturedGameVersion, observed);

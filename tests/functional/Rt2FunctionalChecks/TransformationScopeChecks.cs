@@ -184,6 +184,16 @@ internal static class TransformationScopeChecks
         Check(beforeOverride.SemanticFingerprint != overrideEdited.SemanticFingerprint &&
             SearchContinuationIdentity.For(beforeOverride) != SearchContinuationIdentity.For(overrideEdited),
             "the effective Pandora count participates in both identities");
+        var automaticBox = large with
+        {
+            PandoraCountOverride = null,
+            ResultRequirements = [new([Pandora], Predicate.ContainsMultiset, 0, [Common])]
+        };
+        var eightRolls = Compile(automaticBox);
+        var sevenRolls = Compile(automaticBox with { PandoraAutomaticCount = 7 });
+        Check(eightRolls.SemanticFingerprint != sevenRolls.SemanticFingerprint &&
+            SearchContinuationIdentity.For(eightRolls) != SearchContinuationIdentity.For(sevenRolls),
+            "automatic Pandora counts are distinct search and continuation premises");
 
         ModelKey astrolabeKey = new("RELIC", "ASTROLABE");
         ModelKey pandoraKey = new("RELIC", "PANDORAS_BOX");

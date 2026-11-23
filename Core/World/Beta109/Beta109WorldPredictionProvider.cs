@@ -188,7 +188,7 @@ public static class Beta109WorldPredictionProvider
                 ancientPool.AddRange(assignedSharedAncients);
             }
             bool ancientOrderExact = act.UnlockedAncientOrderExact ?? act.UnlockFilteringExact;
-            bool openingAncientCursorAuthorityExact = ancientOrderExact && act.EncounterCatalogOfficialVanilla && ancientPool.Count > 0;
+            bool openingAncientCursorAuthorityExact = ancientOrderExact && ancientPool.Count > 0;
             int eventCallsBefore = upFront.CallCount;
             if (EventPoolSequenceProjector.TryPrepare(act.Act, act.ActKey, act.EventRngConsumptionExact,
                     act.OrderedRawEvents, snapshot.EventAuthority.OrderedSharedEventsRaw, snapshot.EventAuthority,
@@ -673,7 +673,6 @@ public static class Beta109WorldPredictionProvider
                 if (!snapshot.EventAuthority.EpochRevealFactsExact || !act.EventEpochRevealFactsExact) return "MissingEventEpochAuthority";
                 return "MissingEventEligibleOrder";
             }
-            if (!act.EncounterCatalogOfficialVanilla) return "UnsupportedModEncounter";
             if (act.OrderedGenerateAllEncounters is null) return "MissingEncounterCatalog";
             if (string.Equals(
                     act.EncounterAuthorityEvidenceCode,

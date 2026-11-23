@@ -1,3 +1,4 @@
+using MegaCrit.Sts2.Core.Unlocks;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Authority;
 using RolltheSpire2.Core.Identity;
@@ -29,7 +30,25 @@ public static partial class RuntimeContextAuthorityCapture
         PredictionGameModeAuthority predictionGameModeAuthority = PredictionGameModeAuthority.Unknown,
         object? explicitUnlockState = null,
         IReadOnlyList<ModelKey>? orderedCharacters = null,
-        IReadOnlyList<ModelKey>? explicitDiscoveredActs = null)
+        IReadOnlyList<ModelKey>? explicitDiscoveredActs = null) => CaptureRuntimeReadOnly(
+        profile, rawSeed, character, ascension, gameVersion, playersCount, playerSlotIndex,
+        predictionGameMode, predictionGameModeAuthority, explicitUnlockState, orderedCharacters,
+        explicitDiscoveredActs, partyRoster: null);
+
+    internal static RuntimeContextAuthoritySnapshot CaptureRuntimeReadOnly(
+        IRuntimeProfile profile,
+        string rawSeed,
+        CharacterIdentity character,
+        int ascension,
+        string gameVersion,
+        int playersCount,
+        int playerSlotIndex,
+        WorldGameMode predictionGameMode,
+        PredictionGameModeAuthority predictionGameModeAuthority,
+        object? explicitUnlockState,
+        IReadOnlyList<ModelKey>? orderedCharacters,
+        IReadOnlyList<ModelKey>? explicitDiscoveredActs,
+        IReadOnlyList<(ModelKey Character, UnlockState Unlocks)>? partyRoster)
     {
         ArgumentNullException.ThrowIfNull(profile);
         RuntimeSnapshotThreadGuard.RequireMainThread();
@@ -37,7 +56,7 @@ public static partial class RuntimeContextAuthorityCapture
         {
             using var observation = BeginObservation(profile, rawSeed, character, ascension, gameVersion,
                 playersCount, playerSlotIndex, predictionGameMode, predictionGameModeAuthority,
-                explicitUnlockState, orderedCharacters, explicitDiscoveredActs);
+                explicitUnlockState, orderedCharacters, explicitDiscoveredActs, partyRoster);
             return observation.CompleteOnMainThread().Derive(profile);
         }
         bool suppliedUnlockState = explicitUnlockState is not null;
@@ -47,7 +66,8 @@ public static partial class RuntimeContextAuthorityCapture
         RuntimeEffectSnapshotCaptureResult captured = suppliedUnlockState &&
             profile.ProfileId is RuntimeProfileId.Beta110 or RuntimeProfileId.Beta111
             ? ReflectionNeowEffectSnapshotAdapter.Capture(profile, rawSeed, character, ascension, playersCount,
-                playerSlotIndex, profile.ProfileId, gameVersion, RuntimeProfilePolicies.EffectCatalogRules(profile.ProfileId), explicitUnlockState)
+                playerSlotIndex, profile.ProfileId, gameVersion, RuntimeProfilePolicies.EffectCatalogRules(profile.ProfileId), explicitUnlockState,
+                partyRoster)
             : NeowEffectRuntimeSnapshotCapture.Capture(
             profile,
             rawSeed,
@@ -56,7 +76,8 @@ public static partial class RuntimeContextAuthorityCapture
             gameVersion,
             playersCount,
             playerSlotIndex,
-            frozenUnlockState: explicitUnlockState);
+            frozenUnlockState: explicitUnlockState,
+            partyRoster: partyRoster);
         var worldAuthority = ReflectionNeowEffectSnapshotAdapter.CaptureWorld(
             profile,
             rawSeed,

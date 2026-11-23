@@ -23,34 +23,16 @@ internal sealed partial class TransformationSearchEditor
     private int? SourceCount(TransformationSearchSource source) => source.Id == TransformationSearchSource.PandoraId
         ? source.PandoraCountOverride ?? _draft.PandoraCountOverride ?? GetAutomaticPandoraCount(source) : source.ResultCount;
 
-    internal int? GetAutomaticPandoraCount(TransformationSearchSource source) => GetAutomaticPandoraCount(
-        _openingRelics, _sources.Where(eventSource => eventSource.EventAct > 0 && eventSource.EventAct < source.AncientAct &&
-            (eventSource.HasIndependentResult || IsTakenOver(_seat, eventSource.Id))).Sum(eventSource => eventSource.ResultCount));
-
-    private int? GetAutomaticPandoraCount(IEnumerable<ModelKey> openingRelics, int priorEventTransforms)
+    internal int? GetAutomaticPandoraCount(TransformationSearchSource source)
     {
         if (_startingStrikeDefendCount is not { } initial) return null;
-        var opening = openingRelics.ToHashSet(ModelKeyComparer.Instance);
+        var opening = _openingRelics.ToHashSet(ModelKeyComparer.Instance);
+        int priorEventTransforms = _sources.Where(eventSource => eventSource.EventAct > 0 && eventSource.EventAct < source.AncientAct &&
+            (eventSource.HasIndependentResult || IsTakenOver(_seat, eventSource.Id))).Sum(eventSource => eventSource.ResultCount);
         return Math.Max(0, initial - priorEventTransforms
             - (opening.Contains(BaseGameModelKeys.Relics.NewLeaf) ? 1 : 0)
             - (opening.Contains(BaseGameModelKeys.Relics.LeafyPoultice) ? 2 : 0)
             + (opening.Contains(BaseGameModelKeys.Relics.LargeCapsule) ? 2 : 0));
-    }
-
-    private int? GetAutomaticPandoraCount(SearchQuery query, IReadOnlySet<string> active, int ancientAct)
-    {
-        var eventIds = active.Where(id => id.StartsWith("E.", StringComparison.Ordinal)).Select(id => id[2..])
-            .Concat(query.EventResultConditions.Where(condition => EventResultTransformSemantics.IsTransform(condition.Kind))
-                .Select(condition => EventResultTransformSemantics.Entry(condition.Kind)))
-            .ToHashSet(StringComparer.Ordinal);
-        var priorEvents = query.EventSequenceConstraints.Where(condition => !condition.IsEmpty && condition.Act < ancientAct)
-            .SelectMany(condition => condition.Keys.All.Concat(condition.Keys.Any.Count == 1 ? condition.Keys.Any : []))
-            .Where(key => eventIds.Contains(key.Entry)).Distinct(ModelKeyComparer.Instance);
-        int priorCount = priorEvents.Sum(key => RetainedSource("E." + key.Entry).ResultCount);
-        IEnumerable<ModelKey> openingRelics = query.OpeningRoute?.RouteRelicKey == BaseGameModelKeys.Relics.NeowsBones
-            ? query.OpeningRouteRelicRequirement?.RequiredRelicKeys ?? []
-            : query.OpeningRoute is { } opening ? [opening.RouteRelicKey] : [];
-        return GetAutomaticPandoraCount(openingRelics, priorCount);
     }
 
     internal TransformationAggregateCondition? ExportCondition(SearchQuery query,
@@ -98,7 +80,7 @@ internal sealed partial class TransformationSearchEditor
 
         var ancient = local.SingleOrDefault()?.Source ?? _sources.FirstOrDefault(source => source.IsAncient && active.Contains(source.Id));
         bool pandora = ancient?.Id == TransformationSearchSource.PandoraId;
-        int? automatic = pandora ? GetAutomaticPandoraCount(query, active, ancient!.AncientAct) : null;
+        int? automatic = pandora ? GetAutomaticPandoraCount(ancient!) : null;
         int? countOverride = pandora ? ancient!.PandoraCountOverride ?? _draft.PandoraCountOverride : null;
         if (pandora && automatic is null && !countOverride.HasValue)
             throw new InvalidOperationException("query.transform.pandora.automatic_unavailable");

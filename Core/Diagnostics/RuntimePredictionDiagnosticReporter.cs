@@ -882,7 +882,6 @@ public static class RuntimePredictionDiagnosticReporter
             .ToArray();
 
     private static bool HasExactEncounterAuthority(Beta109ActGenerationSnapshot act) =>
-        act.EncounterCatalogOfficialVanilla &&
         act.GenerateAllEncountersOrderExact &&
         act.EncounterClassificationExact &&
         act.EncounterTagIdentityExact &&
@@ -896,7 +895,6 @@ public static class RuntimePredictionDiagnosticReporter
     {
         IReadOnlyList<Beta109ActGenerationSnapshot> acts = SelectedActs(snapshot);
         if (acts.Count != snapshot.SelectedActs.Count) return "MissingEncounterCatalog";
-        if (acts.Any(act => !act.EncounterCatalogOfficialVanilla)) return "UnsupportedModEncounter";
         if (acts.Any(act => string.Equals(
                 act.EncounterAuthorityEvidenceCode,
                 "VanillaEncounterSourceShapeMismatch",

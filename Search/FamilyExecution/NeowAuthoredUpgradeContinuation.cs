@@ -129,8 +129,10 @@ internal sealed record NeowAuthoredUpgradeContinuation(int[] Advances)
                  Beta110FastRelicCatalog.PrecariousShears or Beta110FastRelicCatalog.Pomander or
                  Beta110FastRelicCatalog.SmallCapsule or Beta110FastRelicCatalog.LargeCapsule) return false;
         else return prior <= Beta110FastRelicCatalog.StoneHumidifier;
-        var pool = (a.CharacterRewardPool ?? []).Concat(a.ColorlessRewardPool ?? []).Concat(a.TransformPool ?? [])
-            .Concat((a.OtherCharacterPools ?? []).SelectMany(p => p.Cards)).ToArray();
+        var pool = prior == Beta110FastRelicCatalog.Kaleidoscope
+            ? (a.EffectiveKaleidoscopePools ?? []).SelectMany(p => p.Cards).ToArray()
+            : (a.CharacterRewardPool ?? []).Concat(a.ColorlessRewardPool ?? []).Concat(a.TransformPool ?? [])
+                .Concat((a.OtherCharacterPools ?? []).SelectMany(p => p.Cards)).ToArray();
         foreach (ModelKey target in cards)
         {
             var card = pool.FirstOrDefault(c => c.CardKey == target);

@@ -33,6 +33,7 @@ internal sealed partial class AnalysisPage
     private bool _openingSubview = true;
     private bool _shopFullQueue;
     private bool _wbHasResult;
+    private Label _modelScope = null!;
     private string _wbStatusKey = "predictor.empty";
     private Label? _searchOriginNotice;
     private bool _searchOpeningUnavailable;
@@ -68,6 +69,8 @@ internal sealed partial class AnalysisPage
         _requestBar.Reparent(rail);
         _requestBar.UseRail(characters);
         BuildFavoriteSeed(rail);
+        _modelScope = WNote("");
+        rail.AddChild(_modelScope);
         var navigationInset = WorkbenchInset("PredictorNavigationInset", WorkspaceLayout.CenterLeft,
             WorkspaceLayout.CanvasWidth - WorkspaceLayout.CenterLeft, height: WorkspaceLayout.HeaderHeight);
         _workbenchRoot.AddChild(navigationInset);
@@ -187,6 +190,7 @@ internal sealed partial class AnalysisPage
     }
     private void RefreshWorkbenchLabels()
     {
+        _modelScope.Text = Text("predictor.model_scope");
         RefreshWorkbenchColumns();
         RefreshSearchOrigin();
         RefreshFavoriteSeed();

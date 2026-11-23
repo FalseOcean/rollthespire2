@@ -20,8 +20,7 @@ internal static class TransformationAggregateValidator
 
     private sealed record RelicPoolCapture(TransformationRelicProjector? Projector);
     private static readonly ConditionalWeakTable<NeowEffectAuthoritySnapshot, RelicPoolCapture> RelicPoolCaptures = new();
-    private readonly record struct AncientProjectionStatus(string? FailureCode = null, bool OutputCountUnknown = false,
-        bool InsufficientMaterials = false);
+    private readonly record struct AncientProjectionStatus(string? FailureCode = null, bool OutputCountUnknown = false);
     private static readonly (EventResultConditionKind Kind, Func<TransformationAggregateCondition, bool> Selected)[] EventSources =
     [
         (EventResultConditionKind.MorphicGroveGroupInitialBasicsContains, c => c.MorphicGrove),
@@ -119,8 +118,6 @@ internal static class TransformationAggregateValidator
             TransformationOpening.BonesLeafyNewLeaf => 3,
             _ => 2
         };
-        int? priorBasics = condition.UsesAncient && !condition.PandoraCountOverride.HasValue
-            ? CountEarlierEventMaterials(request, condition, authority.EffectAuthority) : 0;
         ModelKey? boundOpening = request.Evaluation.NeowRoute?.RouteRelicKey;
         ModelKey? opening = condition.UsesNeow ? condition.RequiredOpeningKey : condition.UsesAncient ? boundOpening : null;
 
@@ -141,9 +138,7 @@ internal static class TransformationAggregateValidator
             {
                 string source = condition.AncientSource == TransformationAncientSource.Astrolabe ? "A.ASTROLABE" : "A.PANDORAS_BOX";
                 ancient = AddAncientOutputs(outputs, profile, root, authority, relicPoolAuthority,
-                    condition, continuation, priorBasics, source);
-                if (ancient.InsufficientMaterials)
-                    return SearchQueryEvaluation.NoMatch("TransformationAggregate.AstrolabeBasicMaterialsInsufficient");
+                    condition, continuation, source);
                 if (ancient.OutputCountUnknown) unboundedSource = source;
             }
 
@@ -223,66 +218,28 @@ internal static class TransformationAggregateValidator
         return EventResultTransformSemantics.Project(root, new(kind, default) { MorphicGroveScenario = eventScenario });
     }
 
-    private static int? CountEarlierEventMaterials(SearchModel request, TransformationAggregateCondition condition,
-        NeowEffectAuthoritySnapshot? authority)
-    {
-        var preceding = request.Evaluation.EventSequenceConditions
-            .Where(queue => !queue.IsEmpty && queue.Act < condition.AncientAct)
-            .SelectMany(queue => queue.Keys.All.Concat(queue.Keys.Any.Count == 1 ? queue.Keys.Any : []))
-            .Select(key => key.Entry)
-            .ToHashSet(StringComparer.Ordinal);
-        if (preceding.Count == 0) return 0;
-
-        int count = 0;
-        foreach (var (kind, selected) in EventSources)
-        {
-            if (!preceding.Contains(EventResultTransformSemantics.Entry(kind))) continue;
-            var scenario = selected(condition) ? condition.EventScenario :
-                request.Evaluation.EventResultConditions.FirstOrDefault(result => result.Kind == kind)?.MorphicGroveScenario;
-            if (scenario is null) continue;
-            if (scenario.Targets.Count < EventResultTransformSemantics.DrawCount(kind)) return null;
-            foreach (var target in scenario.Targets.Take(EventResultTransformSemantics.DrawCount(kind)))
-            {
-                if (condition.AncientSource == TransformationAncientSource.Astrolabe ||
-                    target.Original.CardKey == authority?.CharacterStrikeKey || target.Original.CardKey == authority?.CharacterDefendKey)
-                    count++;
-                else if (authority is not { HasExactDeck: true }) return null;
-                else if (authority.OrderedDeck!.Any(card => card.CardKey == target.Original.CardKey &&
-                    card.IsBasic && card.CanRemove && (card.IsStrike || card.IsDefend))) count++;
-            }
-        }
-        return count;
-    }
-
     private static AncientProjectionStatus AddAncientOutputs(List<Output> outputs, IRuntimeProfile profile, ulong root,
         RuntimeContextAuthoritySnapshot authority, NeowEffectAuthoritySnapshot? relicPoolAuthority, TransformationAggregateCondition condition,
-        OpeningTransformationContinuation? continuation, int? priorBasics, string source)
+        OpeningTransformationContinuation? continuation, string source)
     {
         bool upgrade = condition.AncientSource == TransformationAncientSource.Astrolabe;
-        int? available = upgrade ? continuation?.BasicCount : continuation?.BasicStrikeDefendCount;
-        int? materials = available is { } basic && priorBasics is { } spent
-            ? Math.Max(0, basic - spent) : null;
-        if (upgrade && materials < TransformationRelicProjector.AstrolabeTargetCount)
-            return new(InsufficientMaterials: true);
-        int? count = upgrade ? TransformationRelicProjector.AstrolabeTargetCount : condition.PandoraCountOverride ?? materials;
+        int count = condition.AncientOpportunityCount;
         if (count > TransformationRelicProjector.ProjectionDrawBudget) return new("TransformationAggregate.AncientDrawBudgetExceeded", true);
-        if (count is null) return new("TransformationAggregate.AncientMaterialCountUnknown", true);
         if (count == 0) return default;
 
         string? pending = authority.VersionResolution.SemanticProfileId != RngSemanticProfileId.Modern113
             ? "TransformationAggregate.AncientStreamContinuationUnavailableForVersion" :
-            upgrade && materials is null ? "TransformationAggregate.AstrolabeBasicMaterialsUnknown" :
             continuation?.StreamOffset is null ? "TransformationAggregate.AncientStreamOffsetUnknown" : null;
         var projector = pending is null && relicPoolAuthority is not null
             ? RelicPoolCaptures.GetValue(relicPoolAuthority, snapshot => new(TransformationRelicProjector.Capture(snapshot))).Projector
             : null;
         if (projector is null)
         {
-            AddUnknownOutputs(outputs, count.Value, source);
+            AddUnknownOutputs(outputs, count, source);
             return new(pending ?? "TransformationAggregate.AncientTransformPoolUnknown");
         }
         foreach (var card in projector.Project(profile, root, authority.PlayerSlotIndex, authority.VersionResolution.SemanticProfileId,
-                     continuation!.StreamOffset!.Value, count.Value, upgrade))
+                     continuation!.StreamOffset!.Value, count, upgrade))
             outputs.Add(new(card.CardKey, card.Rarity == EffectCardRarity.Rare, source));
         return default;
     }

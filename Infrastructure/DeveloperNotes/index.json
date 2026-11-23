@@ -1,12 +1,12 @@
 {
   "SchemaVersion": 2,
-  "ContentVersion": "1.4.7",
-  "TargetModVersion": "1.4.7",
-  "UpdatedAt": "2026-11-22",
+  "ContentVersion": "1.4.8",
+  "TargetModVersion": "1.4.8",
+  "UpdatedAt": "2026-11-23",
   "Chapters": [
     {
       "Id": "release",
-      "AcknowledgementVersion": "1.4.7",
+      "AcknowledgementVersion": "1.4.8",
       "RequiresAcknowledgement": true
     },
     {

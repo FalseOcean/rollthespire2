@@ -22,6 +22,165 @@ using System.Text.Json;
 
 internal static class ExactBoundaryChecks
 {
+    internal static int RunWorldAncientIndependent()
+    {
+        NativeWorkbenchCheckEnvironment.Initialize("WorldAncientIndependent");
+        const string seed = "89D9QQXRLHSR";
+        var detection = new GameVersionDetection("0.113.1", "0.113.1", "beta", "native-world-conjunction", true, "");
+        var hero = BaseGameModelKeys.Characters.Ironclad;
+        int checks = 0;
+        void Check(bool pass, string reason)
+        {
+            checks++;
+            if (!pass) throw new InvalidOperationException("WorldAncientIndependent." + reason);
+        }
+        RuntimeContextAuthoritySnapshot Capture() => RuntimeContextAuthorityCapture.CaptureRuntimeReadOnly(
+            Beta111Profile.Instance, seed, CharacterIdentity.FromKey(hero), 10, detection.NormalizedVersion,
+            predictionGameMode: WorldGameMode.Singleplayer,
+            predictionGameModeAuthority: PredictionGameModeAuthority.ExplicitRequest,
+            explicitUnlockState: MegaCrit.Sts2.Core.Unlocks.UnlockState.all);
+        WorldPredictionResult World(RuntimeContextAuthoritySnapshot authority) => WorldPredictionEngine.Predict(
+            Beta111Profile.Instance, seed, 10, 0, hero, authority.WorldAuthority, authority.EffectAuthority);
+        var baseline = Capture();
+        var before = World(baseline);
+        var second = before.Ancients.Single(a => a.Act == 2);
+        var third = before.Ancients.Single(a => a.Act == 3);
+        Check(second.IdentityPrecision == PredictionPrecision.Exact && third.IdentityPrecision == PredictionPrecision.Exact,
+            "Native capture supplies both actual Ancient identities");
+        Check(second.AncientKey != third.AncientKey, "The two acts have different generators");
+        var option = second.Options.First(o => o.IsVisible && o.OptionPrecision == PredictionPrecision.Exact).OptionKey;
+        var native = CreateNativeRun();
+        Check(new ModelKey(native.Acts[1].Ancient.Id.Category, native.Acts[1].Ancient.Id.Entry) == second.AncientKey &&
+            new ModelKey(native.Acts[2].Ancient.Id.Category, native.Acts[2].Ancient.Id.Entry) == third.AncientKey,
+            "Both identities agree with native ordinary run generation");
+        var method = HarmonyLib.AccessTools.DeclaredMethod(native.Acts[1].Ancient.GetType(), "GenerateInitialOptions")
+            ?? throw new MissingMethodException("Native Ancient generator");
+        var harmony = new HarmonyLib.Harmony("rt2.check.world-ancient-independent");
+        harmony.Patch(method, postfix: new HarmonyLib.HarmonyMethod(typeof(ExactBoundaryChecks), nameof(ReverseAncientOptions)));
+        var actSelection = HarmonyLib.AccessTools.Method(typeof(MegaCrit.Sts2.Core.Models.ActModel), "GetRandomList");
+        var initialization = HarmonyLib.AccessTools.Method(typeof(MegaCrit.Sts2.Core.Runs.RunManager), "InitializeNewRun");
+        var observation = new HarmonyLib.HarmonyMethod(typeof(ExactBoundaryChecks), nameof(ObserveGeneration));
+        try
+        {
+            harmony.Patch(actSelection, postfix: observation);
+            harmony.Patch(initialization, postfix: observation);
+            var captured = Capture();
+            var observed = World(captured);
+            var menu = observed.Ancients.Single(a => a.Act == 2);
+            Check(menu.IdentityPrecision == PredictionPrecision.Exact && menu.AncientKey == second.AncientKey &&
+                menu.Options.Where(o => o.IsVisible).Select(o => o.OptionKey)
+                    .SequenceEqual(second.Options.Where(o => o.IsVisible).Select(o => o.OptionKey)),
+                "The model uses the readable menu inputs with its own generation rules");
+            Check(observed.Ancients.Single(a => a.Act == 3).AncientKey == third.AncientKey,
+                "The other Ancient identity remains independently exact");
+            var context = new SearchContext(RuntimeProfileId.Beta111, hero, 10, captured, detection,
+                SearchEvaluationAssumptions.BroadDefault);
+            var secondCondition = new AncientSearchBranchCondition(2, second.AncientKey, [option], []);
+            var wrong = baseline.WorldAuthority!.Beta109Generation!.OrderedActCatalog
+                .Where(a => a.Act == 3).SelectMany(a => a.OrderedAncients)
+                .Concat(baseline.WorldAuthority.Beta109Generation.SharedAncients)
+                .First(key => key != third.AncientKey && key != second.AncientKey);
+            SearchQuery Query(ModelKey requiredThird) => SearchQuery.Empty with
+            {
+                AncientBranches = [secondCondition, new(3, requiredThird, [], [])]
+            };
+            PreparedSearch Prepare(SearchQuery query)
+            {
+                var prepared = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context), new(seed, 1, 1, 1));
+                Check(prepared.Success, "Authored two-act query prepares: " + prepared.Issue);
+                return prepared.Plan!;
+            }
+            var input = TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed);
+            var complete = ProductionExactSearchEvaluator.Evaluate(Prepare(Query(third.AncientKey)).Model, input);
+            Check(complete.IsMatch, "Exact confirms the whole request in the model with the generator patch installed");
+
+            // Control for a genuinely unreadable catalog at the same second-act menu.
+            var world = captured.WorldAuthority!;
+            var generation = world.Beta109Generation!;
+            context = context with { Authority = captured.WithWorldAuthority(world with
+            {
+                Beta109Generation = generation with
+                {
+                    AncientEventContexts = generation.AncientEventContexts.Select(c =>
+                        c.Act == 2 && c.AncientKey == second.AncientKey ? c with { Catalog = null } : c).ToArray()
+                }
+            }) };
+            var only = ProductionExactSearchEvaluator.Evaluate(Prepare(SearchQuery.Empty with { AncientBranches = [secondCondition] }).Model, input);
+            var matching = ProductionExactSearchEvaluator.Evaluate(Prepare(Query(third.AncientKey)).Model, input);
+            Check(only.Evaluation.Disposition == SearchDisposition.Unknown &&
+                matching.Evaluation.Disposition == only.Evaluation.Disposition && matching.FailureCode == only.FailureCode &&
+                matching.Evaluation.Witnesses.Count == 0,
+                "A matching later identity keeps the actual unresolved menu cause without confirming the group");
+            var authored = Query(wrong);
+            var json = RolltheSpire2.Ui.Persistence.SearchPresetStore.CreateJsonOptions();
+            var restored = JsonSerializer.Deserialize<SearchQuery>(JsonSerializer.Serialize(authored, json), json)!;
+            Check(restored.AncientBranches.Count == 2 && restored.AncientBranches[0].OptionAny.SequenceEqual([option]),
+                "Reopened query retains both acts and the unresolved authored option");
+            var plan = Prepare(restored);
+            var rejected = ProductionExactSearchEvaluator.Evaluate(plan.Model, input);
+            Console.WriteLine($"WORLD_ANCIENT_CONJUNCTION seed={seed};act2={second.AncientKey};option={option};act3={third.AncientKey};required3={wrong};only={only.Evaluation.Disposition};combined={rejected.Evaluation.Disposition};reason={rejected.FailureCode}");
+            var noFilters = FamilyPlanner.InOrder([]);
+            var session = new ProductionSearchSession(plan, noFilters,
+                FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(plan, noFilters), noFilters), 8, 8, null, "");
+            try
+            {
+                Check(session.Completion.Wait(15000), "Direct Exact search completes");
+                bool emitted = session.TryReadCandidate(out var candidate);
+                Console.WriteLine($"WORLD_ANCIENT_SESSION emitted={emitted};disposition={candidate?.ValidationDisposition};state={session.GetProgress().State}");
+                Check(rejected.Evaluation.Disposition == SearchDisposition.NoMatch &&
+                    rejected.FailureCode == "AncientBranchIdentityRejected:Act3", "A known later mismatch rejects the original conjunction");
+                Check(!emitted && session.GetProgress().State == SearchRunState.Completed,
+                    "The actual unfiltered search does not deliver the disproven seed as unverified");
+            }
+            finally { session.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+        }
+        finally
+        {
+            foreach (var target in new[] { method, actSelection, initialization })
+                harmony.Unpatch(target, HarmonyLib.HarmonyPatchType.Postfix, harmony.Id);
+        }
+        Console.WriteLine($"WorldAncientIndependent checks={checks};PASS;input=native-capture+ordinary-run+generator-postfix");
+        return 0;
+
+        MegaCrit.Sts2.Core.Runs.RunState CreateNativeRun()
+        {
+            var character = MegaCrit.Sts2.Core.Models.ModelDb.Character<MegaCrit.Sts2.Core.Models.Characters.Ironclad>();
+            var player = MegaCrit.Sts2.Core.Entities.Players.Player.CreateForNewRun(character, MegaCrit.Sts2.Core.Unlocks.UnlockState.all, 1);
+            var runType = typeof(MegaCrit.Sts2.Core.Runs.RunState);
+            var run = (MegaCrit.Sts2.Core.Runs.RunState)runType.GetMethod("CreateForNewRun")!.Invoke(null,
+                [new[] { player }, MegaCrit.Sts2.Core.Models.ActModel.GetDefaultList().Select(a => a.ToMutable()).ToArray(),
+                    Array.Empty<MegaCrit.Sts2.Core.Models.ModifierModel>(), MegaCrit.Sts2.Core.Runs.GameMode.Standard, false, 10, seed])!;
+            run.ExtraFields.StartedWithNeow = true;
+            run.SharedRelicGrabBag.Populate(MegaCrit.Sts2.Core.Models.ModelDb.RelicPool<MegaCrit.Sts2.Core.Models.RelicPools.SharedRelicPool>()
+                .GetUnlockedRelics(run.UnlockState), run.Rng.UpFront);
+            player.PopulateRelicGrabBagIfNecessary(run.Rng.UpFront);
+            foreach (var model in (IEnumerable<MegaCrit.Sts2.Core.Models.AbstractModel>)runType.GetProperty("RunModels")!.GetValue(run)!)
+                model.GetType().GetMethod("OnRunCreated", [runType])!.Invoke(model, [run]);
+            // RunManager owns the shared-Ancient allocation before each act's
+            // rooms. Calling ActModel.GenerateRooms alone skips that real RNG.
+            const System.Reflection.BindingFlags members = System.Reflection.BindingFlags.Instance |
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
+            var manager = MegaCrit.Sts2.Core.Runs.RunManager.Instance;
+            var state = manager.GetType().GetProperty("State", members)!;
+            var ascension = manager.GetType().GetProperty("AscensionManager", members)!;
+            var oldState = state.GetValue(manager);
+            var oldAscension = ascension.GetValue(manager);
+            try
+            {
+                state.SetValue(manager, run);
+                ascension.SetValue(manager, NativeGameFixture.StandardAscension(10));
+                manager.GenerateRooms();
+            }
+            finally { state.SetValue(manager, oldState); ascension.SetValue(manager, oldAscension); }
+            return run;
+        }
+    }
+
+    private static void ReverseAncientOptions(ref IReadOnlyList<MegaCrit.Sts2.Core.Events.EventOption> __result) =>
+        __result = __result.Reverse().ToArray();
+
+    private static void ObserveGeneration() { }
+
     internal static int RunReplayNonHitSample()
     {
         string start = "000000000000";

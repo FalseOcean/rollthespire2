@@ -21,6 +21,7 @@ internal static class PredictorOperationSceneChecks
 
     internal static void Run(PredictorRun baseline)
     {
+        ModernWhetstoneNativeShuffle(baseline);
         PopulatedRewardAndSacrifice(baseline);
         PaidAstrolabeContinuation(baseline);
         NonMerchantShopPriceAndRefill(baseline);
@@ -209,7 +210,7 @@ internal static class PredictorOperationSceneChecks
         var nativeNiche = Native(niche);
         var expected = state.Deck.Select(state.Card).Where(c => c.Type == EffectCardType.Attack && c.UpgradeLevel < c.MaxUpgradeLevel)
             .Select(c => new SortCard(c)).ToList();
-        expected.StableShuffle(nativeNiche);
+        SourceStableShuffle(expected, nativeNiche, baseline.Context);
         var reward = new PredictorReward(rewardId, PredictorRewardKind.Card, PredictorRewardOrigin.Combat,
             default, [shownCard], CardSelectionEntered: true)
         { CanReroll = false, RerollRecipe = new(PredictorRewardKind.Card) };
@@ -236,6 +237,63 @@ internal static class PredictorOperationSceneChecks
 
     private static Rng Native(PredictorStreamState state) => new(new SerializableRng
     { state0 = state.S0, state1 = state.S1, state2 = state.S2, state3 = state.S3, counter = state.Calls });
+
+    // Independent source reference using the game's RNG primitives. The native
+    // host can be 0.113 while these fixtures explicitly request 0.111 semantics:
+    // ListExtensions.UnstableShuffle in sts2_01110 draws directly from the
+    // parent; sts2_01130 instead seeds a child even for an empty/singleton list.
+    // Calling the installed StableShuffle would compare different versions.
+    internal static void SourceStableShuffle<T>(List<T> values, Rng parent, PredictorContext context)
+        where T : IComparable<T>
+    {
+        if (context.UsesNonCombatGeneration)
+        {
+            values.StableShuffle(parent);
+            return;
+        }
+        values.Sort();
+        SourceLegacyUnstableShuffle(values, parent);
+    }
+
+    private static void SourceLegacyUnstableShuffle<T>(List<T> values, Rng parent)
+    {
+        for (int remaining = values.Count; remaining > 1;)
+        {
+            int last = --remaining;
+            int selected = parent.NextInt(remaining + 1);
+            (values[selected], values[last]) = (values[last], values[selected]);
+        }
+    }
+
+    private static void ModernWhetstoneNativeShuffle(PredictorRun baseline)
+    {
+        if (typeof(PlayerRngSet).GetProperty("NonCombatGeneration") == null) return;
+        // Native references for this suite are the installed Modern113 runtime.
+        // The basic-deck fixture has identical key/level comparison ties; the
+        // important version difference here is stream ownership and child RNG.
+        var context = baseline.Context with { GameVersion = "0.113.1", Operation = new(1, 0, 1, []) };
+        var before = baseline.Working;
+        var cursor = before.Streams.Single(stream => stream.Stream == PredictorStream.Niche) with
+            { Stream = PredictorStream.NonCombatGeneration };
+        before = before with { Streams = before.Streams.Add(cursor) };
+        var native = Native(cursor);
+        var candidates = before.Deck.Select(before.Card)
+            .Where(card => card.Type == EffectCardType.Attack && card.UpgradeLevel < card.MaxUpgradeLevel)
+            .Select(card => new SortCard(card)).ToList();
+        candidates.StableShuffle(native);
+        var after = PredictorSettlementEffects.AfterRelicAdded(before, Relic("WHETSTONE"), context);
+        Check(after.Deck.Where(id => after.Card(id).UpgradeLevel != before.Card(id).UpgradeLevel).Order()
+            .SequenceEqual(candidates.Take(2).Select(card => card.Card.Id).Order()),
+            "Modern113 Whetstone differs from installed native stable shuffle");
+        var actual = native.ToSerializable();
+        var predicted = after.Streams.Single(stream => stream.Stream == PredictorStream.NonCombatGeneration);
+        Check(predicted == new PredictorStreamState(PredictorStream.NonCombatGeneration,
+                actual.state0, actual.state1, actual.state2, actual.state3, actual.counter) &&
+            after.Streams.Single(stream => stream.Stream == PredictorStream.Niche) ==
+                before.Streams.Single(stream => stream.Stream == PredictorStream.Niche),
+            "Modern113 Whetstone used shared Niche or lost native child-shuffle continuation");
+        Console.WriteLine("OPERATION_WHETSTONE Modern113 actual native shuffle/NonCombatGeneration + legacy source reference PASS");
+    }
 
     private static void PaidAstrolabeContinuation(PredictorRun baseline)
     {
@@ -408,10 +466,12 @@ internal static class PredictorOperationSceneChecks
         var before = baseline.Working;
         var source = before.Streams.Single(s => s.Stream == PredictorStream.Niche);
         var cursor = new PredictorOperationEventRng(source.S0, source.S1, source.S2, source.S3, source.Calls);
+        foreach (string version in typeof(PlayerRngSet).GetProperty("NonCombatGeneration") != null
+            ? new[] { "0.111.0", "0.113.1" } : new[] { "0.111.0" })
         foreach (int players in new[] { 1, 2 })
         foreach (string potion in new[] { "ATTACK_POTION", "SKILL_POTION", "POWER_POTION", "COLORLESS_POTION", "COSMIC_CONCOCTION", "OROBIC_ACID" })
         {
-            var context = baseline.Context with { Operation = new(1, 0, players, [])
+            var context = baseline.Context with { GameVersion = version, Operation = new(1, 0, players, [])
             { CombatCardRng = cursor, CombatCardPools = new(character.Select(Copy).ToImmutableArray(), colorless.Select(Copy).ToImmutableArray()) } };
             var actual = PredictorOperationPotionQueries.Query(context, new("POTION", potion));
             var native = Native(source);
@@ -422,7 +482,16 @@ internal static class PredictorOperationSceneChecks
                     .Where(c => players > 1
                         ? c.MultiplayerConstraint != MegaCrit.Sts2.Core.Entities.Cards.CardMultiplayerConstraint.SingleplayerOnly
                         : c.MultiplayerConstraint != MegaCrit.Sts2.Core.Entities.Cards.CardMultiplayerConstraint.MultiplayerOnly);
-                expected.AddRange(CardFactory.FilterForCombat(candidates).TakeRandom(count, native));
+                var filtered = CardFactory.FilterForCombat(candidates);
+                if (context.UsesNonCombatGeneration) expected.AddRange(filtered.TakeRandom(count, native));
+                else
+                {
+                    // Legacy TakeRandom used the full filtered source-order
+                    // list and the same direct-parent Fisher-Yates reference.
+                    var list = filtered.ToList();
+                    SourceLegacyUnstableShuffle(list, native);
+                    expected.AddRange(list.Take(count));
+                }
             }
             if (potion == "OROBIC_ACID")
             {
@@ -439,7 +508,7 @@ internal static class PredictorOperationSceneChecks
                     _ => null
                 }, 3);
             Check(actual.IdentitiesComputed && actual.Cards.Select(c => c.Card.Key).SequenceEqual(expected.Select(c => new ModelKey(c.Id.Category, c.Id.Entry))),
-                "Potion query identities differ from native FilterForCombat/TakeRandom: " + potion);
+                "Potion query identities differ from versioned FilterForCombat/TakeRandom: " + version + "/" + potion);
             var rng = native.ToSerializable();
             Check(actual.RngAfter == new PredictorOperationEventRng(rng.state0, rng.state1, rng.state2, rng.state3, rng.counter),
                 "Potion query RNG differs from native full-pool shuffle: " + potion);

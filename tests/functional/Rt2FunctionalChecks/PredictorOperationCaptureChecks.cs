@@ -17,6 +17,7 @@ using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Unlocks;
 using RolltheSpire2.Core.PredictorRuntime;
 using RolltheSpire2.Infrastructure.Snapshots;
+using RolltheSpire2.Ui.InRunOperations;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Commands;
@@ -47,6 +48,8 @@ internal static class PredictorOperationCaptureChecks
         var previousAscension = ascensionProperty.GetValue(manager);
         var merchantSync = typeof(RunManager).GetProperty("MerchantSynchronizer", members);
         var previousMerchantSync = merchantSync?.GetValue(manager);
+        var selectorStack = typeof(RunManager).GetProperty("CardSelectorStack", members);
+        var previousSelectorStack = selectorStack?.GetValue(manager);
         ulong? previousLocal = LocalContext.NetId;
         try
         {
@@ -56,6 +59,9 @@ internal static class PredictorOperationCaptureChecks
                 .Select(a => ModelDb.GetById<ActModel>(new(a.Key.Category, a.Key.Entry))).ToArray(),
                 seed: baseline.Context.Seed, ascensionLevel: baseline.Context.Ascension);
             stateProperty.SetValue(manager, native);
+            // Modern113 reads the run-owned stack before its static test
+            // selector. A manually attached run needs that ordinary owner too.
+            selectorStack?.SetValue(manager, Activator.CreateInstance(selectorStack.PropertyType, native));
             ascensionProperty.SetValue(manager, NativeGameFixture.StandardAscension(native.AscensionLevel));
             LocalContext.NetId = player.NetId;
             native.SharedRelicGrabBag.Populate(ModelDb.RelicPool<SharedRelicPool>().GetUnlockedRelics(player.UnlockState), native.Rng.UpFront);
@@ -73,7 +79,9 @@ internal static class PredictorOperationCaptureChecks
             PredictorOperationCapture.Read<List<MerchantRelicEntry>>(inventory, "_relicEntries").Add(relicEntry);
             var room = new MerchantRoom();
             NativeGameFixture.SetRoomInventory(native, room, inventory);
-            typeof(MerchantRoom).GetField("_runState", members)!.SetValue(room, native);
+            // Legacy rooms owned the run; Modern113's synchronizer (bound by
+            // SetRoomInventory above) owns it and the room has no such field.
+            typeof(MerchantRoom).GetField("_runState", members)?.SetValue(room, native);
             native.PushRoom(room);
 
             string before = Native(native);
@@ -109,6 +117,7 @@ internal static class PredictorOperationCaptureChecks
             var next = PredictorOperationCapture.Capture(native, "0.111.0");
             player.Gold++;
             Check(!PredictorOperationCapture.IsCurrent(next, native, "0.111.0"), "economy change invalidates operation");
+            HeldModernInventory(native);
 
             var reward = new CardReward([first, second], CardCreationSource.Other, player,
                 CardCreationOptions.ForNonCombatWithDefaultOdds([player.Character.CardPool]));
@@ -197,11 +206,52 @@ internal static class PredictorOperationCaptureChecks
         finally
         {
             merchantSync?.SetValue(manager, previousMerchantSync);
+            selectorStack?.SetValue(manager, previousSelectorStack);
             stateProperty.SetValue(manager, previousState);
             ascensionProperty.SetValue(manager, previousAscension);
             LocalContext.NetId = previousLocal;
         }
         Console.WriteLine("OPERATION_CAPTURE passed native read-only, actual inventory/reward instances, mode and shared-RNG freshness checks");
+    }
+
+    private static void HeldModernInventory(RunState native)
+    {
+        if (typeof(MegaCrit.Sts2.Core.Random.PlayerRngSet).GetProperty("NonCombatGeneration") == null) return;
+        var player = LocalContext.GetMe(native)!;
+        foreach (string entry in new[] { "WUPPY", "BATH_TOWEL", "BATH_ROBES", "BYRDINE", "MIGHTY_WINGS" })
+        {
+            var relic = ModelDb.GetById<RelicModel>(new("RELIC", entry)).ToMutable();
+            if (entry == "WUPPY")
+            {
+                relic.GetType().GetProperty("MaxHp")!.SetValue(relic, 60);
+                relic.GetType().GetProperty("CurrentHp")!.SetValue(relic, 60);
+            }
+            player.AddRelicInternal(relic, silent: true);
+            try
+            {
+                string before = Native(native);
+                var snapshot = PredictorOperationCapture.Capture(native, "0.113.1");
+                var scene = (PredictorOperationShopScene)snapshot.Scene;
+                // This headless fixture has no inventory control in the tree.
+                // Enter the real detached Open interaction before projecting
+                // the following purchase; do not pretend a closed shop is buyable.
+                var opened = PredictorOperation.Preview(snapshot, new OpenShopInventory());
+                Check(opened.Disposition == PredictorInputResult.Accepted, "held-item fixture shop cannot open");
+                var preview = SurfaceOperationPreview.BuildShop(snapshot with { State = opened.State,
+                    Scene = scene with { InventoryOpen = true } }, scene.Entries.Single().Id);
+                bool fresh = PredictorOperationCapture.IsCurrent(snapshot, native, "0.113.1");
+                bool pure = Native(native) == before;
+                Check(snapshot.State.Relics.Any(held => held.Key.Entry == entry) && preview.Faults.IsEmpty &&
+                    preview.Branches.SelectMany(branch => branch.Sections).SelectMany(section => section.Rows)
+                        .Any(row => row.Action == OperationPreviewAction.UpgradeCard) &&
+                    fresh && pure,
+                    entry + " actual captured holder blocks local shop forecast or mutates native input;fresh=" + fresh +
+                    ";pure=" + pure + ";notices=" + string.Join(',', preview.Notices) + ";pending=" + string.Join(',', preview.PendingReasons) +
+                    ";faults=" + string.Join(';', preview.Faults.Select(fault => fault.Exception.ToString())));
+            }
+            finally { player.RemoveRelicInternal(relic, silent: true); }
+        }
+        Console.WriteLine("OPERATION_HELD_INVENTORY 5 Modern113 native holders -> capture -> shop hover -> freshness/native purity PASS");
     }
 
     private static void CheckOpaqueReward(PredictorOperationSnapshot captured, Player player)

@@ -224,7 +224,11 @@ internal sealed partial class ActInformationSearchEditor : Control
         {
             int actIndex = act - 1;
             BossMapActSectionDefinition? section = Section(act);
-            ModelKey[] variants = section?.Variants.Select(value => value.ActKey).Distinct(ModelKeyComparer.Instance).ToArray() ?? [];
+            var selectedVariants = _draft.SelectedVariants[actIndex];
+            ModelKey[] variants = (section?.Variants.Select(value => value.ActKey) ?? [])
+                .Concat(selectedVariants.OrderBy(key => key.Serialized, StringComparer.Ordinal))
+                .Distinct(ModelKeyComparer.Instance).ToArray();
+            bool fixedVariant = variants.Length == 1 && selectedVariants.Count == 0;
             ModelKey[] bosses = BossesForAct(act).Concat(_draft.SelectedBosses[actIndex])
                 .Distinct(ModelKeyComparer.Instance).ToArray();
             bool offersSecondBoss = section?.ShowSecondBoss == true;
@@ -237,7 +241,7 @@ internal sealed partial class ActInformationSearchEditor : Control
             const float variantWidth = 208, variantLeft = choicesLeft + 112;
             int variantColumns = Math.Max(1, (int)((width - variantLeft - inset + 12) / (variantWidth + 12)));
             int variantRows = Math.Max(1, (variants.Length + variantColumns - 1) / variantColumns);
-            float bossTop = y + (variants.Length == 1 ? 44 : 10 + variantRows * 44);
+            float bossTop = y + (fixedVariant ? 44 : 10 + variantRows * 44);
             int bossRows = Math.Max(1, (bosses.Length + columns - 1) / columns);
             float sectionHeight = bossTop - y + bossRows * (tileHeight + tileGap) + 2;
             float secondTop = y + sectionHeight + 8;
@@ -249,8 +253,7 @@ internal sealed partial class ActInformationSearchEditor : Control
             content.AddChild(sectionPanel);
             Text(content, _text.Format("query.act_info.act", act), inset, y + 10, 92, 20);
             Text(content, _text.Get("query.act_info.variant"), choicesLeft, y + 12, 100, 15, true);
-            HashSet<ModelKey> selectedVariants = _draft.SelectedVariants[actIndex];
-            if (variants.Length == 1)
+            if (fixedVariant)
                 Text(content, _names.Resolve(variants[0], GameContentKind.Act), variantLeft, y + 12, width - variantLeft - inset, 16);
             else
                 for (int index = 0; index < variants.Length; index++)

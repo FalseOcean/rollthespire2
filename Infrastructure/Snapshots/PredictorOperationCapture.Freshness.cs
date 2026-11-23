@@ -128,8 +128,8 @@ internal static partial class PredictorOperationCapture
     {
         RuntimeSnapshotThreadGuard.RequireMainThread();
         var player = LocalContext.GetMe(run) ?? throw new InvalidOperationException("OperationLocalPlayerMissing");
-        return Hash(new { Native = NativeStamp(run, player, root, semanticProfile == RngSemanticProfileId.Modern113),
-            Scene = (object)CaptureScene(run, player, catalog, root, semanticProfile) });
+        return OperationStamp(NativeStamp(run, player, root, semanticProfile == RngSemanticProfileId.Modern113),
+            CaptureScene(run, player, catalog, root, semanticProfile), ReadKaleidoscopeSources(run, player));
     }
 
     // A cheap observation check for the active Neow hover, not a replacement for
@@ -139,10 +139,7 @@ internal static partial class PredictorOperationCapture
     {
         RuntimeSnapshotThreadGuard.RequireMainThread();
         var player = LocalContext.GetMe(run) ?? throw new InvalidOperationException("OperationLocalPlayerMissing");
-        return Hash(new
-        {
-            Native = NativeStamp(run, player, root, captureSort: TryNonCombatGeneration(player) is not null),
-            Scene = (object)PredictorOperationAncientCapture.Capture(run, neow, catalog, root)
-        });
+        return OperationStamp(NativeStamp(run, player, root, captureSort: TryNonCombatGeneration(player) is not null),
+            PredictorOperationAncientCapture.Capture(run, neow, catalog, root), ReadKaleidoscopeSources(run, player));
     }
 }

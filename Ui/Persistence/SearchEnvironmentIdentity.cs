@@ -150,6 +150,9 @@ internal static partial class SearchEnvironmentSignatureBuilder
             Transform = Cards(effect?.TransformPool), Other = effect?.OtherCharacterPools?.Select(p => new {
                 p.CharacterKey, p.PoolId, p.PoolOrder, Cards = Cards(p.Cards) }).ToArray(),
             effect?.GeneratedCursePool, effect?.CharacterStrikeKey, effect?.CharacterDefendKey, effect?.ClawKey });
+        if (effect?.KaleidoscopePools is not null || effect?.KaleidoscopePoolIssue is not null)
+            cards = IdentityHash(new { Cards = cards, effect.KaleidoscopePoolIssue, Kaleidoscope = effect.KaleidoscopePools?.Select(p =>
+                new { p.CharacterKey, p.PoolId, p.PoolOrder, p.CandidateCaptureIssue, Cards = Cards(p.Cards) }).ToArray() });
         string relics = IdentityHash(new { Semantic = semantic.GetDomainHash(RuntimeAuthorityDomains.Relics),
             Bag = Relics(effect?.OrderedRelicBag), Shared = Relics(effect?.SharedRelicPoolSource),
             Character = Relics(effect?.CharacterRelicPoolSource), effect?.BonesEligibleRelics,

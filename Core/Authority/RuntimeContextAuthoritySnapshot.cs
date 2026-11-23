@@ -70,10 +70,12 @@ public sealed class RuntimeContextAuthoritySnapshot
         WorldAuthority = worldAuthority;
         PredictionGameMode = predictionGameMode;
         PredictionGameModeAuthority = predictionGameModeAuthority;
+        if (vanillaNeowCatalogExact == true && capturedNeowOffers?.MatchesDefaultInputs == true)
+            capturedNeowOffers = null;
         CapturedNeowOffers = capturedNeowOffers;
         NeowPreparation = capturedNeowOffers != null
             ? ModernNeowIdentityRules.PrepareCatalog(capturedNeowOffers.Positives, capturedNeowOffers.Curses,
-                playersCount, allCharacterCardPoolsUnlocked, IsScrollBoxesAllowed)
+                playersCount, allCharacterCardPoolsUnlocked, IsScrollBoxesAllowed, capturedNeowOffers.UnresolvedEligibility, capturedNeowOffers.BinaryChoices)
             : ModernNeowIdentityRules.Prepare(playersCount, allCharacterCardPoolsUnlocked, IsScrollBoxesAllowed);
         SupportEvidence = supportEvidence ?? RequestSupportEvidence.Unknown;
         SupportScope = RequestSupportAssessment.Assess(this);
@@ -95,8 +97,19 @@ public sealed class RuntimeContextAuthoritySnapshot
             SourceModId,
             SourceAssembly);
         if (capturedNeowOffers != null)
+        {
+            // Preserve the original content identity when older captures carried
+            // only the two ordered pools. New facts distinguish changes to the
+            // modeled draws or eligibility. Bones has its own effect fingerprint.
             CatalogFingerprint = OrderedPartyAuthority.Hash(CatalogFingerprint + "|" +
                 string.Join(",", capturedNeowOffers.Curses) + "|" + string.Join(",", capturedNeowOffers.Positives));
+            if (!capturedNeowOffers.BinaryChoices.SequenceEqual(ModernNeowIdentityRules.BinaryChoices) ||
+                !capturedNeowOffers.UnresolvedEligibility.IsEmpty)
+                CatalogFingerprint = OrderedPartyAuthority.Hash(CatalogFingerprint + "|" +
+                    string.Join(",", capturedNeowOffers.BinaryChoices.Select(c => c.TrueCandidate.Serialized + "/" +
+                        c.FalseCandidate.Serialized + "/" + c.SuppressedByCurse?.Serialized)) + "|" +
+                    string.Join(",", capturedNeowOffers.UnresolvedEligibility.OrderBy(k => k.Serialized, StringComparer.Ordinal)));
+        }
     }
 
     public CharacterIdentity Character { get; }
@@ -213,8 +226,9 @@ public sealed class RuntimeContextAuthoritySnapshot
     /// </summary>
     public bool HasExactModernNeowIdentityInputs =>
         NoRunModifiers == true &&
-        (VanillaNeowCatalogExact == true && AllCharacterCardPoolsUnlocked.HasValue && IsScrollBoxesAllowed.HasValue ||
-         CapturedNeowOffers != null && VersionResolution.SemanticProfileId == RngSemanticProfileId.Modern113 &&
+        (VanillaNeowCatalogExact == true && AllCharacterCardPoolsUnlocked.HasValue && IsScrollBoxesAllowed.HasValue &&
+         !NeowPreparation.UnknownEligibilityAffectedPool ||
+         CapturedNeowOffers != null && ProfileId == RuntimeProfileId.Beta111 &&
          !NeowPreparation.UnknownEligibilityAffectedPool && !NeowPreparation.EligibleCurses.IsEmpty);
 
     public bool IsBeta110NeowIdentityAuthorityExact =>

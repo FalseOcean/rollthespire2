@@ -198,7 +198,10 @@ internal sealed partial class QueryWorkbenchFrame : Control
         var current = LobbyUnlockReadout.Find(GetTree().Root);
         if (ReferenceEquals(current, _readLobby) && LobbyUnlockReadout.Roster(current!) == _readRoster) return;
         _readLobby = null; _readRoster = "";
-        Array.Clear(_lobbyUnlocks); Array.Clear(_unlockReadStatus); UpdateSeatReadLabels();
+        _lobbyReadExpired = true;
+        for (int slot = 0; slot < _unlockReadStatus.Length; slot++)
+            if (_partyUnlockSources[slot] != "AssumedFullyUnlocked") _unlockReadStatus[slot] = 0;
+        UpdateSeatReadLabels();
         RefreshEditorContexts();
     }
 

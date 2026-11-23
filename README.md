@@ -6,7 +6,7 @@ English | [简体中文](README.zh-CN.md)
 
 RolltheSpire2 (RT2) is an in-game seed search and analysis mod for **Slay the Spire 2**. Combine your desired conditions, search for matching seeds, and inspect their predicted openings, rewards, maps and more.
 
-This source tree is **1.4.7**. On Windows, the same RT2 installation selects the rules for stable **0.111.1** and beta **0.113.1**.
+This source tree is **1.4.8**. On Windows, the same RT2 installation selects the rules for stable **0.111.1** and beta **0.113.1**.
 
 In 0.113, search for ordinary relics in the first 1 to 3 shops, the relic tier rolled by an event, or named transformation results. Click Astrolabe or Pandora’s Box in Seed Information to see the cards in order. Several GPU searches combining Neow, events or multiplayer openings are faster.
 

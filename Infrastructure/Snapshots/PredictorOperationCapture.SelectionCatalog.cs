@@ -75,11 +75,15 @@ internal static partial class PredictorOperationCapture
     {
         static PredictorCatalog Scalars(PredictorCatalog catalog) => catalog with
         {
-            CharacterCards = [], ColorlessCards = [], AllCharacterCards = [], CardDefinitions = [], Encounters = [],
+            CharacterCards = [], ColorlessCards = [], AllCharacterCards = [], KaleidoscopePools = null, CardDefinitions = [], Encounters = [],
             TransformationPools = [], UnlockedCurseCards = [], ModifierCurseCards = [], ShopRelics = [], CharacterPools = [],
             ShopGainsBlock = [], EventPetRelics = [], StarterRelics = [], DustyTomeCards = [], TradableRelicTypes = []
         };
-        return Scalars(before) == Scalars(after) &&
+        bool sameKaleidoscope = before.KaleidoscopePools is { } oldPools
+            ? after.KaleidoscopePools is { } newPools && SameOrder(oldPools, newPools, static (left, right) =>
+                left.Source == right.Source && left.Issue == right.Issue && SameOrder(left.Cards, right.Cards))
+            : after.KaleidoscopePools is null;
+        return Scalars(before) == Scalars(after) && sameKaleidoscope &&
             SameOrder(before.CharacterCards, after.CharacterCards) && SameOrder(before.ColorlessCards, after.ColorlessCards) &&
             SameOrder(before.AllCharacterCards, after.AllCharacterCards) && SameOrder(before.CardDefinitions, after.CardDefinitions,
                 static (left, right) => left == right || (left with { Levels = [] }) == (right with { Levels = [] }) && SameOrder(left.Levels, right.Levels)) &&

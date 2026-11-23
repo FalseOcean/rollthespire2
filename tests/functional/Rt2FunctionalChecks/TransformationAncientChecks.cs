@@ -91,8 +91,8 @@ internal static class TransformationAncientChecks
             SeedAncientTransformResult Read(ModelKey relic, int? slot = null, string route = "", int? count = null) =>
                 SeedAncientTransformPredictor.Project(hash, request!, facts, relic, slot, route, count);
             var initialBox = Read(box);
-            Check(initialBox.Status == SeedAncientTransformStatus.Ready && initialBox.Cards.Count == 9,
-                "Seed information reads the captured starting Strike/Defend count");
+            Check(initialBox.Status == SeedAncientTransformStatus.Ready && initialBox.Cards.Count == 10,
+                "Pandora previews ten draws regardless of the nine starting Strikes and Defends");
             Check(Read(astro).Cards.Select(c => c.CardKey).SequenceEqual(initialBox.Cards.Take(3).Select(c => c.CardKey))
                 && Read(astro).Cards.All(c => c.Upgraded), "Astrolabe uses the same initial prefix with upgrades");
             Check(Read(box, choice.SlotIndex, "absent route").Status == SeedAncientTransformStatus.OpeningUnavailable,
@@ -111,8 +111,19 @@ internal static class TransformationAncientChecks
             {
                 string route = choice.OpeningRewardContinuations!.Routes.Single().Route.RouteId;
                 var afterLeafy = Read(box, choice.SlotIndex, route);
-                Check(afterLeafy.AutomaticCount == 7 && afterLeafy.Cards.SequenceEqual(initialBox.Cards.Skip(2)),
-                    "Selecting Leafy consumes two draws and removes exactly two eligible Basics");
+                var expected = Read(box, count: 12).Cards.Skip(2).ToArray();
+                Check(afterLeafy.PreviewCount == 10 && afterLeafy.Cards.SequenceEqual(expected),
+                    "Selecting Leafy skips its two draws and still shows the full preview");
+                foreach (int? remaining in new int?[] { null, 0, 2 })
+                {
+                    var depleted = choice with { TransformationContinuation = new(2, remaining, remaining) };
+                    var partial = facts with { Neow = facts.Neow with { Choices = [depleted] } };
+                    var pandora = SeedAncientTransformPredictor.Project(hash, request!, partial, box, choice.SlotIndex, route);
+                    var astrolabe = SeedAncientTransformPredictor.Project(hash, request!, partial, astro, choice.SlotIndex, route);
+                    Check(pandora.Cards.SequenceEqual(expected) && astrolabe.Cards.Count == 3 &&
+                        astrolabe.Cards.Select(c => c.CardKey).SequenceEqual(expected.Take(3).Select(c => c.CardKey)),
+                        "Unknown or depleted opening materials never suppress the next draws from a known cursor");
+                }
                 Check(Read(box, choice.SlotIndex, route, 2).Cards.SequenceEqual(initialBox.Cards.Skip(2).Take(2)) &&
                     Read(box, choice.SlotIndex, route, 0).Status == SeedAncientTransformStatus.Ready,
                     "Manual Pandora material count preserves the selected cursor, including zero");

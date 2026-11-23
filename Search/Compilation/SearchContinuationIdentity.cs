@@ -91,6 +91,10 @@ internal static class SearchContinuationIdentity
             transform.Remove(nameof(TransformationAggregateCondition.UsesAncient));
             transform.Remove(nameof(TransformationAggregateCondition.UsesExtendedRequirements));
             transform.Remove(nameof(TransformationAggregateCondition.AncientOpportunityCount));
+            // The old material-count gate could skip seeds that match the same
+            // saved request under its declared roll count. Rescan those windows.
+            if (aggregate.UsesAncient)
+                transform["AncientRollPremiseRevision"] = TransformationAggregateCondition.AncientRollPremiseRevision;
             if (!aggregate.UsesExtendedRequirements)
             {
                 // Preserve the v1 identity of aggregate searches saved before source scopes.
