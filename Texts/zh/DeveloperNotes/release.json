@@ -4,6 +4,17 @@
   "Blocks": [
     {
       "Type": "Heading",
+      "ReleaseVersion": "1.4.10",
+      "Text": "RT2 1.4.10　变牌筛种优化"
+    },
+    {
+      "Type": "BulletList",
+      "Items": [
+        "补充其余变牌事件与变牌组合的GPU实现。"
+      ]
+    },
+    {
+      "Type": "Heading",
       "ReleaseVersion": "1.4.9",
       "Text": "RT2 1.4.9　多人筛种与路线预测优化"
     },

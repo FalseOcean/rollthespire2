@@ -21,15 +21,6 @@ internal static class TransformationAggregateValidator
     private sealed record RelicPoolCapture(TransformationRelicProjector? Projector);
     private static readonly ConditionalWeakTable<NeowEffectAuthoritySnapshot, RelicPoolCapture> RelicPoolCaptures = new();
     private readonly record struct AncientProjectionStatus(string? FailureCode = null, bool OutputCountUnknown = false);
-    private static readonly (EventResultConditionKind Kind, Func<TransformationAggregateCondition, bool> Selected)[] EventSources =
-    [
-        (EventResultConditionKind.MorphicGroveGroupInitialBasicsContains, c => c.MorphicGrove),
-        (EventResultConditionKind.AromaOfChaosInitialBasicTransform, c => c.AromaOfChaos),
-        (EventResultConditionKind.WhisperingHollowInitialBasicTransform, c => c.WhisperingHollow),
-        (EventResultConditionKind.SymbioteInitialBasicTransform, c => c.Symbiote),
-        (EventResultConditionKind.TrialNondescriptInitialBasicsContains, c => c.TrialNondescript)
-    ];
-
     internal static Func<ulong, List<Output>?>? PrepareIndependentEventCheck(SearchModel request)
     {
         if (request.Evaluation.TransformationAggregate is not { UsesAncient: true, UsesEvents: true } condition ||
@@ -58,7 +49,7 @@ internal static class TransformationAggregateValidator
         if (condition.EventScenario is { } scenario)
         {
             MorphicGrovePredictor.ValidateAuthority(request.Detection, authority, scenario);
-            foreach (var (kind, selected) in EventSources)
+            foreach (var (kind, selected) in EventResultTransformSemantics.Sources)
             {
                 if (!selected(condition)) continue;
                 // The combined source capture carries two targets. A one-draw
@@ -74,19 +65,7 @@ internal static class TransformationAggregateValidator
                     AddUnknownOutputs(events, count, source);
                     continue;
                 }
-                IReadOnlyList<MorphicGroveCard?>? projection = kind switch
-                {
-                    EventResultConditionKind.MorphicGroveGroupInitialBasicsContains =>
-                        Beta111MorphicGroveProjector.Project(root, MorphicGroveCommitment.InitialBasics, scenario.Premises, scenario.Targets)
-                            .Transforms.Select(transform => transform.RawReplacement).ToArray(),
-                    EventResultConditionKind.AromaOfChaosInitialBasicTransform =>
-                        [Beta111SingleBasicTransformProjector.Project(root, authority.PlayerSlotIndex,
-                            SingleBasicTransformEvent.AromaOfChaos, scenario.Premises, scenario.Targets[0]).RawReplacement],
-                    EventResultConditionKind.WhisperingHollowInitialBasicTransform =>
-                        [Beta111SingleBasicTransformProjector.Project(root, authority.PlayerSlotIndex,
-                            SingleBasicTransformEvent.WhisperingHollow, scenario.Premises, scenario.Targets[0]).RawReplacement],
-                    _ => ProjectOtherEvent(root, kind, count, scenario)
-                };
+                var projection = ProjectEvent(root, kind, scenario);
                 if (projection is { Count: 0 }) return null;
                 if (projection is null) AddUnknownOutputs(events, count, source);
                 else events.AddRange(projection.Select(card => new Output(card?.CardKey, card is null ? null : card.Rarity == "Rare", source)));
@@ -219,13 +198,23 @@ internal static class TransformationAggregateValidator
         return SearchQueryEvaluation.NoMatch("TransformationAggregate.AllRoutesRejected");
     }
 
-    private static IReadOnlyList<MorphicGroveCard?>? ProjectOtherEvent(ulong root, EventResultConditionKind kind,
-        int count, MorphicGroveScenario scenario)
+    internal static IReadOnlyList<MorphicGroveCard?>? ProjectEvent(ulong root, EventResultConditionKind kind,
+        MorphicGroveScenario scenario)
     {
-        var eventScenario = count == 1 && scenario.Targets.Count != 1
-            ? new MorphicGroveScenario(scenario.Authority, scenario.Premises, [scenario.Targets[0]])
-            : scenario;
-        return EventResultTransformSemantics.Project(root, new(kind, default) { MorphicGroveScenario = eventScenario });
+        switch (kind)
+        {
+            case EventResultConditionKind.MorphicGroveGroupInitialBasicsContains:
+                return Beta111MorphicGroveProjector.Project(root, MorphicGroveCommitment.InitialBasics,
+                    scenario.Premises, scenario.Targets).Transforms.Select(transform => transform.RawReplacement).ToArray();
+            case EventResultConditionKind.AromaOfChaosInitialBasicTransform:
+            case EventResultConditionKind.WhisperingHollowInitialBasicTransform:
+                var source = kind == EventResultConditionKind.AromaOfChaosInitialBasicTransform
+                    ? SingleBasicTransformEvent.AromaOfChaos : SingleBasicTransformEvent.WhisperingHollow;
+                return [Beta111SingleBasicTransformProjector.Project(root, scenario.Authority.PlayerSlotIndex,
+                    source, scenario.Premises, scenario.Targets[0]).RawReplacement];
+            default:
+                return EventResultTransformSemantics.Project(root, EventResultTransformSemantics.ForAggregate(kind, scenario));
+        }
     }
 
     private static AncientProjectionStatus AddAncientOutputs(List<Output> outputs, IRuntimeProfile profile, ulong root,

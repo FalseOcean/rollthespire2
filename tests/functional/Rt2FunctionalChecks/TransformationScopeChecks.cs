@@ -272,10 +272,11 @@ internal static class TransformationScopeChecks
         var other = pool[1].CardKey;
         var authority = context.Authority.WithEffectAuthority(effects with { TransformPool = pool });
         var compiled = SearchCompiler.Compile(SearchQuery.Empty, context with { Authority = authority });
-        ScopedTransformationCountPlan Bind(TransformationAggregateCondition condition) =>
+        ScopedTransformationCountPlan? TryBind(TransformationAggregateCondition condition) =>
             ScopedTransformationCountPlan.TryCreate(new(compiled,
                 ExactSearchEvaluationProjection.Empty with { TransformationAggregate = condition.Normalize() },
-                CombatRewardRoutePolicyContract.None, compiled.SemanticFingerprint)) ??
+                CombatRewardRoutePolicyContract.None, compiled.SemanticFingerprint));
+        ScopedTransformationCountPlan Bind(TransformationAggregateCondition condition) => TryBind(condition) ??
             throw new InvalidOperationException("Synthetic scoped transformation count must bind");
 
         var pandora = new TransformationAggregateCondition(TransformationOpening.NewLeaf, TransformationPickupOrder.Any,
@@ -349,6 +350,78 @@ internal static class TransformationScopeChecks
             check(starOnly.Matches(root) == (starHits > 0), "Astrolabe-only scope skips the New Leaf draw and excludes Grove");
         }
         check(changed > 0 && shared is > 0 and < 64, "fixture distinguishes the opening cursor and exercises joint hits and misses");
+        CheckScopedEventStreams(jointCondition, target, TryBind, check);
+    }
+
+    private static void CheckScopedEventStreams(TransformationAggregateCondition joint, ModelKey target,
+        Func<TransformationAggregateCondition, ScopedTransformationCountPlan?> tryBind, Action<bool, string> check)
+    {
+        const string aroma = "E.AROMA_OF_CHAOS", hollow = "E.WHISPERING_HOLLOW", symbiote = "E.SYMBIOTE", trial = "E.TRIAL";
+        var scenario = joint.EventScenario!;
+        var first = scenario.Targets[0];
+        var second = scenario.Targets[1] with { OrderedSourceCandidates = [first.OrderedSourceCandidates![1]] };
+        var singles = joint with
+        {
+            MorphicGrove = false, AromaOfChaos = true, WhisperingHollow = true, Symbiote = true,
+            EventScenario = new(scenario.Authority, scenario.Premises, [first, second])
+        };
+        ScopedTransformationCountPlan Scope(TransformationAggregateCondition source, int minimum, params string[] counted) =>
+            tryBind(source with { ResultRequirements = [new(counted, Predicate.ContainsMultiset, 0,
+                Enumerable.Repeat(target, minimum).ToArray())] }) ??
+            throw new InvalidOperationException("Synthetic event combination must bind");
+        var aromaPair = Scope(singles, 2, Pandora, aroma);
+        var hollowPair = Scope(singles, 2, Pandora, hollow);
+        var symbiotePair = Scope(singles, 2, Pandora, symbiote);
+        var aromaWork = aromaPair.EstimateWork()!.Value;
+        var hollowWork = hollowPair.EstimateWork()!.Value;
+        check(aromaWork.Survival == 0.25 && hollowWork.Survival == 0.25 && symbiotePair.EstimateWork()?.Survival == 0.25,
+            "only the chosen one-draw event and Pandora contribute from the two fair pools");
+        check(hollowWork.Draws > aromaWork.Draws, "Hollow prices the gold roll ahead of its replacement");
+
+        var withTrial = singles with { TrialNondescript = true, EventScenario = scenario };
+        var missingSecondPool = withTrial with
+        {
+            EventScenario = new(scenario.Authority, scenario.Premises,
+                [first, scenario.Targets[1] with { OrderedSourceCandidates = null }]),
+            ResultRequirements = [new([trial, Pandora], Predicate.ContainsMultiset, 0, [target])]
+        };
+        check(tryBind(missingSecondPool) is null, "Trial cards need both ordered pools before the GPU can reject a root");
+        var independentGate = Scope(missingSecondPool, 1, Pandora);
+        var trialAndSymbiote = Scope(withTrial, 3, Pandora, trial, symbiote);
+        var trialGateOnly = Scope(withTrial, 1, Pandora);
+        check(Math.Abs(trialAndSymbiote.EstimateWork()!.Value.Survival - 5d / 48) < 1e-12 &&
+            Math.Abs(trialGateOnly.EstimateWork()!.Value.Survival - 1d / 6) < 1e-12,
+            "the mandatory Trial case applies once, including when no Trial card is counted");
+
+        int earlyHitRejected = 0, jointHit = 0, distinguishHollowPrefix = 0;
+        for (ulong root = 0; root < 128; root++)
+        {
+            var personal = new Xoshiro256StarStar(Beta111Profile.Instance.DeriveNamedStreamSeed(root, "transformations"));
+            bool boxHit = personal.NextInt(2) == 0;
+            bool aromaHit = Beta109WorldRng.CreateEventLocal(root, 0, false, "AROMA_OF_CHAOS").NextInt(2, "LetGo") == 0;
+            bool symbioteHit = Beta109WorldRng.CreateEventLocal(root, 0, false, "SYMBIOTE").NextInt(2, "transform") == 0;
+            var hug = Beta109WorldRng.CreateEventLocal(root, 0, false, "WHISPERING_HOLLOW");
+            hug.NextInt(19, "CalculateVars");
+            bool hollowHit = hug.NextInt(2, "Hug") == 0;
+            bool withoutPrefix = Beta109WorldRng.CreateEventLocal(root, 0, false, "WHISPERING_HOLLOW").NextInt(2, "Hug") == 0;
+            if (boxHit && withoutPrefix != hollowHit) distinguishHollowPrefix++;
+            check(aromaPair.Matches(root) == (boxHit && aromaHit) && hollowPair.Matches(root) == (boxHit && hollowHit) &&
+                symbiotePair.Matches(root) == (boxHit && symbioteHit),
+                "single-card events use their own seed, prefix and first target even with a different second pool");
+
+            var court = Beta109WorldRng.CreateEventLocal(root, 0, false, "TRIAL");
+            bool nondescript = court.NextInt(3, "Accept:case") == 2;
+            int trialHits = (court.NextInt(2, "transform:0") == 0 ? 1 : 0) + (court.NextInt(2, "transform:1") == 0 ? 1 : 0);
+            bool jointMatch = nondescript && trialHits + (boxHit ? 1 : 0) + (symbioteHit ? 1 : 0) >= 3;
+            if (nondescript && trialHits == 1 && boxHit && symbioteHit) jointHit++;
+            if (!nondescript && boxHit) earlyHitRejected++;
+            check(trialAndSymbiote.Matches(root) == jointMatch && trialGateOnly.Matches(root) == (nondescript && boxHit),
+                "an earlier card hit cannot bypass Trial, and excluded event cards cannot satisfy the threshold");
+            check(independentGate.Matches(root) == (nondescript && boxHit),
+                "an uncounted Trial case gate remains decidable when its second card pool is unknown");
+        }
+        check(earlyHitRejected > 0 && jointHit > 0 && distinguishHollowPrefix > 0,
+            "the sample exercises early hits rejected by Trial, three-source hits and Hollow's consumed prefix");
     }
 
     private static void CheckRemainderOracle(TransformationAggregateCondition condition, int minimumTargetCount,

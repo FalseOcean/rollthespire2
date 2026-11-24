@@ -23,6 +23,14 @@ bool matches(uint64_t root) {
         rng_initialize(root + make_u64(plan.v[cursor], plan.v[cursor + 1u]));
         uint blocks = plan.v[cursor + 2u];
         cursor += 3u;
+#ifdef EVENT_PREFIX
+        uint range = plan.v[cursor], requiredPlusOne = plan.v[cursor + 1u];
+        cursor += 2u;
+        if (range != 0u) {
+            uint roll = next_int(range);
+            if (requiredPlusOne != 0u && roll + 1u != requiredPlusOne) return false;
+        }
+#endif
         for (uint block = 0u; block < blocks; block++) {
             uint start = plan.v[cursor], size = plan.v[cursor + 1u];
             uint draws = plan.v[cursor + 2u], counted = plan.v[cursor + 3u];

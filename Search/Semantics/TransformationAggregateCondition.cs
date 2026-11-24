@@ -60,11 +60,8 @@ public sealed record TransformationAggregateCondition(
             TransformationOpening.LeafyPoultice => "N.LeafyPoultice", TransformationOpening.NewLeaf => "N.NewLeaf",
             TransformationOpening.BonesLeafyOther => "N.BonesLeafyOther", _ => "N.BonesLeafyNewLeaf" }] =
             Opening switch { TransformationOpening.NewLeaf => 1, TransformationOpening.BonesLeafyNewLeaf => 3, _ => 2 };
-        if (MorphicGrove) result["E.MORPHIC_GROVE"] = 2;
-        if (AromaOfChaos) result["E.AROMA_OF_CHAOS"] = 1;
-        if (WhisperingHollow) result["E.WHISPERING_HOLLOW"] = 1;
-        if (Symbiote) result["E.SYMBIOTE"] = 1;
-        if (TrialNondescript) result["E.TRIAL"] = 2;
+        foreach (var kind in EventResultTransformSemantics.Selected(this))
+            result["E." + EventResultTransformSemantics.Entry(kind)] = EventResultTransformSemantics.DrawCount(kind);
         if (UsesAncient) result[AncientSource == TransformationAncientSource.Astrolabe ? "A.ASTROLABE" : "A.PANDORAS_BOX"] = AncientOpportunityCount;
         return result;
     }

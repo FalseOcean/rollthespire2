@@ -8,6 +8,33 @@ namespace RolltheSpire2.Search.Semantics;
 // nor final deck state is inferred. This is not an arbitrary event program.
 internal static class EventResultTransformSemantics
 {
+    private static readonly (EventResultConditionKind Kind, Func<TransformationAggregateCondition, bool> Selected)[] EventSources =
+    [
+        (EventResultConditionKind.MorphicGroveGroupInitialBasicsContains, c => c.MorphicGrove),
+        (EventResultConditionKind.AromaOfChaosInitialBasicTransform, c => c.AromaOfChaos),
+        (EventResultConditionKind.WhisperingHollowInitialBasicTransform, c => c.WhisperingHollow),
+        (EventResultConditionKind.SymbioteInitialBasicTransform, c => c.Symbiote),
+        (EventResultConditionKind.TrialNondescriptInitialBasicsContains, c => c.TrialNondescript)
+    ];
+
+    internal static ReadOnlySpan<(EventResultConditionKind Kind, Func<TransformationAggregateCondition, bool> Selected)> Sources => EventSources;
+
+    internal static IEnumerable<EventResultConditionKind> Selected(TransformationAggregateCondition condition)
+    {
+        foreach (var (kind, selected) in EventSources)
+            if (selected(condition)) yield return kind;
+    }
+
+    // The shared query capture can contain two targets while a one-card event
+    // consumes only the first. Use the same slice for Exact and device admission.
+    internal static EventResultSearchCondition ForAggregate(EventResultConditionKind kind, MorphicGroveScenario scenario)
+    {
+        var capture = DrawCount(kind) == 1 && scenario.Targets.Count > 1
+            ? new MorphicGroveScenario(scenario.Authority, scenario.Premises, [scenario.Targets[0]])
+            : scenario;
+        return new(kind, default) { MorphicGroveScenario = capture };
+    }
+
     internal static bool IsTransform(EventResultConditionKind kind) => kind is
         EventResultConditionKind.MorphicGroveGroupInitialBasicsContains or
         EventResultConditionKind.SymbioteInitialBasicTransform or

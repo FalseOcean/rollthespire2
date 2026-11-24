@@ -4,6 +4,17 @@
   "Blocks": [
     {
       "Type": "Heading",
+      "ReleaseVersion": "1.4.10",
+      "Text": "RT2 1.4.10 · Transform search"
+    },
+    {
+      "Type": "BulletList",
+      "Items": [
+        "Added GPU support for the remaining transform events and their transform combinations."
+      ]
+    },
+    {
+      "Type": "Heading",
       "ReleaseVersion": "1.4.9",
       "Text": "RT2 1.4.9 · Multiplayer seed search and route prediction"
     },
