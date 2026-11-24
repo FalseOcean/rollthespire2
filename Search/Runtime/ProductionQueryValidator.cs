@@ -1340,7 +1340,7 @@ public static partial class ProductionQueryValidator
         SearchQueryEvaluation? unresolvedRelic = null;
         foreach ((RelicSequenceSearchCondition condition, int index) in plan.Evaluation.RelicSequenceConditions.Select((item, index) => (item, index)))
         {
-            RelicSequenceLaneResult? lane = prediction.GetPlayerLane(condition.Lane);
+            RelicSequenceLaneResult? lane = prediction.GetPlayerLane(condition.Lane, plan.Evaluation.DeclaredCapsuleContents);
             bool complete = lane?.Precision == PredictionPrecision.Exact;
             var known = lane?.Entries.TakeWhile(e => e.Precision == PredictionPrecision.Exact).ToArray() ?? [];
             var range = known.Where(item => condition.RangeMode == SearchSequenceRangeMode.FirstN
@@ -1357,7 +1357,12 @@ public static partial class ProductionQueryValidator
                 }
             }
             if (complete && condition.RangeMode == SearchSequenceRangeMode.ExactSlot && condition.RangeValue > lane!.TotalCount)
-                return SearchQueryEvaluation.NoMatch($"RelicSequenceSlotAbsent:{condition.Lane}:{condition.RangeValue}");
+            {
+                if (condition.RangeValue <= prediction.GetPlayerLane(condition.Lane)!.TotalCount)
+                    return SearchQueryEvaluation.NoMatch($"RelicSequenceSlotConsumed:{condition.Lane}:{condition.RangeValue}");
+                unresolvedRelic ??= SearchQueryEvaluation.Unknown($"RelicSequenceSlotUnavailable:{condition.Lane}:{condition.RangeValue}");
+                continue;
+            }
             if (complete && known.Length < Math.Min(condition.RangeValue, lane!.TotalCount))
             {
                 unresolvedRelic ??= SearchQueryEvaluation.Unknown($"RelicSequenceRangeNotExact:{condition.Lane}:{condition.RangeValue}");

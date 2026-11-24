@@ -1,5 +1,6 @@
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Effects.Snapshots;
+using RolltheSpire2.Core.Authority;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Rng;
 
@@ -9,6 +10,24 @@ internal readonly record struct TransformationRelicCard(ModelKey CardKey, Effect
 
 internal sealed record OpeningTransformationContinuation(int? StreamOffset, int? BasicCount, int? BasicStrikeDefendCount)
 {
+    // Every drawable vanilla Common/Uncommon/Rare capsule pickup in 0.113
+    // leaves the personal transformations stream untouched. Knowing which two
+    // were drawn (or which cards got upgraded) is unnecessary for this cursor.
+    internal static bool HasNativeCapsuleCursor(RuntimeContextAuthoritySnapshot authority)
+    {
+        if (authority.VersionResolution.SemanticProfileId != RngSemanticProfileId.Modern113 ||
+            authority.PlayersCount != 1 ||
+            authority.GameVersion is not (RuntimeVersionCompatibility.Beta113Version or "0.113.1")) return false;
+        var effects = authority.EffectAuthority;
+        bool native(NeowEffectRelicSnapshot relic) =>
+            relic.Rarity is not (EffectRelicRarity.Common or EffectRelicRarity.Uncommon or EffectRelicRarity.Rare) ||
+            string.IsNullOrWhiteSpace(relic.SourceModId) && string.Equals(relic.SourceAssembly, "sts2", StringComparison.OrdinalIgnoreCase);
+        if (effects?.SharedRelicPoolSource?.All(native) == false || effects?.CharacterRelicPoolSource?.All(native) == false)
+            return false;
+        return effects?.HasExactRelicBagSourcePools == true ||
+            authority.IsVanilla && authority.SupportEvidence is { LoadedModsInspected: true, LoadedOtherMods.IsDefault: false, LoadedOtherMods.IsEmpty: true };
+    }
+
     internal static OpeningTransformationContinuation Initial(NeowEffectAuthoritySnapshot? authority) =>
         FromDeck(0, authority is { HasExactDeck: true } ? authority.OrderedDeck : null);
 

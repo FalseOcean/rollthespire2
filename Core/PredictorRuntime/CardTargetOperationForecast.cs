@@ -49,7 +49,12 @@ internal static class CardTargetOperationForecast
             var groups = ImmutableArray.CreateBuilder<OperationOutcomeChoices>();
             var extras = new Dictionary<string, OperationOutcomeSource>();
             var faults = ImmutableArray.CreateBuilder<OperationForecastFault>();
-            bool representativeFillers = FillerTargetsAreIndependent(snapshot, source, candidates);
+            // These two events finish after transforming the selected cards.
+            // Their preparation (gold loss/curse) already happened before this
+            // selector and earlier filler targets do not change the hovered draw.
+            bool representativeFillers = TransformSelectionForecast.DirectAstrolabeRelicId(snapshot) != null ||
+                snapshot.Scene is PredictorOperationEventScene { Event.Entry: "MORPHIC_GROVE", Branch: "GROUP" } or
+                    PredictorOperationEventScene { Event.Entry: "TRIAL", Branch: "NONDESCRIPT_INNOCENT" };
             int examined = 0;
             for (int slot = 0; slot < required; slot++)
             {
@@ -107,31 +112,6 @@ internal static class CardTargetOperationForecast
                     if (!prefix.Contains(id))
                         foreach (var result in Targets(hoveredSlot, prefix.Add(id))) yield return result;
             }
-        }
-
-        private bool FillerTargetsAreIndependent(PredictorOperationSnapshot snapshot, ModelKey source,
-            ImmutableArray<long> candidates)
-        {
-            if (source.Entry != "ASTROLABE" || !snapshot.Context.Modifiers.IsEmpty ||
-                snapshot.Context.Operation is not { } operation || operation.OpaqueModels.IsDefault) return false;
-            // A direct obtain ends at its ordinary parent. A suspended composite
-            // parent could resume Whetstone or another deck-dependent effect, whose
-            // results and extra panels still require the full ordered paths.
-            bool direct = snapshot.Scene is PredictorOperationShopScene { PendingRelic: not null } or
-                PredictorOperationObtainScene { Destination: PredictorObtainReturn.Ancient, Parent: PredictorOperationAncientScene } or
-                PredictorOperationObtainScene { Destination: PredictorObtainReturn.Reward, Parent: PredictorOperationRewardsScene };
-            if (!direct || operation.IgnoresBehavior(snapshot.Context.Character) || candidates.Any(id =>
-                operation.IgnoresBehavior(snapshot.State.Card(id).Key) || snapshot.State.Card(id).Enchantment is { } enchantment &&
-                    operation.IgnoresBehavior(enchantment))) return false;
-            if (snapshot.State.Relics.Any(relic => !relic.Melted && (operation.IgnoresBehavior(relic.Key) || relic.Key.Entry is
-                "MOLTEN_EGG" or "TOXIC_EGG" or "FROZEN_EGG" or "FRESNEL_LENS" or "BING_BONG" or
-                "LUCKY_FYSH" or "DARKSTONE_PERIAPT" or "BOOK_OF_FIVE_RINGS"))) return false;
-            // Native Astrolabe and the detached Transform each draw once per target;
-            // NextInt uses one NextDouble regardless of pool size. With no add-card
-            // listeners or resumed parent, fillers cannot change the hovered card at
-            // a given ordinal, even across character/colorless pools. Use one legal
-            // complete tuple per slot through the existing operation authority.
-            return true;
         }
 
         private OperationForecast EventTargets(PredictorOperationSnapshot snapshot,

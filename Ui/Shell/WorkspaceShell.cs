@@ -310,7 +310,13 @@ internal sealed partial class WorkspaceShell : Control
         if (_persistence is { } store && !store.Runtime.IsPolling) store.Tick(delta);
         FitCanvas();
         _localePoll -= delta;
-        if (_localePoll <= 0) { _localePoll = 0.25; RefreshLanguage(); if (_workspace == Workspace.Settings) RefreshSettings(); }
+        if (_localePoll <= 0)
+        {
+            _localePoll = 0.25; RefreshLanguage();
+            if (_workspace == Workspace.Settings) RefreshSettings();
+            if (_liveRun is not null && _workspace == Workspace.Analysis && IsVisibleInTree())
+                _predictor?.SyncLiveRoute(_liveRun);
+        }
         TickPagePreparation();
     }
 
@@ -387,6 +393,7 @@ internal sealed partial class WorkspaceShell : Control
                 if (!activate) SelectTask(priorPage);
             }
             else if (activate) SelectTask(Workspace.Analysis);
+            _predictor?.SyncLiveRoute(_liveRun);
         }
         catch (Exception ex)
         {

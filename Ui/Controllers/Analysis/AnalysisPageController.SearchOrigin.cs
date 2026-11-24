@@ -59,16 +59,20 @@ internal sealed partial class AnalysisPageController
     private void RefreshResultOrigin()
     {
         var provenance = _resultOrigin;
+        Core.Identity.ModelKey[] pickups = [];
         if (provenance is not null)
         {
             try
             {
                 var context = CaptureSeedLibraryContext();
                 provenance = provenance.ForContext(_page.LastFacts!.CanonicalSeed, context);
+                if (provenance.AppliesToCurrentContext &&
+                    context.Players.FirstOrDefault(player => player.Slot == context.SelectedSlot) is { } owner)
+                    pickups = ExplicitOpeningRelicFacts.DeclaredCapsuleContents(owner.OpeningPremise);
             }
             catch (InvalidOperationException) { provenance = provenance with { AppliesToCurrentContext = false }; }
         }
-        _page.SetSearchSource(provenance, _searchOpeningUnavailable);
+        _page.SetSearchSource(provenance, _searchOpeningUnavailable, pickups);
     }
 
     internal void OpenSavedSearchResult(PersistedSearchResult result)

@@ -79,16 +79,20 @@ internal sealed record WorkbenchSearchDraft(ModelKey Character, int Ascension, S
     };
 
     internal WorkbenchSearchDraft BindPresetIntent(ModRuntimeSnapshot runtime,
-        Func<int, MegaCrit.Sts2.Core.Unlocks.SerializableUnlockState> readCurrentUnlocks)
+        Func<int, (MegaCrit.Sts2.Core.Unlocks.SerializableUnlockState Unlocks, string Source)> readCurrentUnlocks)
     {
         var intent = ToPresetIntent();
         return intent with
         {
             Version = intent.Players.Count > 0 ? 4 : 3,
             GameVersion = runtime.Detection.NormalizedVersion, Profile = runtime.Profile.ProfileId,
-            Players = intent.Players.Select(p => p with { Unlocks = p.UnlockSource == "AssumedFullyUnlocked"
-                ? MegaCrit.Sts2.Core.Unlocks.UnlockState.all.ToSerializable()
-                : LobbyUnlockReadout.Copy(readCurrentUnlocks(p.Slot)) }).ToArray()
+            Players = intent.Players.Select(p =>
+            {
+                var (unlocks, source) = p.UnlockSource == "AssumedFullyUnlocked"
+                    ? (MegaCrit.Sts2.Core.Unlocks.UnlockState.all.ToSerializable(), p.UnlockSource)
+                    : readCurrentUnlocks(p.Slot);
+                return p with { Unlocks = LobbyUnlockReadout.Copy(unlocks), UnlockSource = source };
+            }).ToArray()
         };
     }
 

@@ -1,6 +1,7 @@
 #version 450
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_float64 : require
+/*__SCOPED_COUNT__*/
 #define COUNTER_COUNT /*__COUNTERS__*/
 layout(local_size_x = 64) in;
 layout(set=0,binding=0,std430) readonly restrict buffer Batch { uint v[]; } batch;
@@ -15,6 +16,29 @@ layout(set=0,binding=6,std430) readonly restrict buffer Prefix { uint v[]; } pre
 uint prefix_hash_cache_value(uint index) { return prefix_table.v[index]; }
 /*__PREFIX__*/
 
+#ifdef SCOPED_COUNT
+bool matches(uint64_t root) {
+    uint missing = plan.v[0], remaining = plan.v[1], cursor = 3u;
+    for (uint stream = 0u; stream < plan.v[2]; stream++) {
+        rng_initialize(root + make_u64(plan.v[cursor], plan.v[cursor + 1u]));
+        uint blocks = plan.v[cursor + 2u];
+        cursor += 3u;
+        for (uint block = 0u; block < blocks; block++) {
+            uint start = plan.v[cursor], size = plan.v[cursor + 1u];
+            uint draws = plan.v[cursor + 2u], counted = plan.v[cursor + 3u];
+            cursor += 4u;
+            for (uint draw = 0u; draw < draws; draw++) {
+                if (missing > remaining) return false;
+                uint index = next_int(size);
+                missing -= counted * pool.v[start + index];
+                remaining -= counted;
+                if (missing == 0u) return true;
+            }
+        }
+    }
+    return false;
+}
+#else
 bool matches(uint64_t root) {
     uint draws = plan.v[2];
     if (draws == 0u) return false;
@@ -43,6 +67,8 @@ bool matches(uint64_t root) {
     }
     return missing == 0u && rare <= 0;
 }
+
+#endif
 
 void main() {
     uint i = gl_GlobalInvocationID.x;

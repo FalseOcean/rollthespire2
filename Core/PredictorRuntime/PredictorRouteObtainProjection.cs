@@ -7,7 +7,7 @@ namespace RolltheSpire2.Core.PredictorRuntime;
 internal sealed partial class PredictorRun
 {
     private sealed record LiveObtainDeckEffect(PredictorDeckProjectionScope Scope,
-        PredictorDeckUncertainFact Facts, int Count, bool Niche = false, bool AddsCards = false);
+        PredictorDeckUncertainFact Facts, int Count, bool UsesRng = false, bool AddsCards = false);
 
     // These existing handlers have only card-target effects. Sources with
     // independent health/death, money choices or stored-card Rewards draws
@@ -21,9 +21,9 @@ internal sealed partial class PredictorRun
         "PUNCH_DAGGER" => new(PredictorDeckProjectionScope.EnchantableAttack, PredictorDeckUncertainFact.Enchantment | PredictorDeckUncertainFact.Other, 1),
         "PAELS_GROWTH" => new(PredictorDeckProjectionScope.Enchantable, PredictorDeckUncertainFact.Enchantment | PredictorDeckUncertainFact.Other, 1),
         "KIFUDA" => new(PredictorDeckProjectionScope.Enchantable, PredictorDeckUncertainFact.Enchantment | PredictorDeckUncertainFact.Other, 3),
-        "ROYAL_STAMP" => new(PredictorDeckProjectionScope.Enchantable, PredictorDeckUncertainFact.Enchantment | PredictorDeckUncertainFact.Other, 1, Niche: true),
-        "ASTROLABE" => new(PredictorDeckProjectionScope.Transformable, PredictorDeckUncertainFact.All, 3, Niche: true, AddsCards: true),
-        "NEW_LEAF" => new(PredictorDeckProjectionScope.Transformable, PredictorDeckUncertainFact.All, 1, Niche: true, AddsCards: true),
+        "ROYAL_STAMP" => new(PredictorDeckProjectionScope.Enchantable, PredictorDeckUncertainFact.Enchantment | PredictorDeckUncertainFact.Other, 1, UsesRng: true),
+        "ASTROLABE" => new(PredictorDeckProjectionScope.Transformable, PredictorDeckUncertainFact.All, 3, UsesRng: true, AddsCards: true),
+        "NEW_LEAF" => new(PredictorDeckProjectionScope.Transformable, PredictorDeckUncertainFact.All, 1, UsesRng: true, AddsCards: true),
         "PRECISE_SCISSORS" => new(PredictorDeckProjectionScope.Removable, PredictorDeckUncertainFact.Membership, 1),
         "BIIIG_HUG" => new(PredictorDeckProjectionScope.Removable, PredictorDeckUncertainFact.Membership, 4),
         "EMPTY_CAGE" => new(PredictorDeckProjectionScope.Removable, PredictorDeckUncertainFact.Membership, 2),
@@ -47,8 +47,8 @@ internal sealed partial class PredictorRun
 
     private PredictorPlannedObtainChild? LiveObtainTarget(ModelKey source, LiveObtainDeckEffect effect, PredictorOptionalObtainAddress address)
     {
-        if (_preview.Partial == null || effect.Niche && source.Entry != "ROYAL_STAMP" &&
-            !_preview.Partial.StreamKnown(PredictorStream.Niche)) return null;
+        if (_preview.Partial == null || effect.UsesRng && source.Entry != "ROYAL_STAMP" &&
+            !_preview.Partial.StreamKnown(Context.RelicTransformStream)) return null;
         var projection = _preview.Partial.Deck.Project(effect.Scope);
         int maximum = projection.KnownCount is { } count ? (int)Math.Min(count, effect.Count) : effect.Count;
         if (source.Entry == "ROYAL_STAMP" && projection.OrderedCandidatesKnown)
@@ -103,7 +103,7 @@ internal sealed partial class PredictorRun
         var ids = input.DeckCards.Select(target => target.InstanceId).ToImmutableArray();
         if (source.Entry == "NEW_LEAF")
         {
-            var transformed = PredictorCardChanges.TransformBatch(Context, Working, ids, PredictorStream.Niche);
+            var transformed = PredictorCardChanges.TransformBatch(Context, Working, ids, Context.RelicTransformStream);
             Working = transformed.State;
             Accept(new("NewLeafTransform", ids[0], transformed.Changes.Select(change => change.ReplacementId).ToImmutableArray(), null, null)
                 { Transformations = transformed.Changes });
@@ -173,14 +173,8 @@ internal sealed partial class PredictorRun
                         (dependency.DeckFacts & (PredictorDeckUncertainFact.Membership | PredictorDeckUncertainFact.Definition)) != 0)
                         .SelectMany(dependency => dependency.PossibleCards.IsDefault ? [] : dependency.PossibleCards))
                     .Where(card => card.Removable && !definitions[card.Key].IsQuest).DistinctBy(card => card.Key).ToArray();
-                var replacements = originals.SelectMany(original =>
-                {
-                    var definition = definitions[original.Key];
-                    return catalog.TransformationPools.Single(pool => pool.Key == definition.TransformationPool).Cards
-                        .Where(key => key != original.Key && (definition.Rarity is "Curse" or "Status" ||
-                            definitions[key].Rarity is "Common" or "Uncommon" or "Rare"))
-                        .Select(key => definitions[key].Prototype);
-                });
+                var replacements = originals.SelectMany(original => PredictorCardChanges
+                    .ReplacementPool(catalog, definitions, original.Key).Select(key => definitions[key].Prototype));
                 possibleCards = possibleCards.AddRange(replacements).Distinct().ToImmutableArray();
             }
             AddDependency(_dependencies, new(cause, possibleCards, MayChangeExistingCards: true)
@@ -188,14 +182,15 @@ internal sealed partial class PredictorRun
                 DeckFacts = mutationFacts, AffectedCardTypes = types,
                 ChangedCardMembershipEntries = (effect.Facts & PredictorDeckUncertainFact.Membership) == 0 ? [] : default
             });
-            if (effect.Niche)
+            if (effect.UsesRng)
             {
-                var rngCause = cause with { AffectedDomains = PredictorCombatDomain.NicheRng };
+                var stream = source.Entry == "ROYAL_STAMP" ? PredictorStream.Niche : _context.RelicTransformStream;
+                var rngCause = cause with { AffectedDomains = StreamKnowledgeDomain(stream) };
                 AddDependency(_dependencies, new(rngCause));
             }
             if (effect.AddsCards && count != 0)
             {
-                bool copies = PredictorSettlementEffects.Has(state, "BING_BONG") || _context.HasRunModifier("HOARDER");
+                bool copies = PredictorSettlementEffects.Has(state, "BING_BONG");
                 if (PredictorSettlementEffects.Has(state, "LUCKY_FYSH"))
                 {
                     if (count is { } known && !copies)

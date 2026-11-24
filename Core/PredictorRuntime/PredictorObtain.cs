@@ -1171,16 +1171,12 @@ internal sealed partial class PredictorRun
         }
         if (_obtainDeckOperation == PredictorObtainDeckOperation.Astrolabe)
         {
-            var changes = ImmutableArray.CreateBuilder<PredictorTransformation>();
-            foreach (long id in ids)
-            {
-                var changed = PredictorCardChanges.TransformBatch(Context, Working, [id], Context.RelicTransformStream,
-                    upgradeReplacementBeforeAdd: true);
-                Working = changed.State;
-                changes.AddRange(changed.Changes);
-            }
+            var stream = Context.RelicTransformStream;
+            var rng = Working.Streams.Single(state => state.Stream == stream).Restore();
+            var changed = PredictorCardChanges.TransformInOrder(Context, Working, ids, rng, default, stream, upgradeBeforeAdd: true);
+            Working = changed.State;
             Accept(new("AstrolabeTransform", _obtainDeckPending!.SourceId, ids, null, null)
-            { Transformations = changes.ToImmutable() });
+            { Transformations = changed.Changes });
             return;
         }
         if (_obtainDeckOperation == PredictorObtainDeckOperation.PaelsTooth)

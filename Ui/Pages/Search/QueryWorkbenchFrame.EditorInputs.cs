@@ -155,6 +155,11 @@ internal sealed partial class QueryWorkbenchFrame
         // against the editors' last successful binding, not that observation.
         if (_boundEditorFreshness != _editorInputs.Freshness)
         {
+            if (_multiplayer && _readLobby is null && _partyUnlockSources[0] == "CapturedLocalProfile")
+            {
+                (_lobbyUnlocks[0], _partyUnlockSources[0]) = ManualSeatUnlocks(0);
+                UpdateSeatReadLabels();
+            }
             InvalidateEnvironmentProbabilityPreview();
             RefreshEditorContexts();
         }

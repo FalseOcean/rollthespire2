@@ -76,10 +76,11 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
     private readonly bool _smallOutput;
     private readonly bool _terminalPair;
     private readonly bool _pairMask;
+    private readonly bool _rootOnlyPair;
     private readonly NeowStaticDrawGateCompiler.Gate? _directFirstDrawGate;
     private readonly bool _densePrefixTable;
     private bool HasSpecializedDense => _optimizations.LeafyLocalPrefix || _densePrefixTable;
-    private int PairScratchBytes => _terminalPair ? sizeof(uint) : NeowFamilyGpuPlan.PairCapacity * 48;
+    private int PairScratchBytes => _terminalPair ? sizeof(uint) : NeowFamilyGpuPlan.PairCapacity * (_rootOnlyPair ? 12 : 48);
     private readonly NeowFamilyGpuExecutor? _sharedDenseScratch;
     private readonly long _ordinalWorkspaceBytes;
     private Rid _readbackBank;
@@ -193,6 +194,7 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
         bool ordinaryPair = ordinaryScope && !_privateInput && modernLocalCapsule is null && bonesHiddenUpgrades is null;
         _terminalPair = plan.UseTerminalPair && ordinaryPair;
         _pairMask = plan.UsePairMask && ordinaryPair;
+        _rootOnlyPair = ordinaryPair && plan.UsesStagedDense && plan.UsesIndependentBonesOrder(2);
         if (ordinaryPair && plan.DirectFirstDrawRequested && plan.TryCompileTerminalCurseGate(out var terminal))
             _directFirstDrawGate = terminal;
         _densePrefixTable = _directFirstDrawGate is not null ||
@@ -242,11 +244,11 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
     private Rid Add(Rid rid) { _owned.Add(rid); return rid; }
     private bool SamePlanRole(NeowFamilyGpuExecutor other) => _privateOutput == other._privateOutput &&
         _densePrefixTable == other._densePrefixTable && _optimizations == other._optimizations && _terminalPair == other._terminalPair && _pairMask == other._pairMask &&
-        UsesLeafyLazy == other.UsesLeafyLazy &&
+        _rootOnlyPair == other._rootOnlyPair && UsesLeafyLazy == other.UsesLeafyLazy &&
         _smallOutput == other._smallOutput && _partySource == other._partySource && _plan.PartyDirectDraw == other._plan.PartyDirectDraw &&
         _plan.NumericalVariant == other._plan.NumericalVariant && _plan.HasAuthoredUpgrades == other._plan.HasAuthoredUpgrades &&
         _plan.CapsuleNicheMetaOffset == other._plan.CapsuleNicheMetaOffset &&
-        _plan.ModernTransformGate == other._plan.ModernTransformGate &&
+        _plan.ReuseBonesOrder == other._plan.ReuseBonesOrder && _plan.ModernTransformGate == other._plan.ModernTransformGate &&
         _plan.DirectFirstDrawRequested == other._plan.DirectFirstDrawRequested && _plan.BonesDrawUnobserved == other._plan.BonesDrawUnobserved &&
         _plan.EventFirstDraw == other._plan.EventFirstDraw &&
         _plan.EntryIdentityMode == other._plan.EntryIdentityMode && _plan.EntryIdentityTarget == other._plan.EntryIdentityTarget &&
@@ -280,6 +282,8 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
             capsuleRarityGate: _plan.Meta[NeowCapsuleRarityGate.GpuMetadataIndex] != 0);
         if (stage == 1 && _terminalPair)
             source = source.Replace("#define N_TERMINAL_PAIR 0", "#define N_TERMINAL_PAIR 1", StringComparison.Ordinal);
+        if (stage is 1 or 2 && _rootOnlyPair)
+            source = source.Replace("#define N_PAIR_ROOT_ONLY 0", "#define N_PAIR_ROOT_ONLY 1", StringComparison.Ordinal);
         if (stage == 1 && _pairMask)
             source = source.Replace("#define N_PAIR_MASK 0", "#define N_PAIR_MASK 1", StringComparison.Ordinal);
         if (stage is 2 or 3 && _modernLocalCapsule is { } local)
@@ -292,6 +296,11 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
                 StringComparison.Ordinal);
         if (stage == 2 && UsesLocalSources(stage) && _plan.UseStagedLeafyKaleidoscope)
             source = source.Replace("#define N_LEAFY_KALEIDOSCOPE_TERMINAL 0", "#define N_LEAFY_KALEIDOSCOPE_TERMINAL 1", StringComparison.Ordinal);
+        if (_modernLocalCapsule is null && UsesLocalSources(stage) && _plan.UsesIndependentBonesOrder(stage))
+        {
+            source = source.Replace("/*__RT2_N_INDEPENDENT_BONES_ORDER__*/",
+                NeowBonesOrderReuse.TerminalShader(_plan, stage), StringComparison.Ordinal);
+        }
         source = ApplyOptimizations(source, stage);
         if (stage == 3 && _partySource is null && _composite is null && _bonesKMode == 0 && _plan.PartyDirectDraw is { } direct)
             source = NeowPartyDirectDraw.Apply(source, [direct]);
@@ -358,6 +367,7 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
                         UsesLocalSources(stage) ? _plan.LocalSourceRevision(stage) : "";
                     if (stage == 2 && UsesLocalSources(stage) && _plan.UseStagedLeafyKaleidoscope)
                         localRevision += NeowFamilyGpuPlan.StagedLeafyKaleidoscopeRevision;
+                    if (stage == 1 && _rootOnlyPair) localRevision += ".IndependentBonesOrder.RootCheckpoint.v2";
                     if (stage == 1 && _pairMask) localRevision += NeowFamilyGpuPlan.PairMaskRevision;
                     if (_optimizations != default || localRevision.Length != 0) RolltheSpire2.Bootstrap.RuntimeLog.TryBackgroundInfo($"nOptimizationModule=true;stage={stage};revision={OptimizationRevisionFor(false)}{localRevision};numeric={_plan.NumericalVariant};privateInput={_privateInput};privateOutput={_privateOutput};dispatches={StagedDispatchCount}");
                     // The donor outlives this Dense-only borrower. Modules are

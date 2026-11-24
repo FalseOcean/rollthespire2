@@ -19,6 +19,7 @@ internal sealed partial class VerticalMapView : Control
     private Color _backgroundColor = PaperColor;
     private MapPointType? _pointTypeHighlight;
     private MapPosition? _currentPosition;
+    private Persistence.SeenAct? _walked;
 
     public VerticalMapView()
     {
@@ -31,10 +32,17 @@ internal sealed partial class VerticalMapView : Control
     }
     public void Bind(MapPrediction map, Texture2D?[] bosses, Texture2D? ancient, IUiTextProvider text)
     {
+        _walked = null;
         CancelStroke();
         _highlight = Array.Empty<MapPosition>(); _stroke.Clear(); _resolvedRooms.Clear();
         _currentPosition = null; _previewRooms.Clear();
         _map = map; _bossIcons = bosses; _ancientIcon = ancient; _text = text;
+        DrawMap();
+    }
+    internal void SetWalkedRoute(Persistence.SeenAct? seen)
+    {
+        if (ReferenceEquals(_walked, seen)) return;
+        _walked = seen;
         DrawMap();
     }
     public void SetBackgroundColor(Color color)
@@ -84,19 +92,26 @@ internal sealed partial class VerticalMapView : Control
                 edges.AddChild(new Line2D { Points = new[] { a + d * edgeInset, b - d * edgeInset }, Width = active ? 3.5f : 1.25f,
                     DefaultColor = active ? accent : new Color("756b5c", selected.Count > 0 ? .35f : 1f), Antialiased = true });
             }
+        var walked = _walked?.Walked ?? [];
+        var walkedSet = walked.ToHashSet();
+        foreach (var (from, to) in walked.Zip(walked.Skip(1)))
+        {
+            Vector2 a = At(from), b = At(to), d = (b - a).Normalized();
+            edges.AddChild(new Line2D { Points = [a + d * edgeInset, b - d * edgeInset], Width = 4,
+                DefaultColor = new Color("315b98"), Antialiased = true });
+        }
         int bossIndex = 0;
         foreach (var p in _map.Points.OrderBy(p => p.Position.Row).ThenBy(p => p.Position.Column))
         {
             Texture2D? icon;
             bool special = p.Type is MapPointType.Boss or MapPointType.Ancient;
             string label = _text.Get("ui1.map.type." + p.Type);
-            bool resolved = p.Type == MapPointType.Unknown && _resolvedRooms.ContainsKey(p.Position);
+            var actualRoom = _walked?.Rooms.FirstOrDefault(r => r.Position == p.Position);
+            bool resolved = p.Type == MapPointType.Unknown && (actualRoom is not null || _resolvedRooms.ContainsKey(p.Position));
             if (resolved)
             {
-                var category = _resolvedRooms[p.Position];
-                string path = MegaCrit.Sts2.Core.Helpers.ImageHelper.GetRoomIconPath(GamePointType.Unknown,
-                    Enum.Parse<MegaCrit.Sts2.Core.Rooms.RoomType>(category.ToString()), null)!;
-                icon = ResourceLoader.Load<Texture2D>(path);
+                var category = actualRoom?.Type ?? _resolvedRooms[p.Position];
+                icon = NativeMapRoomIcons.ResolveHistoryIcon(GamePointType.Unknown, category);
                 label = string.Format(_text.Get("ui1.map.unknown.tooltip"), _text.Get(category == MegaCrit.Sts2.Core.Rooms.RoomType.Elite ? "ui1.map.type.Elite" : "ui1.map.room." + category));
                 if (_previewRooms.Contains(p.Position)) label += "\n" + _text.Get("predictor.runtime.unknown_preview");
             }
@@ -116,7 +131,7 @@ internal sealed partial class VerticalMapView : Control
                 var ring = Enumerable.Range(0, 33).Select(i => At(p.Position) + Vector2.FromAngle(i * Mathf.Tau / 32) * side * .47f).ToArray();
                 edges.AddChild(new Line2D { Points = ring, Width = 1.25f, DefaultColor = new Color("ead39b"), Antialiased = true });
             }
-            if (_currentPosition == p.Position)
+            if (_currentPosition == p.Position || walked.Length > 0 && walked[^1] == p.Position)
             {
                 var ring = Enumerable.Range(0, 33).Select(i => At(p.Position) + Vector2.FromAngle(i * Mathf.Tau / 32) * side * .52f).ToArray();
                 edges.AddChild(new Line2D { Points = ring, Width = 3, DefaultColor = new Color("9b551b"), Antialiased = true });
@@ -126,7 +141,7 @@ internal sealed partial class VerticalMapView : Control
                 StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered, Size = Vector2.One * iconSide,
                 Position = At(p.Position) - Vector2.One * iconSide / 2, MouseFilter = MouseFilterEnum.Pass,
                 TooltipText = label + $" · {p.Position.Row}" };
-            if (selected.Count > 0 && !selected.Contains(p.Position)) texture.Modulate = new Color(1, 1, 1, .38f);
+            if (selected.Count > 0 && !selected.Contains(p.Position) && !walkedSet.Contains(p.Position)) texture.Modulate = new Color(1, 1, 1, .38f);
             if (resolved) texture.Name = $"ResolvedUnknown_{p.Position.Column}_{p.Position.Row}";
             if (!special && !resolved) texture.Material = _material;
             AddChild(texture);

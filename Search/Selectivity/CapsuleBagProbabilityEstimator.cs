@@ -95,6 +95,7 @@ internal static class CapsuleBagProbabilityEstimator
                 };
         }
 
+        var named = ExplicitOpeningRelicFacts.DeclaredCapsuleContents(plan.CompiledSearch.NormalizedQuery).ToHashSet();
         int totalDraws = groupsBySource.Values.Sum(group => group.DrawCount);
         if (totalDraws is < 0 or > 3)
         {
@@ -133,6 +134,7 @@ internal static class CapsuleBagProbabilityEstimator
         if (capsuleFilter.RequireWarPaint) requiredIdentities.Add(BaseGameModelKeys.OrdinaryRelics.WarPaint);
         if (requiredIdentities.Count > totalDraws)
         { detail = "CapsuleRequiredIdentitiesExceedDrawCount"; return true; }
+        distinguished.UnionWith(named);
         distinguished.IntersectWith(lanes.SelectMany(l => l));
 
         var laneByKey = new Dictionary<ModelKey, int>(ModelKeyComparer.Instance);
@@ -155,10 +157,10 @@ internal static class CapsuleBagProbabilityEstimator
                 {
                     ModelKey[] bans = capsuleFilter.CapsuleContainedRelics.Ban.Concat(extraBan).Distinct().ToArray();
                     var explicitRelics = includeExplicitRelicSequence ? capsuleFilter.RelicSequenceConditions : [];
-                    double all = SolveCompressedAssignmentBagMass(lanes, explicitRelics, positions, assignment,
+                    double all = SolveCompressedAssignmentBagMass(lanes, explicitRelics, positions, assignment, named,
                         distinguished, out solveIssue, bans);
                     if (double.IsNaN(all) || all <= 0 || capsuleFilter.CapsuleContainedRelics.Any.Count == 0) return all;
-                    double none = SolveCompressedAssignmentBagMass(lanes, explicitRelics, positions, assignment,
+                    double none = SolveCompressedAssignmentBagMass(lanes, explicitRelics, positions, assignment, named,
                         distinguished, out solveIssue, bans.Concat(capsuleFilter.CapsuleContainedRelics.Any).Distinct().ToArray());
                     return double.IsNaN(none) ? none : Math.Max(0, all - none);
                 }
@@ -245,7 +247,7 @@ internal static class CapsuleBagProbabilityEstimator
         IReadOnlyList<RelicSequenceSearchCondition> explicitRelicConditions,
         IReadOnlyList<CapsuleDrawPosition?> positions,
         IReadOnlyList<ModelKey?> assignment,
-        IReadOnlySet<ModelKey> distinguished,
+        IReadOnlySet<ModelKey> named, IReadOnlySet<ModelKey> distinguished,
         out string issue,
         IReadOnlyCollection<ModelKey>? globalBans = null)
     {
@@ -257,9 +259,13 @@ internal static class CapsuleBagProbabilityEstimator
         for (int lane = 0; lane < 3; lane++)
         {
             var constraints = new List<FiniteSequenceProbabilitySolver.Constraint>();
-            constraints.AddRange(explicitRelicConditions
-                .Where(condition => LaneIndex(condition.Lane) == lane)
-                .Select(condition => new FiniteSequenceProbabilitySolver.Constraint(condition.RangeMode, condition.RangeValue, condition.Keys)));
+            var laneRows = explicitRelicConditions.Where(condition => LaneIndex(condition.Lane) == lane).ToArray();
+            var rawConditions = ExplicitOpeningRelicFacts.InitialQueueConditions(laneRows, lanes[lane].Length,
+                Enumerable.Range(0, positions.Count).Where(i => positions[i]?.Lane == lane &&
+                    assignment[i] is { } key && named.Contains(key))
+                    .Select(i => (positions[i]!.Value.Ordinal, assignment[i]!.Value)));
+            if (rawConditions is null) return 0;
+            constraints.AddRange(rawConditions.Select(condition => new FiniteSequenceProbabilitySolver.Constraint(condition.RangeMode, condition.RangeValue, condition.Keys)));
 
             ModelKey[] distinguishedLane = distinguished.Where(key => lanes[lane].Contains(key, ModelKeyComparer.Instance)).ToArray();
             for (int draw = 0; draw < positions.Count; draw++)

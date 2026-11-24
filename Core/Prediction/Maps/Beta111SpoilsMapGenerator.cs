@@ -8,16 +8,17 @@ namespace RolltheSpire2.Core.Prediction.Maps;
 internal static partial class Beta111StandardMapGenerator
 {
     internal static MapPrediction GenerateSpoilsMap(string seed, ModelKey act, int ascension,
-        CancellationToken token = default, MapPointTypeCounts? overrideCounts = null, bool multiplayer = false)
+        CancellationToken token = default, MapPointTypeCounts? overrideCounts = null, bool multiplayer = false,
+        RngSemanticProfileId semantics = RngSemanticProfileId.Modern110)
     {
         if (act != new ModelKey("ACT", "HIVE"))
             throw new ArgumentException("SpoilsMap only generates the second Act map", nameof(act));
         var profile = Beta111Profile.Instance;
         if (!ProfileSeedRules.TryCanonicalizePredictionSeed(profile, seed, out string canonical, out string issue))
             throw new ArgumentException(issue, nameof(seed));
-        var context = new ActContext(ActKind.Hive, 1, IsMultiplayer: multiplayer, HasSwarmingElites: ascension >= 1);
+        var context = new ActContext(ActKind.Hive, 1, IsMultiplayer: multiplayer, HasSwarmingElites: ascension >= 1, RngSemantics: semantics);
         var rng = new ReferenceRng(profile.DeriveNamedStreamSeed(profile.ComputeRootSeed(canonical), "spoils_map"),
-            token, MapReplayMode.PackedSegmentDedup);
+            token, MapReplayMode.PackedSegmentDedup, semantics);
         MapPointTypeCounts counts = overrideCounts ?? GetMapPointTypes(context, rng);
         int mapLength = GetNumberOfRooms(context.Act, multiplayer) + 1;
         int treasureRow = mapLength - 7;
@@ -177,7 +178,7 @@ internal static partial class Beta111StandardMapGenerator
             foreach (MapNode point in candidates)
             {
                 if (queue.Count == 0) break;
-                MapPointType next = GetNextValidPointType(queue, point, mapLength, counts);
+                MapPointType next = GetNextValidPointType(queue, point, mapLength, counts, rng.UsesChildShuffle);
                 if (next != MapPointType.Unassigned) point.PointType = next;
             }
         }

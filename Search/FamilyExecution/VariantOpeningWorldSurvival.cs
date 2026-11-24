@@ -129,9 +129,47 @@ internal sealed record VariantOpeningWorldSurvival(
         if (act.HasEncounterPredicate) { evidence = "W.EncounterQueueProbabilityUnpriced"; return null; }
         double? events = EstimateEvents(act, out string eventEvidence);
         double? bosses = EstimateBosses(plan, act, finalAct, out string bossEvidence);
-        double? other = act.HasAncientPredicate ? null : 1;
-        evidence = eventEvidence + ";" + bossEvidence + (other is null ? ";W.AncientPhysicalProbabilityUnavailable" : "");
-        return Product(Product(events, bosses), other);
+        var ancient = EstimateAncientIdentity(plan, act);
+        evidence = eventEvidence + ";" + bossEvidence + (act.HasAncientIdentityPredicate
+            ? ancient.HasValue ? ";W.CompiledAncientIdentityPoolMixture" : ";W.AncientIdentityMixtureUnavailable" : "");
+        return Product(Product(events, bosses), ancient);
+    }
+
+    // W evaluates identity; the selected A body owns options and Sea Glass.
+    // Mirror AssignSharedAncients: a shuffled shared prefix of uniform length
+    // goes to each act after the first, leaving the remainder for later acts.
+    internal static double? EstimateAncientIdentity(Beta110WorldFastPlan plan, WorldFastActPlan act)
+    {
+        if (!act.HasAncientIdentityPredicate) return 1;
+        int slot = Array.FindIndex(plan.ActSelectionGroups, group => group.Act == act.Act);
+        if (slot < 0 || act.Ancients.Length == 0) return null;
+        bool Accepts(ushort key) => Matches([key], act.AncientIdentityPredicates) &&
+            Matches([key], act.AncientBranchIdentityPredicates);
+        int localHits = act.Ancients.Count(Accepts);
+        int shared = plan.SharedAncients.Length;
+        if (slot == 0 || shared == 0) return localHits / (double)act.Ancients.Length;
+        // Two later identities may compete for the very same shared entry.
+        // The per-act product used by this projection cannot represent that joint.
+        if (plan.Acts.Any(other => other.Act != act.Act && other.Act != plan.ActSelectionGroups[0].Act &&
+                other.HasAncientIdentityPredicate)) return null;
+        double sharedHitRate = plan.SharedAncients.Count(Accepts) / (double)shared;
+        var counts = new double[shared + 1];
+        counts[shared] = 1;
+        for (int step = 0; step < slot; step++)
+        {
+            // For r still available, both the new remainder and the assigned
+            // length have the same marginal, uniform over [0,r].
+            double tail = 0;
+            for (int n = shared; n >= 0; n--)
+            {
+                tail += counts[n] / (n + 1);
+                counts[n] = tail;
+            }
+        }
+        double result = 0;
+        for (int n = 0; n <= shared; n++)
+            result += counts[n] * (localHits + n * sharedHitRate) / (act.Ancients.Length + n);
+        return Math.Clamp(result, 0, 1);
     }
 
     private static double? EstimateEvents(WorldFastActPlan act, out string evidence)

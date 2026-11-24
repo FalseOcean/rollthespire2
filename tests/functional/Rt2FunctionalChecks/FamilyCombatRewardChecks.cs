@@ -77,6 +77,14 @@ internal static class FamilyCombatRewardChecks
         var captured = context.Authority;
         var tress = BaseGameModelKeys.Relics.SilkenTress;
         var bonesKey = BaseGameModelKeys.Relics.NeowsBones;
+        var pearl = BaseGameModelKeys.Relics.CursedPearl;
+        var tablet = BaseGameModelKeys.Relics.HeftyTablet;
+        var additivePair = captured.WithEffectAuthority(captured.EffectAuthority! with { BonesEligibleRelics = [pearl, tablet] });
+        var additive = new NeowEffectProjectionEngine(profile, seed, root, additivePair).Project(bonesKey).BonesOutcome!;
+        Check(additive.OriginalRoutes.Count == 2 && additive.OriginalRoutes.Select(r => r.FinalShadowDeckFingerprint).Distinct().Count() == 2,
+            "Both original orders retain the order of the added curses");
+        Check(additive.OutcomeGroups.Count == 1 && additive.OverallImpact == AcquisitionOrderImpact.ProvenIndependent,
+            "Different insertion order alone does not change the Bones result");
         var withoutCurse = captured.WithEffectAuthority(captured.EffectAuthority! with
         {
             BonesEligibleRelics = [tress, BaseGameModelKeys.Relics.HeftyTablet],
@@ -1145,7 +1153,8 @@ internal static class FamilyCombatRewardChecks
             SearchQuery.Empty with { OpeningRoute = new(large), StructuredOpeningEffects = [new(large,
                 NeowStructuredConditionKind.ExactUnorderedPair, NeowStructuredEffectScope.NestedRelics,
                 NeowStructuredOutputKind.Relic, [anchor])],
-                RelicSequenceConstraints = [new(RelicSequenceKind.Common, SearchSequenceRangeMode.ExactSlot, 1, new([], [anchor], []))] }
+                RelicSequenceConstraints = [new(RelicSequenceKind.Common, SearchSequenceRangeMode.ExactSlot, 1,
+                    new([], [new ModelKey("RELIC", "VAJRA")], []))] }
         };
         foreach (var parent in bases)
         {
@@ -1334,6 +1343,9 @@ internal static class FamilyCombatRewardChecks
         var ordered = fallback with { NeowRoute = new(bones), RequiredBonesAcquisitionOrder = [small, large],
             StructuredNeowEffects = [Row(small, b), Row(large, circlet, circlet) with { AllowDuplicateOutputs = true }],
             RelicSequenceConditions = [new(RelicSequenceKind.Rare, SearchSequenceRangeMode.ExactSlot, 1, new([], [b], []))] };
+        Check(ExhaustedMass(ordered, [small, large], true) == 0,
+            "The only Rare is specified inside the small Capsule and cannot occupy the remaining queue");
+        ordered = ordered with { RelicSequenceConditions = [] };
         Check(ExhaustedMass(ordered, [small, large], true) == 1 &&
             ExhaustedMass(ordered with { RequiredBonesAcquisitionOrder = [large, small] }, [small, large], true) == 0,
             "Two Capsules share their consumed bag and explicit source order, including repeatable Circlet fallback");

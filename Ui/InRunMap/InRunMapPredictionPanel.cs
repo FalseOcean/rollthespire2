@@ -66,6 +66,7 @@ internal sealed partial class InRunMapPredictionPanel : Control
     public override void _Ready()
     {
         _featureEnabled = InRunFeaturePreferences.MapPredictionEnabled;
+        RunManager.Instance.RoomEntered += RememberEnteredRoute;
         _map = _screen.GetNode<Control>("TheMap");
         _ink = new InRunMapRouteInk { Name = "RolltheSpire2_RouteInk", Visible = false };
         _map.AddChild(_ink);
@@ -168,9 +169,27 @@ internal sealed partial class InRunMapPredictionPanel : Control
     }
     private void BindDraft(int act, MapPrediction map, MapPosition? previous, PredictorMapTravelAllowance travel)
     {
-        if (!_drafts.TryGetValue(act, out var draft)) _drafts.Add(act, new(map, previous, travel));
+        if (!_drafts.TryGetValue(act, out var draft))
+        {
+            draft = new(map, previous, travel);
+            _drafts.Add(act, draft);
+            var saved = Persistence.MapRouteNotebook.Local().Read(Persistence.RouteBookKey.ForRun(_run)).NativeDrawn.GetValueOrDefault(act);
+            if (saved is { Length: > 0 }) draft.RestoreDrawnPoints(saved);
+        }
         else if (!InRunMapSnapshot.SameMap(draft.Map, map) || draft.Previous != previous || draft.Travel != travel)
             draft.Rebase(map, previous, travel);
+    }
+
+    private void RememberEnteredRoute()
+    {
+        if (!ReferenceEquals(_run, RunManager.Instance.DebugOnlyGetState()) ||
+            _run.Map is null or MegaCrit.Sts2.Core.Map.NullActMap) return;
+        try
+        {
+            var seen = Persistence.SeenAct.Capture(_run);
+            Persistence.MapRouteNotebook.Local().Edit(Persistence.RouteBookKey.ForRun(_run), b => b.Seen[_run.CurrentActIndex + 1] = seen);
+        }
+        catch (Exception ex) { RuntimeLog.WarnException("mapRouteEntryCaptureFailed", ex); }
     }
 
     private void ShowActual()
@@ -263,6 +282,7 @@ internal sealed partial class InRunMapPredictionPanel : Control
     public override void _ExitTree()
     {
         InRunFeaturePreferences.MapChanged -= ApplyFeaturePreference;
+        RunManager.Instance.RoomEntered -= RememberEnteredRoute;
         _featureRevision++;
         GetWindow().FocusExited -= CancelStroke; DisposeInformation();
         if (_ink != null && IsInstanceValid(_ink)) _ink.QueueFree();

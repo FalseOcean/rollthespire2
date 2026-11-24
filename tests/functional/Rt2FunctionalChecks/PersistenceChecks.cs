@@ -642,7 +642,8 @@ internal static class PersistenceChecks
             Check(SearchPresetCompatibilityResolver.ResolveWorkbench(reopened, modAuthority, new([], true, "fixture")).CanLoad, "Registered mod character resolves by stable identity in the current catalog");
             var current = new[] { new MegaCrit.Sts2.Core.Unlocks.SerializableUnlockState(), new MegaCrit.Sts2.Core.Unlocks.SerializableUnlockState() };
             var slots = new List<int>();
-            var bound = intent.BindPresetIntent(RolltheSpire2.Bootstrap.ModRuntimeSnapshot.NotInitialized, slot => { slots.Add(slot); return current[slot]; });
+            var bound = intent.BindPresetIntent(RolltheSpire2.Bootstrap.ModRuntimeSnapshot.NotInitialized,
+                slot => { slots.Add(slot); return (current[slot], "CurrentContext"); });
             Check(slots.SequenceEqual(new[] { 0, 1 }) && bound.Players.All(p => p.Unlocks is not null) &&
                 !ReferenceEquals(bound.Players[0].Unlocks, current[0]), "Every current-context slot reads and copies its current unlock state");
             Check(QueryHistoryIdentity.Key(draft) == QueryHistoryIdentity.Key(bound), "Rebinding runtime snapshots does not change intent");

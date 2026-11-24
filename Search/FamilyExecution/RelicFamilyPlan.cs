@@ -48,6 +48,7 @@ internal sealed record RelicFamilyPlan(
     int LastRequiredBucket,
     bool AlwaysReject)
 {
+    internal byte[] RemovedCountsByLane { get; init; } = new byte[4];
     public int PredicateCount => Predicates.Length + ShopPredicates.Length;
     internal int LocalStateCapacity => Math.Max(64, Math.Max(TrackedCountsByLane.Max(),
         Predicates.Any(p => p.Lane == 3) || ShopPredicates.Length > 0
@@ -188,6 +189,7 @@ internal static class RelicFamilyPlanCompiler
         var trackedInitialPositions = new List<ushort>();
         var trackedOffsets = new int[LaneCount];
         var trackedCounts = new byte[LaneCount];
+        var removedCounts = new byte[LaneCount];
         for (int lane = 0; lane < LaneCount; lane++)
         {
             trackedOffsets[lane] = trackedInitialPositions.Count;
@@ -196,7 +198,13 @@ internal static class RelicFamilyPlanCompiler
                 : predicates.Where(predicate => predicate.Lane == lane)
                     .SelectMany(predicate => EnumeratePredicateIds(predicate, predicateIds))
                     .Distinct().ToArray();
-            if (trackedIds.Length > MaximumShaderLocalState ||
+            ushort[] removedPositions = lane == 3 || !predicates.Any(p => p.Lane == lane) ? [] :
+                request.Evaluation.DeclaredCapsuleContents.Where(denseByKey.ContainsKey)
+                    .Select(key => denseByKey[key]).Where(lanePositions[lane].ContainsKey)
+                    .Select(id => lanePositions[lane][id]).Distinct().ToArray();
+            if (predicates.Any(p => p.Lane == lane && p.RangeMode == 1 &&
+                p.RangeValue > EffectiveLaneCount(pool, lane) - removedPositions.Length)) alwaysReject = true;
+            if (trackedIds.Length + removedPositions.Length > MaximumShaderLocalState ||
                 (lane == 3 && (positiveDepth[lane] > 0 || exclusionDepth[lane] > 0) &&
                  EffectiveLaneBucketLength(pool, lane) > MaximumShaderLocalState))
             {
@@ -211,7 +219,11 @@ internal static class RelicFamilyPlanCompiler
                 trackedIndexById.Add(id, checked((ushort)index));
                 trackedInitialPositions.Add(lanePositions[lane][id]);
             }
-            trackedCounts[lane] = checked((byte)trackedIds.Length);
+            // Keep deleted ranks at the end, separate from predicate indexes even
+            // when the same identity occurs in both the opening and a queue row.
+            trackedInitialPositions.AddRange(removedPositions);
+            removedCounts[lane] = checked((byte)removedPositions.Length);
+            trackedCounts[lane] = checked((byte)(trackedIds.Length + removedPositions.Length));
             if (lane != 3)
                 foreach (RelicFamilyPredicate predicate in predicates.Where(predicate => predicate.Lane == lane))
                     RewritePredicateIds(predicate, predicateIds, trackedIndexById);
@@ -220,7 +232,7 @@ internal static class RelicFamilyPlanCompiler
         plan = new RelicFamilyPlan(
             pool, predicates.ToArray(), predicateIds.ToArray(), shopPredicates.ToArray(),
             positiveDepth, exclusionDepth, trackedInitialPositions.ToArray(), trackedOffsets, trackedCounts,
-            Math.Max(0, lastRequiredBucket), alwaysReject);
+            Math.Max(0, lastRequiredBucket), alwaysReject) { RemovedCountsByLane = removedCounts };
         return true;
     }
 

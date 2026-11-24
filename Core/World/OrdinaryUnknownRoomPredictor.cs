@@ -19,11 +19,11 @@ internal sealed record UnknownRoomSequence(bool RouteBound, int PriorDraws, IRea
 /// </summary>
 internal static class OrdinaryUnknownRoomPredictor
 {
-    internal static UnknownRoomSequence Baseline(string seed, int priorDraws, int count)
+    internal static UnknownRoomSequence Baseline(string seed, int priorDraws, int count, IReadOnlySet<int>? shopBlockedAt = null)
     {
         if (count is < 0 or > 64) throw new ArgumentOutOfRangeException(nameof(count));
         var replay = new Replay(seed, priorDraws);
-        return new(false, priorDraws, Array.AsReadOnly(Enumerable.Range(0, count).Select(i => replay.Roll(i + 1, null, false)).ToArray()));
+        return new(false, priorDraws, Array.AsReadOnly(Enumerable.Range(0, count).Select(i => replay.Roll(i + 1, null, shopBlockedAt?.Contains(i + 1) == true)).ToArray()));
     }
 
     // Search's standard Act 1 assumption: entered Unknown ordinal, fresh odds,
@@ -53,8 +53,10 @@ internal static class OrdinaryUnknownRoomPredictor
     }
 
     internal static UnknownRoomSequence ForRoute(MapRouteCommitment route, IReadOnlyList<MapRouteCommitment> priorActs)
+        => ForRoute(route, PriorDraws(route, priorActs));
+
+    internal static UnknownRoomSequence ForRoute(MapRouteCommitment route, int priorDraws)
     {
-        int priorDraws = PriorDraws(route, priorActs);
         var replay = new Replay(route.Map.Seed, priorDraws);
         var nodes = route.Map.Points.ToDictionary(p => p.Position);
         var result = new List<UnknownRoomObservation>();

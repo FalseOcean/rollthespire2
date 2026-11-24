@@ -30,9 +30,33 @@ internal sealed partial class QueryWorkbenchFrame
         }
         if (_multiplayer)
         {
-            _configButton = ContextButton(_text.Get("query.context.multiplayer_setup"), ColumnInset, ContextTop + 42, RailContentWidth);
-            _configButton.Name = "PartyConfiguration";
-            _configButton.Pressed += OpenMultiplayerConfig;
+            var count = ContextOptions(ColumnInset, ContextTop + 42, SelectorWidth, horizontalPadding: 5);
+            count.Name = "PartyPlayerCount";
+            count.AddThemeFontSizeOverride("font_size", 15);
+            for (int n = 2; n <= MaximumPreviewPlayers; n++)
+                count.AddItem(_text.Format("query.context.player_count_value", n), n);
+            count.Select(count.GetItemIndex(_playerCount));
+            count.ItemSelected += index =>
+            {
+                int next = count.GetItemId((int)index);
+                if (next == _playerCount) return;
+                UseManualPartyUnlocks();
+                ResizeParty(next);
+                Refresh(_language, _text);
+                GetNode<OptionButton>("PartyPlayerCount").GrabFocus();
+            };
+            var read = ContextButton(_text.Get("query.context.read_lobby"), ColumnInset + SelectorColumnStride,
+                ContextTop + 42, SelectorWidth);
+            read.Name = "PartyReadLobby";
+            read.AddThemeFontSizeOverride("font_size", 16);
+            FitContextButton(read, SelectorWidth, ContextControlHeight, horizontalPadding: 3);
+            read.Pressed += () =>
+            {
+                string receipt = ReadLobbyUnlocks();
+                Refresh(_language, _text);
+                ReceiptText(receipt);
+                GetNode<Button>("PartyReadLobby").GrabFocus();
+            };
             const float seatGap = 4;
             float seatWidth = (RailContentWidth - seatGap * (_playerCount - 1)) / _playerCount;
             for (int i = 0; i < _playerCount; i++)
@@ -99,119 +123,60 @@ internal sealed partial class QueryWorkbenchFrame
         button.AddThemeStyleboxOverride("disabled", (StyleBox)button.GetThemeStylebox("normal").Duplicate());
     }
 
-    private void OpenMultiplayerConfig()
+    private string SeatCaption(int seat) => $"P{seat + 1} · " + _text.Get(_partyUnlockSources[seat] switch
     {
-        foreach (var child in _configOverlay.GetChildren()) { _configOverlay.RemoveChild(child); child.QueueFree(); }
-        _configBlocked.Clear();
-        void Block(Node node)
-        {
-            if (node == _configOverlay) return;
-            if (node is Button button) { _configBlocked[button] = button.Disabled; button.Disabled = true; }
-            foreach (var child in node.GetChildren()) Block(child);
-        }
-        Block(this);
-        var shade = new ColorRect { Color = new Color(0, 0, 0, .65f), MouseFilter = MouseFilterEnum.Stop };
-        _configOverlay.AddChild(shade); shade.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
-        var panel = new Panel { Position = new Vector2(540, 194), Size = new Vector2(520, 568) };
-        panel.AddThemeStyleboxOverride("panel", _p.ContentBox());
-        _configOverlay.AddChild(panel);
-        Label Caption(string text, int size, float x, float y, bool heading = false)
-        { var label = _p.Label(text, size, heading: heading); panel.AddChild(label); label.Position = new Vector2(x, y); return label; }
-        Caption(_text.Get("query.context.multiplayer_dialog.title"), 26, 32, 24, heading: true);
-        Caption(_text.Get("query.context.player_count"), 20, 32, 94);
-        var pickupOrder = Caption(_text.Get("query.context.party_order"), 18, 32, 158);
-        pickupOrder.MouseFilter = MouseFilterEnum.Pass;
-        SearchTooltip.Set(pickupOrder, _text.Get("query.context.party_order_hint"));
-        var count = ContextOptions(0, 0, 208);
-        count.Reparent(panel, false); count.Position = new Vector2(280, 88);
-        for (int n = 2; n <= MaximumPreviewPlayers; n++) count.AddItem(_text.Format("query.context.player_count_value", n), n);
-        count.Select(count.GetItemIndex(_playerCount));
-        var read = _p.Button(_text.Get("query.context.read_unlocks"));
-        SearchTooltip.Set(read, _text.Get("query.context.read_unlocks_hint"));
-        panel.AddChild(read); read.Position = new Vector2(32, 216); read.Size = new Vector2(456, 44);
-        var full = _p.Button(_text.Get("query.context.full_party"));
-        SearchTooltip.Set(full, _text.Get("query.context.full_party_hint"));
-        panel.AddChild(full); full.Position = new Vector2(32, 268); full.Size = new Vector2(456, 44);
-        string UnlockMessage(string message) => message + "\n" + string.Join("\n", Enumerable.Range(0, count.GetSelectedId()).Select(SeatCaption));
-        var readMessage = _p.Label(UnlockMessage(_text.Get("query.context.unlocks_summary")), 16, true);
-        panel.AddChild(readMessage); readMessage.Position = new Vector2(32, 324); readMessage.Size = new Vector2(456, 132);
-        readMessage.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-        count.ItemSelected += _ => readMessage.Text = UnlockMessage(_text.Get("query.context.unlocks_summary"));
-        read.Pressed += () => readMessage.Text = UnlockMessage(ReadLobbyUnlocks());
-        full.Pressed += () => { UseFullyUnlockedParty(); readMessage.Text = UnlockMessage(_text.Get("query.context.full_party_applied")); };
-        var cancel = _p.Button(_text.Get("common.cancel"));
-        panel.AddChild(cancel); cancel.Position = new Vector2(216, 488); cancel.Size = new Vector2(128, 48);
-        cancel.Pressed += () => CloseModal();
-        var confirm = _p.Button(_text.Get("common.apply"), primary: true);
-        panel.AddChild(confirm); confirm.Position = new Vector2(360, 488); confirm.Size = new Vector2(128, 48);
-        confirm.Pressed += () =>
-        {
-            _playerCount = count.GetSelectedId();
-            _seat = Math.Min(_seat, _playerCount - 1);
-            // Removed seats retain their UI-only values for a later increase, but are never displayed or edited.
-            CloseModal(); Refresh(_language, _text); _configButton?.GrabFocus();
-        };
-        Control[] focus = [count, read, full, cancel, confirm];
-        for (int i = 0; i < focus.Length; i++)
-        {
-            focus[i].FocusNext = focus[i].GetPathTo(focus[(i + 1) % focus.Length]);
-            focus[i].FocusPrevious = focus[i].GetPathTo(focus[(i + focus.Length - 1) % focus.Length]);
-        }
-        ModalChanged?.Invoke(true); _configOverlay.Show(); count.GrabFocus();
-    }
-
-    private string SeatCaption(int seat) => $"P{seat + 1} " + (_unlockReadStatus[seat] switch
-    {
-        4 => _language == "zh" ? "全解锁" : "Full unlocks",
-        1 => _text.Get("query.context.unlock_status.read"), 2 => _text.Get("query.context.unlock_status.failed"),
-        3 => _text.Get("query.context.unlock_status.empty"), _ => _text.Get("query.context.unlock_status.unread")
+        "CapturedLocalProfile" => "query.context.local_progress",
+        "AssumedFullyUnlocked" => "query.context.assumed_full",
+        _ => "query.context.lobby_progress"
     });
 
     private string ReadLobbyUnlocks()
     {
-        Array.Clear(_lobbyUnlocks); Array.Fill(_unlockReadStatus, 2);
-        Array.Fill(_partyUnlockSources, "CapturedLobbySlot");
-        _lobbyReadExpired = false;
-        _readLobby = null; _readRoster = "";
-        string result;
         try
         {
-            var lobby = LobbyUnlockReadout.Find(GetTree().Root);
-            if (lobby is null) result = _text.Get("query.context.lobby_not_found");
-            else
+            var lobby = IsInsideTree() ? LobbyUnlockReadout.Find(GetTree().Root) : null;
+            if (lobby is null)
             {
-                _readLobby = lobby; _readRoster = LobbyUnlockReadout.Roster(lobby);
-                int copied = 0;
-                for (int slot = 0; slot < MaximumPreviewPlayers; slot++)
-                {
-                    // P1 follows vanilla slotId 0, never list iteration order or the local-player position.
-                    var players = lobby.Players.Where(player => player.slotId == slot).ToArray();
-                    if (players.Length == 0) { _unlockReadStatus[slot] = 3; continue; }
-                    if (players.Length != 1) continue;
-                    try
-                    {
-                        _lobbyUnlocks[slot] = LobbyUnlockReadout.Copy(players[0].unlockState);
-                        _unlockReadStatus[slot] = 1; copied++;
-                    }
-                    catch (Exception ex)
-                    {
-                        _unlockReadStatus[slot] = 2;
-                        Infrastructure.Diagnostics.RuntimeIssueLedger.Current.Record(ex,
-                            "PartyLobbyUnlockReadFailed", nameof(QueryWorkbenchFrame), "SeatRead", "issues.capture_failed", correlationId: "slot=" + slot);
-                    }
-                }
-                result = _text.Format("query.context.lobby_read_success", copied);
+                UseManualPartyUnlocks();
+                return _text.Get("query.context.lobby_not_found");
             }
+            var players = lobby.Players.OrderBy(p => p.slotId).ToArray();
+            if (players.Length is < 2 or > MaximumPreviewPlayers ||
+                players.Where((p, i) => p.slotId != i).Any())
+            {
+                UseManualPartyUnlocks();
+                return _text.Get("query.context.lobby_slots_unavailable");
+            }
+            var characters = players.Select(p => new ModelKey(BaseGameModelKeys.Categories.Character, p.character.Id.Entry)).ToArray();
+            if (characters.Any(character => !_characters.Contains(character)))
+            {
+                UseManualPartyUnlocks();
+                return _text.Get("query.context.lobby_character_unavailable");
+            }
+            var progress = players.Select(p => ReadSeatUnlocks(p.unlockState)).ToArray();
+            int ascension = lobby.Ascension;
+            string roster = LobbyUnlockReadout.Roster(lobby);
+            for (int slot = 0; slot < players.Length; slot++)
+            {
+                _seatCharacters[slot] = characters[slot];
+                (_lobbyUnlocks[slot], _partyUnlockSources[slot]) = progress[slot];
+            }
+            _readLobby = lobby;
+            _readRoster = roster;
+            ResizeParty(players.Length);
+            _partyAscension = ascension;
+            var assumed = players.Where(p => _partyUnlockSources[p.slotId] == "AssumedFullyUnlocked")
+                .Select(p => $"P{p.slotId + 1}").ToArray();
+            return assumed.Length == 0 ? _text.Format("query.context.lobby_read_success", players.Length)
+                : _text.Format("query.context.lobby_partial", string.Join(", ", assumed));
         }
         catch (Exception ex)
         {
             Infrastructure.Diagnostics.RuntimeIssueLedger.Current.Record(ex,
-                "PartyLobbyUnlockReadFailed", nameof(QueryWorkbenchFrame), "LobbyRead", "issues.capture_failed");
-            result = _text.Get("query.context.lobby_read_failed") + "\n" + ex.Message;
+                "PartyLobbyReadFailed", nameof(QueryWorkbenchFrame), "LobbyRead", "issues.capture_failed");
+            UseManualPartyUnlocks();
+            return _text.Get("query.context.lobby_read_failed");
         }
-        UpdateSeatReadLabels();
-        RefreshEditorContexts();
-        return result;
     }
 
     private void UpdateSeatReadLabels()
@@ -252,7 +217,7 @@ internal sealed partial class QueryWorkbenchFrame
         button.Size = new(width, height);
     }
 
-    private OptionButton ContextOptions(float x, float y, float width)
+    private OptionButton ContextOptions(float x, float y, float width, float horizontalPadding = 8)
     {
         var option = new OptionButton { FitToLongestItem = false, ClipText = true };
         option.AddThemeFontSizeOverride("font_size", 18);
@@ -261,7 +226,7 @@ internal sealed partial class QueryWorkbenchFrame
         {
             if (style == "focus") { option.AddThemeStyleboxOverride(style, _p.FocusRing()); continue; }
             var box = (StyleBoxFlat)donor.GetThemeStylebox(style).Duplicate();
-            box.ContentMarginLeft = box.ContentMarginRight = 8;
+            box.ContentMarginLeft = box.ContentMarginRight = horizontalPadding;
             box.ContentMarginTop = box.ContentMarginBottom = 4;
             option.AddThemeStyleboxOverride(style, box);
         }

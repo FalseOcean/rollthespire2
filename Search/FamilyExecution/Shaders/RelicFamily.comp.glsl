@@ -288,6 +288,17 @@ void process_candidate_with_root(uint logical, uint64_t root) {
                     else if (position == tail) state[index] = selected;
                 }
             }
+            uint removed_count = plan_meta.values[24u + lane];
+            if (removed_count != 0u) {
+                uint first_removed = tracked_count - removed_count;
+                for (uint i = 0u; i < first_removed; ++i) {
+                    uint raw = state[i];
+                    for (uint j = first_removed; j < tracked_count; ++j) {
+                        if (state[j] == raw) { state[i] = 0x7fffffffu; break; }
+                        if (state[j] < raw) state[i]--;
+                    }
+                }
+            }
             if (!evaluate_tracked_lane(lane, state)) return;
         }
 #ifdef RT2_R_CHILD_SHUFFLE

@@ -17,7 +17,7 @@ internal sealed partial class QueryWorkbenchFrame
     {
         try
         {
-            if (_multiplayer) return System.Text.Json.JsonSerializer.Serialize(CapturePartyDraft(forStorage: true));
+            if (_multiplayer) return System.Text.Json.JsonSerializer.Serialize(CapturePartyDraft());
             // Undo compares authored state, including incomplete T declarations.
             // Compiling T here would collapse every missing-source edit into the
             // same failure stamp and allow an old snapshot to overwrite new work.
@@ -62,7 +62,7 @@ internal sealed partial class QueryWorkbenchFrame
         _eventEditor.HasConditions(_multiplayer) || _actInformationEditor.HasConditions(_multiplayer) ||
         !_multiplayer && (_transformationEditor.HasConditions() || HasFishingRodResearchDraft);
 
-    private bool CanChangeConditions => !_persistence.Runtime.Receiving && _presetBlocked.Count == 0 && _configBlocked.Count == 0;
+    private bool CanChangeConditions => !_persistence.Runtime.Receiving && _presetBlocked.Count == 0;
 
     private void BuildConditionActions()
     {

@@ -25,17 +25,26 @@ internal static class ExplicitOpeningRelicFacts
     {
         if (openingRoute is not { IsValid: true } route) return [];
         var rows = structured.Where(row => !row.IsEmpty).ToArray();
-        var keys = EnumerateGuaranteedRouteGrants(openingRoute, routeRelics, rows, legacy)
-            .ToHashSet(ModelKeyComparer.Instance);
-        bool bones = route.RouteRelicKey == BaseGameModelKeys.Relics.NeowsBones;
-        var capsuleSources = keys.Where(IsCapsule).ToHashSet(ModelKeyComparer.Instance);
+        return Stable(EnumerateGuaranteedRouteGrants(openingRoute, routeRelics, rows, legacy)
+            .Concat(DeclaredCapsuleContents(route, rows, legacy)));
+    }
+
+    internal static ModelKey[] DeclaredCapsuleContents(SearchQuery query) =>
+        DeclaredCapsuleContents(query.OpeningRoute, query.StructuredOpeningEffects, query.LegacyNeow);
+
+    private static ModelKey[] DeclaredCapsuleContents(NeowRouteSearchCondition? route,
+        IEnumerable<NeowStructuredEffectSearchCondition> rows, LegacyNeowSemanticConstraints legacy)
+    {
+        var keys = new HashSet<ModelKey>(ModelKeyComparer.Instance);
+        bool bones = route?.RouteRelicKey == BaseGameModelKeys.Relics.NeowsBones;
+        bool direct = route is not null && IsCapsule(route.RouteRelicKey);
         // A guaranteed nested acquisition does not identify which Capsule
         // supplied it. It is a held fact, never a new route-grant opcode.
-        if (bones || capsuleSources.Count > 0)
+        if (bones || direct || route is null)
         {
             foreach (var row in rows.Where(row =>
                 row.Scope == NeowStructuredEffectScope.NestedRelics && row.OutputKind == NeowStructuredOutputKind.Relic &&
-                (IsCapsule(row.SourceRelicKey) && capsuleSources.Contains(row.SourceRelicKey) ||
+                (IsCapsule(row.SourceRelicKey) && (bones || route is null || row.SourceRelicKey == route.RouteRelicKey) ||
                     bones && row.Kind == NeowStructuredConditionKind.ExactGroupedCapsuleMultiset)))
                 keys.UnionWith(row.OutputKeys);
             AddGuaranteed(keys, legacy.CapsuleContainedRelics);
@@ -82,6 +91,31 @@ internal static class ExplicitOpeningRelicFacts
             if (legacy.RequireLargeCapsule) keys.Add(BaseGameModelKeys.Relics.LargeCapsule);
         }
         return Stable(keys);
+    }
+
+    // Given one assignment of named pickups to initial positions, express a
+    // remaining-queue row in coordinates of the original permutation solver.
+    internal static IReadOnlyList<RelicSequenceSearchCondition>? InitialQueueConditions(
+        IReadOnlyList<RelicSequenceSearchCondition> conditions, int laneSize,
+        IEnumerable<(int Position, ModelKey Key)> namedPositions)
+    {
+        var removed = namedPositions.Distinct().OrderBy(item => item.Position).ToArray();
+        if (removed.Length == 0 || conditions.Count == 0) return conditions;
+        var keys = removed.Select(item => item.Key).ToHashSet();
+        var result = new List<RelicSequenceSearchCondition>();
+        foreach (var row in conditions)
+        {
+            var any = row.Keys.Any.Where(key => !keys.Contains(key)).ToArray();
+            if (row.Keys.All.Any(keys.Contains) || row.Keys.Any.Count > 0 && any.Length == 0 ||
+                row.RangeMode == SearchSequenceRangeMode.ExactSlot && row.RangeValue > laneSize - keys.Count)
+                return null;
+            int raw = row.RangeValue;
+            foreach (var item in removed)
+                if (item.Position <= raw) raw++;
+            result.Add(row with { RangeValue = Math.Min(raw, laneSize), Keys = row.Keys with
+                { Any = any, Ban = row.Keys.Ban.Where(key => !keys.Contains(key)).ToArray() } });
+        }
+        return result;
     }
 
     private static void AddGuaranteed(HashSet<ModelKey> keys, ModelKeySetFilter filter)

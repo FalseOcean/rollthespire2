@@ -5,6 +5,7 @@ using Godot;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Infrastructure.ContentNames;
 using RolltheSpire2.Infrastructure.Snapshots;
+using RolltheSpire2.Search.Semantics;
 using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Presentation.ContentNames;
 using RolltheSpire2.Presentation.Localization;
@@ -25,6 +26,7 @@ internal sealed partial class QueryWorkbenchFrame
         if (_refreshingEditorContexts) return;
         using var observation = _editorInputs.Observe(_runtime);
         _renderedEditorDomains.Remove("combat");
+        _renderedEditorDomains.Remove("relics");
         _renderedEditorDomains.Remove("transform");
         _renderedEditorDomains.Remove("ancient");
         RefreshCombatContext(render: _selectedDomain == "combat");
@@ -186,6 +188,8 @@ internal sealed partial class QueryWorkbenchFrame
 
     private void RefreshRelicContext(bool render = true)
     {
+        var opening = _multiplayer ? _neowEditor.ExportPartyConditions(_seat) : _neowEditor.ExportQuery();
+        _relicEditor.HasDeclaredCapsuleContents = ExplicitOpeningRelicFacts.DeclaredCapsuleContents(opening).Length > 0;
         _relicEditor.Refresh(_language, _text, _multiplayer ? _seatCharacters[_seat] : _soloCharacter,
             _multiplayer ? _partyAscension : _soloAscension, _multiplayer ? _playerCount : 1,
             _multiplayer ? _seat : 0, _multiplayer ? _lobbyUnlocks[_seat] : null, render: render, sharedContext: ActiveEditorContext());

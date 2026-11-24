@@ -35,6 +35,7 @@ internal sealed partial class RelicSequenceSearchEditor : Control
     private bool _guideExpanded;
     private bool _party;
     private bool _treasurePage;
+    internal bool HasDeclaredCapsuleContents { get; set; }
 
     private sealed class BuilderDraft
     {
@@ -65,6 +66,9 @@ internal sealed partial class RelicSequenceSearchEditor : Control
     }
 
     public event Action? GuideRequested;
+
+    internal void StashPartySeat(int slot, List<Action> restore) =>
+        WorkbenchConditionReset.StashSeat(_partyDrafts, slot, restore);
 
     public void Refresh(string language, IUiTextProvider text, ModelKey character, int ascension,
         int players, int seat, SerializableUnlockState? unlocks = null, bool render = true, EditorRefreshContext? sharedContext = null)
@@ -156,6 +160,12 @@ internal sealed partial class RelicSequenceSearchEditor : Control
         if (!_party && _treasurePage) RenderTreasure(content, width, tabsHeight);
         else
         {
+            if (HasDeclaredCapsuleContents)
+            {
+                Text(content, _text.Get("query.relic.capsule_deductions"), 16, tabsHeight, width - 32, 16, true)
+                    .Name = "DeclaredCapsuleQueueNotice";
+                tabsHeight += 36;
+            }
             var sequence = new Control { Position = new(0, tabsHeight), Size = new(width, 1) };
             content.AddChild(sequence);
             float builderHeight = RenderBuilder(sequence, width);

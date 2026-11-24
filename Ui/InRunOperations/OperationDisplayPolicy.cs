@@ -3,7 +3,8 @@ using RolltheSpire2.Core.Identity;
 namespace RolltheSpire2.Ui.InRunOperations;
 
 // Owner's 2026-10-16 A/B/C/D + 1–5 display vocabulary. The default
-// remains A1; layouts describe the relationship, never a card-count cutoff.
+// remains A1. Source styles describe the normal relationship; the overlay
+// handles the five-card stacks for a large Pandora batch.
 internal static class OperationDisplayPolicy
 {
     internal static readonly OperationDisplayStyle A1 = new(OperationTextMode.GroupRows, OperationCardLayout.Parallel);

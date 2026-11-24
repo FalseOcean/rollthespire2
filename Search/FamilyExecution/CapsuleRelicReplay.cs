@@ -50,11 +50,12 @@ internal sealed class CapsuleRelicReplay
         }
         foreach (var condition in _evaluation.RelicSequenceConditions.Where(c => !c.IsEmpty))
         {
-            ModelKey[] lane = lanes[Lane(condition.Lane)];
-            if (condition.RangeValue > lane.Length) throw new InvalidOperationException("RFamilyRelicRangeUnavailable");
-            IEnumerable<ModelKey> observed = condition.RangeMode == SearchSequenceRangeMode.FirstN
-                ? lane.Take(condition.RangeValue) : lane.Skip(condition.RangeValue - 1).Take(1);
-            if (!QueryKeySetPredicate.MatchesKeySet(observed, condition.Keys)) return false;
+            var raw = lanes[Lane(condition.Lane)];
+            var lane = condition.Lane == RelicSequenceKind.Shop ? raw :
+                RelicSequencePredictionResult.AfterDeclaredPickups(raw, _evaluation.DeclaredCapsuleContents, key => key);
+            ModelKey[] observed = condition.RangeMode == SearchSequenceRangeMode.FirstN
+                ? lane.Take(condition.RangeValue).ToArray() : lane.Skip(condition.RangeValue - 1).Take(1).ToArray();
+            if (condition.RangeMode == SearchSequenceRangeMode.ExactSlot && observed.Length == 0 || !QueryKeySetPredicate.MatchesKeySet(observed, condition.Keys)) return false;
         }
         foreach (var condition in _evaluation.RelicShopSequenceConditions.Where(c => !c.IsEmpty))
         {

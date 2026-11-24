@@ -4,6 +4,13 @@ namespace RolltheSpire2.Ui.Pages.Search.Editors;
 // too. Detached drafts retain hidden mode choices for the single-step undo.
 internal static class WorkbenchConditionReset
 {
+    // Park inactive seats outside the active editors, including their incomplete
+    // controls. Counts, clear actions and compilation then see only the table.
+    internal static void StashSeat<T>(Dictionary<int, T> drafts, int slot, List<Action> restore)
+    {
+        if (drafts.Remove(slot, out var value)) restore.Add(() => drafts[slot] = value);
+    }
+
     internal static Action Swap<T>(Dictionary<int, T> drafts, Func<T, T> empty, int? onlySlot = null,
         Action<T, T>? replaceActive = null) where T : class
     {

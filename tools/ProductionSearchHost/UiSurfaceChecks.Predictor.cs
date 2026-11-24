@@ -827,8 +827,12 @@ internal static partial class UiSurfaceChecks
                         !eliteSection.IsVisibleInTree() || !normalSection.IsVisibleInTree())
                         throw new Exception("Overview must place events before the visible combat queues");
                     var mainScroll = (ScrollContainer)page.FindChild("PredictorMainScroll", true, false);
-                    if (index > 0 && mainScroll.GetVScrollBar().MaxValue > mainScroll.GetVScrollBar().Page + 1)
-                        throw new Exception("Default later-Act overview should fit without vertical scrolling");
+                    var sequence = ((Control)page.FindChild("UnknownSequenceCard", true, false)).GetParent<PanelContainer>();
+                    if (sequence.GetGlobalRect().Position.Y < combat.GetGlobalRect().End.Y ||
+                        sequence.GetIndex() != sequence.GetParent().GetChildCount() - 1)
+                        throw new Exception("The question mark sequence must follow the combat queues at the bottom");
+                    if (mainScroll.GetVScrollBar().GetGlobalRect().Position.X - sequence.GetGlobalRect().End.X < 10)
+                        throw new Exception("Overview cards need a visible gutter before the scrollbar");
                     eventTiles[0].EmitSignal(Button.SignalName.Pressed);
                     if (!(bool)((Control)page.FindChild("EventDetails", true, false)).Visible) throw new Exception("Event details did not open");
                     if (eliteSection.Visible || normalSection.Visible || !bossIdentities.IsVisibleInTree())

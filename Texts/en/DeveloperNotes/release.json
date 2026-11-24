@@ -4,6 +4,22 @@
   "Blocks": [
     {
       "Type": "Heading",
+      "ReleaseVersion": "1.4.9",
+      "Text": "RT2 1.4.9 · Multiplayer seed search and route prediction"
+    },
+    {
+      "Type": "BulletList",
+      "Items": [
+        "Read the current lobby to fill in the player count, characters, unlocks and shared Ascension. Outside a lobby, build a party of 2–4 and choose each character. P1 defaults to your local unlocks and the other seats default to all unlocks.",
+        "In Act 2's Hive, you can switch to the Treasure Map layout. Reopening the game restores your planned route, and returning to a run shows the path already taken. RT2 remembers one solo run and the three most recent multiplayer runs.",
+        "At the bottom of the seed analysis overview, each Act has a row of predicted unknown rooms. Adjust how many you expect to visit. If the previous room was a shop, or every exit from this node leads to a fixed shop, click the unknown room to rule out a shop there. Later predictions in the same Act update. Click again to undo.",
+        "Personal relic queues skip only the relics you specify inside Capsules. When Neow’s Bones grants both Capsules, you can enter their contents separately or together. Equivalent pickup orders now share one result.",
+        "Elite and normal encounter portraits are larger. Select Show All to expand a sequence that exceeds one row.",
+        "On the beta branch, supported solo searches now use the GPU to count copies of a target card across opening transforms, Morphic Grove, and either Pandora’s Box or Astrolabe."
+      ]
+    },
+    {
+      "Type": "Heading",
       "ReleaseVersion": "1.4.8",
       "Text": "RT2 1.4.8 · Seed search compatibility and main menu launcher improvements"
     },

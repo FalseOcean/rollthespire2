@@ -12,7 +12,7 @@ internal static class TransformSelectionForecast
 
     internal static ModelKey? Source(PredictorOperationSnapshot snapshot) => snapshot.Scene switch
     {
-        PredictorOperationEventScene { AwaitingCards: true } scene when IsEventTransform(scene) => scene.Event,
+        PredictorOperationEventScene { AwaitingCards: true } scene when IsRandomEventTransform(scene.Event.Entry, scene.Branch) => scene.Event,
         PredictorOperationObtainScene { Kind: PredictorOperationObtainChildKind.NewLeaf } scene => scene.Source,
         PredictorOperationObtainScene { Kind: PredictorOperationObtainChildKind.Deck,
             DeckChoice.Operation: PredictorObtainDeckOperation.Astrolabe } scene => scene.Source,
@@ -21,7 +21,20 @@ internal static class TransformSelectionForecast
         _ => null
     };
 
-    private static bool IsEventTransform(PredictorOperationEventScene scene) => (scene.Event.Entry, scene.Branch) is
+    // These parents finish the Astrolabe obtain without another deck-dependent
+    // choice or effect to include in the hover. A composite parent can resume
+    // additional work with the transformed deck.
+    internal static long? DirectAstrolabeRelicId(PredictorOperationSnapshot snapshot) => snapshot.Scene switch
+    {
+        PredictorOperationObtainScene { Source.Entry: "ASTROLABE", Kind: PredictorOperationObtainChildKind.Deck,
+            Destination: PredictorObtainReturn.Ancient, Parent: PredictorOperationAncientScene } scene => scene.RelicId,
+        PredictorOperationObtainScene { Source.Entry: "ASTROLABE", Kind: PredictorOperationObtainChildKind.Deck,
+            Destination: PredictorObtainReturn.Reward, Parent: PredictorOperationRewardsScene } scene => scene.RelicId,
+        PredictorOperationShopScene { PendingRelic.Choice.Source.Entry: "ASTROLABE" } scene => scene.PendingRelic.Choice.RelicId,
+        _ => null
+    };
+
+    internal static bool IsRandomEventTransform(string entry, string? branch) => (entry, branch) is
         ("AROMA_OF_CHAOS", "LET_GO") or ("MORPHIC_GROVE", "GROUP") or
         ("SYMBIOTE", "KILL_WITH_FIRE") or ("WHISPERING_HOLLOW", "HUG") or
         ("ENDLESS_CONVEYOR", "GRAB_JELLY_LIVER") or ("TRIAL", "NONDESCRIPT_INNOCENT");

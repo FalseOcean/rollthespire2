@@ -87,6 +87,28 @@ public sealed record RelicSequencePredictionResult(
     public RelicSequenceLaneResult? GetPlayerLane(RelicSequenceKind kind) =>
         Lanes.FirstOrDefault(lane => lane.Kind == kind);
 
+    internal RelicSequenceLaneResult? GetPlayerLane(RelicSequenceKind kind, IReadOnlyList<ModelKey> removed)
+    {
+        var lane = GetPlayerLane(kind);
+        if (lane is null || kind == RelicSequenceKind.Shop || removed.Count == 0) return lane;
+        // An explicitly consumed identity can expose a new entry beyond the preview.
+        var source = lane.FullEntries.Count > 0 ? lane.FullEntries : lane.Entries;
+        var remaining = AfterDeclaredPickups(source, removed, entry => entry.RelicKey)
+            .Select((entry, index) => entry with { Position = index + 1 }).ToArray();
+        return lane with { Entries = remaining, FullEntries = remaining,
+            TotalCount = lane.TotalCount - (source.Count - remaining.Length),
+            TailEntries = remaining.AsEnumerable().Reverse().Take(lane.TailEntries.Count)
+                .Select((entry, index) => entry with { Position = index + 1 }).ToArray() };
+    }
+
+    internal static IReadOnlyList<T> AfterDeclaredPickups<T>(IReadOnlyList<T> source, IReadOnlyList<ModelKey> pickups,
+        Func<T, ModelKey> identity)
+    {
+        if (pickups.Count == 0) return source;
+        var remaining = pickups.ToHashSet();
+        return source.Where(entry => !remaining.Remove(identity(entry))).ToArray();
+    }
+
     internal (int Certain, int Possible)? ShopStockCount { get; init; }
     internal bool? EarlyLastingCandyEligible { get; init; } = true;
     internal RngSemanticProfileId RngSemantics { get; init; } = RngSemanticProfileId.Modern110;

@@ -500,7 +500,8 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
         .. plan.PositiveDepthByLane.Select(value => (uint)value),
         .. plan.ExclusionDepthByLane.Select(value => (uint)value),
         .. plan.TrackedOffsetsByLane.Select(value => (uint)value),
-        .. plan.TrackedCountsByLane.Select(value => (uint)value)
+        .. plan.TrackedCountsByLane.Select(value => (uint)value),
+        .. plan.RemovedCountsByLane.Select(value => (uint)value)
     ];
 
     private static uint[] PackBuckets(RelicFamilyPool pool)

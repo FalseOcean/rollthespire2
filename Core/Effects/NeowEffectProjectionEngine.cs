@@ -154,9 +154,13 @@ internal sealed partial class NeowEffectProjectionEngine
             EffectDependencyImpact impact = ResolveProjectionDependencyImpact(relicKey, projection);
             bool unresolvedTransform = relicKey == BaseGameModelKeys.Relics.NewLeaf &&
                 !projection.EffectGroups.SelectMany(group => group.OrderedItems).Any(item => item.Kind == PredictedEffectKind.TransformCard);
+            var transformations = impact.TransformationsRng;
+            if (!transformations.IsExact && relicKey == BaseGameModelKeys.Relics.LargeCapsule &&
+                OpeningTransformationContinuation.HasNativeCapsuleCursor(_analysisAuthority))
+                transformations = BonesContinuationDomainState.Exact(Evidence(relicKey, "native-capsule-preserves-transformations"));
             projection = projection with
             {
-                TransformationContinuation = ReadTransformationContinuation(state, impact.TransformationsRng,
+                TransformationContinuation = ReadTransformationContinuation(state, transformations,
                     impact.NicheRng, impact.ShadowDeck,
                     materialChoiceUnresolved: unresolvedTransform || IsBasicRemovalChoice(relicKey),
                     transformChoiceUnresolved: unresolvedTransform)
@@ -2077,14 +2081,14 @@ internal sealed partial class NeowEffectProjectionEngine
         foreach (NeowEffectCardSnapshot card in source.OrderBy(card => card.PoolOrder))
         {
             string key = string.Join(":",
-                card.CardKey.Serialized,
-                card.UpgradeLevel.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                card.MaxUpgradeLevel.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                card.IsBasic ? "B" : "N",
-                card.IsStrike ? "S" : "-",
-                card.IsDefend ? "D" : "-",
-                card.CanUpgrade ? "U" : "-",
-                card.CanRemove ? "R" : "-");
+            card.CardKey.Serialized,
+            card.UpgradeLevel.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            card.MaxUpgradeLevel.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            card.IsBasic ? "B" : "N",
+            card.IsStrike ? "S" : "-",
+            card.IsDefend ? "D" : "-",
+            card.CanUpgrade ? "U" : "-",
+            card.CanRemove ? "R" : "-");
             if (seen.Add(key))
             {
                 result.Add(card);
@@ -2110,9 +2114,10 @@ internal sealed partial class NeowEffectProjectionEngine
     }
 
     private static string BuildObservableDeckFingerprint(IEnumerable<NeowEffectCardSnapshot> cards) =>
-        string.Join("|", cards
-            .OrderBy(card => card.PoolOrder)
-            .Select(card => string.Join(":",
+        string.Join("|", cards.OrderBy(card => card.PoolOrder).Select(ObservableCardSignature));
+
+    private static string ObservableCardSignature(NeowEffectCardSnapshot card) =>
+        string.Join(":",
                 card.CardKey.Serialized,
                 card.UpgradeLevel.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 card.MaxUpgradeLevel.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -2120,7 +2125,7 @@ internal sealed partial class NeowEffectProjectionEngine
                 card.IsStrike ? "S" : "-",
                 card.IsDefend ? "D" : "-",
                 card.CanUpgrade ? "U" : "-",
-                card.CanRemove ? "R" : "-")));
+                card.CanRemove ? "R" : "-");
 
     private Xoshiro256StarStar NewLeafRng(NeowEffectRngContext rng) =>
         RuntimeProfilePolicies.IsModernCore(_profileId) && _rngSemantics != RngSemanticProfileId.Modern113

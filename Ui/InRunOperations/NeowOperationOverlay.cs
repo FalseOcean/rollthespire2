@@ -358,15 +358,37 @@ internal sealed partial class NeowOperationOverlay : Control
             return [new(preview.Source, [], groups)
                 { Style = new(OperationTextMode.None, stacked ? OperationCardLayout.Groups : OperationCardLayout.Parallel) }];
         }
-        return branch.Sections.Select(section => section.Source.Entry != "SEA_GLASS" ? section : section with
+        return branch.Sections.Select(section => section.Source.Entry switch
         {
-            CardGroups = section.CardGroups.SelectMany(group => group.Cards.GroupBy(card =>
-                ModelDb.GetById<CardModel>(new ModelId(card.Key.Category, card.Key.Entry)).Rarity.ToString()).Select((rarity, index) =>
-                    group with { Cards = rarity.ToImmutableArray(), ForceSingleRow = true,
-                        Label = rarity.Key switch { "Common" => UiText.Get("operation.rarity.Common"), "Uncommon" => UiText.Get("operation.rarity.Uncommon"), "Rare" => UiText.Get("operation.rarity.Rare"), _ => rarity.Key } }))
-                .ToImmutableArray(),
-            Style = new(OperationDisplayPolicy.Resolve(preview, section).Text, OperationCardLayout.Groups)
+            "PANDORAS_BOX" => StackLargePandora(section),
+            "SEA_GLASS" => section with
+            {
+                CardGroups = section.CardGroups.SelectMany(group => group.Cards.GroupBy(card =>
+                    ModelDb.GetById<CardModel>(new ModelId(card.Key.Category, card.Key.Entry)).Rarity.ToString()).Select((rarity, index) =>
+                        group with { Cards = rarity.ToImmutableArray(), ForceSingleRow = true,
+                            Label = rarity.Key switch { "Common" => UiText.Get("operation.rarity.Common"), "Uncommon" => UiText.Get("operation.rarity.Uncommon"), "Rare" => UiText.Get("operation.rarity.Rare"), _ => rarity.Key } }))
+                    .ToImmutableArray(),
+                Style = new(OperationDisplayPolicy.Resolve(preview, section).Text, OperationCardLayout.Groups)
+            },
+            _ => section
         }).ToImmutableArray();
+
+        OperationPreviewSection StackLargePandora(OperationPreviewSection section)
+        {
+            var cards = section.Rows.Where(IsPandoraTransform).SelectMany(row => row.Cards).ToArray();
+            if (cards.Length <= 20) return section;
+            var stacks = cards.Chunk(5).Select((chunk, index) => new OperationPreviewCardGroup(-1 - index,
+                chunk.ToImmutableArray(), 0, 0, false, false) { EarliestFirst = true });
+            return section with
+            {
+                Rows = section.Rows.Where(row => !IsPandoraTransform(row)).ToImmutableArray(),
+                CardGroups = section.CardGroups.AddRange(stacks),
+                Style = OperationDisplayPolicy.Resolve(preview, section) with { Cards = OperationCardLayout.Groups }
+            };
+        }
+
+        static bool IsPandoraTransform(OperationPreviewRow row) =>
+            row.Action == OperationPreviewAction.TransformCard && row.ShowCards && !row.Cards.IsDefaultOrEmpty;
     }
 
     private void AddSummaryPanel(VBoxContainer details, ModelKey source, bool primary)

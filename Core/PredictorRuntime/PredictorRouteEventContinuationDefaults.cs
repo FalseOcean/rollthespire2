@@ -338,17 +338,11 @@ internal sealed partial class PredictorRun
         }
         if (transforms)
         {
-            // Match Transform's source-specific pool and rarity predicate;
-            // quest/basic models in the catalog are not possible replacements.
-            var definitions = run.Context.Catalog!.CardDefinitions.ToDictionary(definition => definition.Prototype.Key);
-            var keys = cards.SelectMany(card =>
-            {
-                var definition = definitions[card.Key];
-                return run.Context.Catalog.TransformationPools.Single(pool => pool.Key == definition.TransformationPool).Cards
-                    .Where(key => key != card.Key && (definition.Rarity is "Curse" or "Status" ||
-                        definitions[key].Rarity is "Common" or "Uncommon" or "Rare"));
-            }).ToHashSet();
-            cards = cards.AddRange(run.Context.Catalog.CardDefinitions.Where(d => keys.Contains(d.Prototype.Key))
+            var catalog = run.Context.Catalog!;
+            var definitions = catalog.CardDefinitions.ToDictionary(definition => definition.Prototype.Key);
+            var keys = cards.Select(card => card.Key).Distinct()
+                .SelectMany(key => PredictorCardChanges.ReplacementPool(catalog, definitions, key)).ToHashSet();
+            cards = cards.AddRange(catalog.CardDefinitions.Where(d => keys.Contains(d.Prototype.Key))
                 .Select(d => d.Prototype)).Distinct().ToImmutableArray();
             addsCards = true;
         }

@@ -11,6 +11,14 @@ internal sealed partial class AnalysisPage
     internal void SetLiveRunPredictionPremises(LiveRunPredictionPremises? premises)
     {
         _liveRunPremises = premises;
+        if (premises is null)
+        {
+            _liveRouteKey = null;
+            _liveRouteStamp = null;
+            _observedNativeMap = null;
+            _playedUnknownCounts = [];
+            _hasSpoilsCard = false;
+        }
         RefreshLiveRunNotice();
         RefreshFavoriteSeed();
     }

@@ -51,11 +51,25 @@ internal sealed class RelicCpuPlan
             for (int i = 0; i < count; i++) positions[i] = _plan.TrackedInitialPositions[offset + i];
             var child = pool.UsesChildShuffle ? rng.ForkShuffle() : default;
             ref var shuffle = ref (pool.UsesChildShuffle ? ref child : ref rng);
-            if (_requiredRanges[lane] is { } requiredRanges)
+            if (_plan.RemovedCountsByLane[lane] == 0 && _requiredRanges[lane] is { } requiredRanges)
             {
                 if (!ShuffleRequiredPositions(ref shuffle, length, positions[..count], requiredRanges)) return false;
             }
             else ShufflePositions(ref shuffle, length, positions[..count]);
+            int removedCount = _plan.RemovedCountsByLane[lane];
+            if (removedCount > 0)
+            {
+                var removed = positions.Slice(count - removedCount, removedCount);
+                for (int i = 0; i < count - removedCount; i++)
+                {
+                    int raw = positions[i];
+                    foreach (int rank in removed)
+                    {
+                        if (rank == raw) { positions[i] = int.MaxValue; break; }
+                        if (rank < raw) positions[i]--;
+                    }
+                }
+            }
             foreach (var p in _plan.Predicates)
             {
                 if (p.Lane != lane) continue;
@@ -74,7 +88,7 @@ internal sealed class RelicCpuPlan
     }
 
     private static bool InRange(int position, RelicFamilyPredicate p) =>
-        p.RangeMode == 0 ? position < p.RangeValue : position + 1 == p.RangeValue;
+        p.RangeMode == 0 ? position < p.RangeValue : position == p.RangeValue - 1;
 
     private static bool ShuffleRequiredPositions(ref Beta110FastRng rng, int length, Span<int> positions,
         ReadOnlySpan<RequiredPositionRange> requiredRanges)

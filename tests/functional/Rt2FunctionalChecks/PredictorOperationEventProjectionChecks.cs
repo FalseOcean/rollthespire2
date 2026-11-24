@@ -38,6 +38,7 @@ internal static partial class PredictorOperationEventChecks
             var picker = PredictorOperation.Preview(snapshot, root);
             var candidates = picker.State.Deck.Where(picker.Waiting.Selection.CandidateCardIds.Contains).ToImmutableArray();
             var observed = new[] { new List<(long Source, PredictorCard Card)>(), new List<(long Source, PredictorCard Card)>() };
+            var exhaustive = System.Diagnostics.Stopwatch.StartNew();
             foreach (long first in candidates)
                 foreach (long second in candidates.Where(id => id != first))
                 {
@@ -48,15 +49,21 @@ internal static partial class PredictorOperationEventChecks
                     for (int slot = 0; slot < ids.Length; slot++)
                         observed[slot].Add((ids[slot], result.State.Card(changes.Single(change => change.OriginalId == ids[slot]).ReplacementId) with { Id = 0 }));
                 }
+            exhaustive.Stop();
             var wanted = observed.Select(slot => slot.OrderBy(item => picker.State.Deck.IndexOf(item.Source))
                 .Select(item => item.Card).Distinct().ToArray()).ToArray();
             if (requireCounterexample) Require(!observed[1].Select(item => item.Card).Distinct().SequenceEqual(wanted[1]),
                 "event source-order fixture did not expose tuple traversal's incorrect second-slot order");
+            var timing = System.Diagnostics.Stopwatch.StartNew();
             var preview = EventOperationPreview.Build(snapshot, option);
+            timing.Stop();
             var actual = Groups(preview).ToArray();
-            Require(preview.Faults.IsEmpty && actual.Length == 2 && actual.Select((group, slot) =>
+            int expectedChecks = 1 + 2 * candidates.Select(id => picker.State.Card(id).Key).Distinct().Count();
+            Require(preview.Faults.IsEmpty && preview.PendingReasons.IsEmpty && actual.Length == 2 &&
+                preview.Branches.Single().FullyEnumerated && preview.Branches.Single().PathsExamined == expectedChecks && actual.Select((group, slot) =>
                 group.Cards.Select(card => card with { Id = 0 }).SequenceEqual(wanted[slot])).All(value => value),
-                "event overview reordered a later slot by tuple visit instead of its own original's deck rank");
+                "event overview must project all originals by slot in deck order and agree with full settlement");
+            Console.WriteLine($"EVENT_TRANSFORM_PREVIEW {option}; candidates={candidates.Length}; exhaustive={candidates.Length * (candidates.Length - 1)}; projected={expectedChecks}; exhaustiveMs={exhaustive.Elapsed.TotalMilliseconds:F2}; projectionMs={timing.Elapsed.TotalMilliseconds:F2}");
         }
 
         var cheese = Snapshot("ROOM_FULL_OF_CHEESE", new PredictorEventOption("GORGE"), new PredictorEventOption("SEARCH"));
@@ -153,14 +160,10 @@ internal static partial class PredictorOperationEventChecks
             rankedState = PredictorObtainSources.AddCard(context, rankedState, definition.Prototype);
         rankedState = rankedState with { Deck = rankedState.Deck.Reverse().ToImmutableArray() };
         CheckTransformSourceRanks(Snapshot("MORPHIC_GROVE", new PredictorEventOption("GROUP")) with { State = rankedState }, "GROUP", true);
-        var cappedState = state;
-        while (cappedState.Deck.Count(id => cappedState.Card(id).Removable) < 18)
-            cappedState = PredictorObtainSources.AddCard(context, cappedState, state.Card(targets[0]));
-        var cappedOverview = EventOperationPreview.Build(Snapshot("MORPHIC_GROVE", new PredictorEventOption("GROUP")) with
-            { State = cappedState }, "GROUP");
-        Require(cappedOverview.Faults.IsEmpty && cappedOverview.PendingReasons.Contains("EventTargetAlternativesLimit:256") &&
-            cappedOverview.Branches.All(branch => !branch.FullyEnumerated && branch.PendingReasons.IsEmpty),
-            "Capped overview must keep its actual enumeration limit without inventing a missing player input");
+        var largeState = rankedState;
+        while (largeState.Deck.Count(id => largeState.Card(id).Removable) < 28)
+            largeState = PredictorObtainSources.AddCard(context, largeState, state.Card(targets[0]));
+        CheckTransformSourceRanks(Snapshot("MORPHIC_GROVE", new PredictorEventOption("GROUP")) with { State = largeState }, "GROUP", false);
 
         var tablet = Snapshot("TABLET_OF_TRUTH", new PredictorEventOption("DECIPHER"), new PredictorEventOption("SMASH"));
         var tabletPreview = EventOperationPreview.Build(tablet, "DECIPHER");

@@ -133,6 +133,7 @@ public static class CompiledSearchEvaluationProjector
             TreasureRelics = query.TreasureRelics,
             FirstActUnknownEventPrefixCount = query.FirstActUnknownEventPrefixCount,
             FirstActUnknownMonsterPrefixCount = query.FirstActUnknownMonsterPrefixCount,
+            DeclaredCapsuleContents = ExplicitOpeningRelicFacts.DeclaredCapsuleContents(query),
             RelicSequenceConditions = query.RelicSequenceConstraints,
             RelicShopSequenceConditions = query.RelicShopSequenceConditions,
             EventSequenceConditions = query.EventSequenceConstraints,

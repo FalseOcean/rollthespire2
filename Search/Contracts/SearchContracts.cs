@@ -731,6 +731,7 @@ public sealed record ExactSearchEvaluationProjection(
         AncientIdentityFilters.Any(filter => !filter.IsEmpty) || AncientOptionFilters.Any(filter => !filter.IsEmpty) ||
         AncientSeaGlassTargetFilters.Any(filter => !filter.IsEmpty) ||
         EventSequenceConditions.Any(condition => !condition.IsEmpty);
+    public IReadOnlyList<ModelKey> DeclaredCapsuleContents { get; init; } = [];
     public bool RequiresRelicSequenceDomain =>
         TreasureRelics is { IsEmpty: false } ||
         RelicSequenceConditions.Any(condition => !condition.IsEmpty) || RelicShopSequenceConditions.Any(condition => !condition.IsEmpty);
@@ -808,6 +809,7 @@ public sealed record ExactSearchEvaluationProjection(
         NeowRoute = filter.NeowRoute,
         NeowOfferWhitelist = filter.NeowOfferWhitelist,
         StructuredNeowEffects = filter.StructuredNeowEffects,
+        DeclaredCapsuleContents = ExplicitOpeningRelicFacts.DeclaredCapsuleContents(LegacySearchQueryAdapter.FromFilter(filter)),
         RequiredBonesAcquisitionOrder = filter.RequiredBonesAcquisitionOrder,
         EffectOutputConditions = filter.EffectOutputConditions,
         EncounterQueues = filter.EncounterQueues,

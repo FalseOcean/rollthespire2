@@ -32,6 +32,7 @@ internal static class UnknownRoomChecks
         typeof(ModelDb).GetField("_allEncounters",BindingFlags.NonPublic|BindingFlags.Static)!.SetValue(null,Array.Empty<EncounterModel>());
         var run = DispatchProxy.Create<IRunState, OrdinaryUnknownRunProxy>();
         CheckAct1Filter(run);
+        CheckMarkedSeries(run);
         foreach (string seed in new[] { "000000000000", "000000000006", "000000067C0S", "SKDNXGNU2A16" })
         foreach (int skip in new[] { 0, 1, 7, 23 })
         {
@@ -240,11 +241,44 @@ internal static class UnknownRoomChecks
         Require(sawJuzuDivergence && sawJuzuNonEventReplacement && sawJuzuShop && sawJuzuTreasure,
             "Missing Juzu reroll/Shop/Treasure parity witnesses");
     }
+    internal static int RunMarkedSeries()
+    {
+        typeof(ModelDb).GetField("_allEncounters",BindingFlags.NonPublic|BindingFlags.Static)!.SetValue(null,Array.Empty<EncounterModel>());
+        CheckMarkedSeries(DispatchProxy.Create<IRunState, OrdinaryUnknownRunProxy>());
+        Console.WriteLine($"UNKNOWN_SERIES_ODDS_PASS rolls={_rolls}");
+        return 0;
+    }
+
+    private static void CheckMarkedSeries(IRunState run)
+    {
+        // Reset act odds, retaining the native run-wide RNG across Act boundaries.
+        foreach (string markedSeed in new[] { "XJ1EA2NCSZT6", "8JESCF4CG6YC", "SKDNXGNU2A16" })
+        {
+            var markedRng = new RunRngSet(markedSeed).UnknownMapPoint;
+            var markedOdds = new UnknownMapPointOdds(markedRng);
+            int priorDraws = 0;
+            foreach (int count in new[] { 6, 0, 11 })
+            {
+                markedOdds.ResetToBase();
+                var marks = new HashSet<int> { 1, 3, 4, 6, 11 };
+                var steps = OrdinaryUnknownRoomPredictor.Baseline(markedSeed, priorDraws, count, marks).Steps;
+                foreach (var step in steps)
+                {
+                    bool blocked = marks.Contains(step.Ordinal);
+                    Require(step.ShopBlacklisted == blocked && (!blocked || step.Room != UnknownRoomCategory.Shop),
+                        "Shop restriction applies only to marked ordinals");
+                    Compare(step, markedOdds, markedRng, blocked ? new[] { RoomType.Shop } : Array.Empty<RoomType>(), run);
+                }
+                priorDraws += count;
+            }
+        }
+    }
+
     private static RoomType Compare(UnknownRoomObservation step, UnknownMapPointOdds odds, MegaCrit.Sts2.Core.Random.Rng rng, IEnumerable<RoomType> blocked, IRunState run)
     {
         Require(step.Before==Snapshot(odds),"Odds before");
         var room=odds.Roll(blocked,run);
-        Require(room.ToString()==step.Room.ToString() && step.After==Snapshot(odds) && step.RngCounter==rng.ToSerializable().counter,"DLL outcome/odds/counter mismatch");
+        Require(room.ToString()==step.Room.ToString() && step.After==Snapshot(odds) && step.RngCounter==rng.ToSerializable().counter,$"DLL outcome/odds/counter mismatch: expected {step.Room} {step.After} @{step.RngCounter}; actual {room} {Snapshot(odds)} @{rng.ToSerializable().counter}");
         _rolls++;return room;
     }
     private static UnknownOddsSnapshot Snapshot(UnknownMapPointOdds odds)=>new(odds.MonsterOdds,odds.EliteOdds,odds.TreasureOdds,odds.ShopOdds);

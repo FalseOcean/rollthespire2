@@ -25,6 +25,9 @@ internal sealed record NeowReplayPlan(
     // Physical applicability fact from existing immutable authority, not condition ownership.
     internal bool DirectNestedVanilla111 { get; init; }
     internal bool AuditedModern113IdentityReplay { get; init; }
+    internal bool VanillaBonesOrderAuthority { get; init; }
+    internal int RemovableBasicStrikes { get; init; }
+    internal int RemovableBasicDefends { get; init; }
     internal bool AuditedIdentityReplay => DirectNestedVanilla111 || AuditedModern113IdentityReplay;
     internal int[] UnobservedRewardsDraws { get; init; } = [];
     internal NeowModernTransformGate? ModernTransformGate { get; init; }
@@ -303,6 +306,10 @@ internal sealed record NeowReplayPlan(
             (domains & (Beta110FastDomain.KaleidoscopeOffers | Beta110FastDomain.PhialHolsterPotions)) != 0;
         var (smallAdvances, largeAdvances, dualAdvances) = modernBones && capsuleRoutePossible && observesNonCombat
             ? NeowCapsuleNonCombatContinuation.CompileSoloAlternatives(request) : (0u, 0u, 0u);
+        ulong removals = Beta110FastRelicCatalog.Bit(Beta110FastRelicCatalog.PreciseScissors) |
+            Beta110FastRelicCatalog.Bit(Beta110FastRelicCatalog.PrecariousShears);
+        bool checkRemoval = modernBones && System.Numerics.BitOperations.PopCount(requiredBones) == 2 &&
+            (requiredBones & removals) != 0 && filter.RequiredBonesAcquisitionOrder.Count == 0;
         var plan = new NeowReplayPlan(authority, filter, domains, conditions.ToArray(), required, banned,
             Mask(filter.NeowRelics.Any), Mask(filter.NeowRelics.All) | (!bones ? requiredCapsules : 0), Mask(filter.NeowRelics.Ban),
             Mask(filter.BonesRelics.Any), requiredBones, bannedBones, selected,
@@ -320,6 +327,11 @@ internal sealed record NeowReplayPlan(
             CapsuleUpgradeUpperBound = request.Authority.PlayersCount > 1 && effectAuthority?.HasExactDeck == true
                 ? checked(2 * (effectAuthority.OrderedDeck!.Count + 6)) : -1,
             DirectNestedVanilla111 = directNestedVanilla111,
+            VanillaBonesOrderAuthority = modernBones && vanillaCapture && request.Authority.IsVanilla &&
+                !request.Authority.UsesBestEffortModel && request.Authority.IsBeta111NeowIdentityAuthorityExact && authority.BonesAuthorityExact,
+            RemovableBasicStrikes = checkRemoval && (hasLeafyPredicate || (domains & Beta110FastDomain.NewLeafTransform) != 0)
+                ? RemovableBasics(true) : 0,
+            RemovableBasicDefends = checkRemoval && hasLeafyPredicate ? RemovableBasics(false) : 0,
             AuditedModern113IdentityReplay = vanillaCapture && newOpeningStreams
         };
         if (modernBones && NeowCapsuleNonCombatContinuation.NeedsRemainder(plan))
@@ -330,6 +342,15 @@ internal sealed record NeowReplayPlan(
             plan = plan with { HasCapsuleRarityGate = true };
         if (!capsule) plan = plan with { UnobservedRewardsDraws = NeowUnobservedRewards.Compile(plan) };
         return plan;
+
+        int RemovableBasics(bool strike)
+        {
+            if (effectAuthority?.HasExactDeck != true || effectAuthority.OrderedDeck is null) return 0;
+            var expected = strike ? effectAuthority.CharacterStrikeKey : effectAuthority.CharacterDefendKey;
+            var cards = effectAuthority.OrderedDeck.Where(card => card.IsBasic && (strike ? card.IsStrike : card.IsDefend)).ToArray();
+            return expected is { } key && cards.Length > 0 && cards.All(card => card.CardKey == key &&
+                string.Equals(card.PoolId, cards[0].PoolId, StringComparison.Ordinal)) ? cards.Length - 1 : 0;
+        }
 
         bool PreservesModernLeafyInput()
         {

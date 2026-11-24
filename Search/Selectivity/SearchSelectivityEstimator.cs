@@ -7,6 +7,8 @@ using RolltheSpire2.Core.World.Snapshots;
 using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.FamilyExecution;
 
+using RolltheSpire2.Search.Semantics;
+
 namespace RolltheSpire2.Search.Selectivity;
 
 internal sealed record RelicLaneProbabilityAuthority(
@@ -334,9 +336,14 @@ internal static class SearchSelectivityEstimator
                     "Probability.Relic.LaneMissing:" + lane,
                     "Requested Relic lane is unavailable from the immutable runtime authority.");
 
+            int initialCount = pool.Length;
+            if (lane != RelicSequenceKind.Shop)
+                pool = RelicSequencePredictionResult.AfterDeclaredPickups(pool,
+                    ExplicitOpeningRelicFacts.DeclaredCapsuleContents(plan.CompiledSearch.NormalizedQuery), key => key).ToArray();
             RelicSequenceSearchCondition[] laneOrdinary = ordinary.Where(item => item.Lane == lane).ToArray();
             int maxExact = laneOrdinary.Where(item => item.RangeMode == SearchSequenceRangeMode.ExactSlot)
                 .Select(item => item.RangeValue).DefaultIfEmpty(0).Max();
+            if (maxExact > pool.Length && maxExact <= initialCount) return ConsumedRelicSlot(lane, maxExact);
             if (maxExact > pool.Length)
                 return SearchSelectivityEstimate.Unpriced(
                     "Probability.Relic.ExactSlotOutsideCapturedLane",
@@ -591,6 +598,11 @@ internal static class SearchSelectivityEstimator
             });
     }
 
+    private static SearchSelectivityEstimate ConsumedRelicSlot(RelicSequenceKind lane, int slot) =>
+        SearchSelectivityEstimate.Exact(0, SearchSelectivityMethod.WithoutReplacement,
+            SearchSelectivityCoverage.ExactRequestedConjunction, SearchSelectivityDependencyClass.StructuralDependence,
+            "Probability.Relic.DeclaredCapsuleQueueExhausted", $"Declared Capsule pickups leave fewer than {slot} entries in {lane}.");
+
     internal static SearchSelectivityEstimate EstimateRelicConditions(
         SearchSelectivityInput plan,
         IReadOnlyList<RelicSequenceSearchCondition> sourceConditions)
@@ -660,10 +672,14 @@ internal static class SearchSelectivityEstimator
                 items.Add(new FiniteSequenceProbabilitySolver.Item(key));
             }
 
+            if (laneGroup.Key != RelicSequenceKind.Shop)
+                items = RelicSequencePredictionResult.AfterDeclaredPickups(items,
+                    ExplicitOpeningRelicFacts.DeclaredCapsuleContents(plan.CompiledSearch.NormalizedQuery), item => item.Key).ToList();
             // Relic evaluator treats an unavailable exact slot as Unknown rather than
             // NoMatch. Keep that boundary fail-visible instead of claiming P=0.
             int maxExact = laneGroup.Where(item => item.RangeMode == SearchSequenceRangeMode.ExactSlot)
                 .Select(item => item.RangeValue).DefaultIfEmpty(0).Max();
+            if (maxExact > items.Count && maxExact <= laneDense.Length) return ConsumedRelicSlot(laneGroup.Key, maxExact);
             if (maxExact > items.Count)
             {
                 return SearchSelectivityEstimate.Unpriced(

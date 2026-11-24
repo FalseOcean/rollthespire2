@@ -70,8 +70,10 @@ internal sealed partial class InRunMapPredictionPanel
         RecognizeNativeStroke();
         var hits = _hits.ToArray(); var mode = _strokeMode;
         CancelStroke();
-        if (DisplayedDraft is { } draft && hits.Length != 0)
-            draft.ApplyNativeStroke(hits, mode);
+        if (DisplayedDraft is { } draft && hits.Length != 0 &&
+            draft.ApplyNativeStroke(hits, mode) == PredictorMapDraftEditResult.Changed)
+            Persistence.MapRouteNotebook.Local().Edit(Persistence.RouteBookKey.ForRun(_run),
+                b => b.NativeDrawn[_actIndex] = draft.Selected.ToArray());
         _message = null;
         UpdateStatus();
     }
@@ -81,6 +83,7 @@ internal sealed partial class InRunMapPredictionPanel
         if (!_featureEnabled) return;
         CancelStroke(); CloseInformation();
         foreach (var draft in _drafts.Values) draft.Reset();
+        Persistence.MapRouteNotebook.Local().Edit(Persistence.RouteBookKey.ForRun(_run), b => b.NativeDrawn.Remove(_actIndex));
         _prediction.ClearPlans();
         _presenter = new(_prediction, _names, _text);
         ClearAnnotations(); _message = null;

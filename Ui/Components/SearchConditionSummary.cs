@@ -89,6 +89,7 @@ internal sealed partial class SearchConditionSummary : VBoxContainer
                 string source = player.UnlockSource switch
                 {
                     "AssumedFullyUnlocked" => Local("假定全解锁", "Assumed fully unlocked"),
+                    "CapturedLocalProfile" => Local("本机进度", "Local progress"),
                     "CapturedLobbySlot" or "CurrentContext" => Local("读取当前上下文", "Read current context"),
                     _ => player.UnlockSource
                 };

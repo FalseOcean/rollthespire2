@@ -672,11 +672,11 @@ internal static partial class UiSurfaceChecks
             Navigate("Search"); Call(frame, "SelectDomain", "neow"); await Frames();
             Check(frame.Visible && ReferenceEquals(frame.GetParent(), Field<Control>(shell, "_content")), "Search navigation reveals the direct frame");
             string beforeNavigation = Draft();
-            Call(frame, "OpenMultiplayerConfig");
-            var configuration = Field<Control>(frame, "_configOverlay");
-            Check(configuration.Visible && ReferenceEquals(configuration.GetParent(), shell) && Field<Button>(shell, "_analysis").Disabled,
-                "direct frame configuration owns the Shell overlay and modal navigation lock");
-            Check(frame.CloseModal() && !configuration.Visible && !Field<Button>(shell, "_analysis").Disabled,
+            ((Button)frame.FindChild("SavePreset", owned: false)).EmitSignal(Button.SignalName.Pressed);
+            var saveOverlay = Field<Control>(frame, "_presetSave");
+            Check(saveOverlay.IsVisibleInTree() && Field<Button>(shell, "_analysis").Disabled,
+                "saving a preset locks Shell navigation while the editor dialog is open");
+            Check(frame.CloseModal() && !saveOverlay.IsVisibleInTree() && !Field<Button>(shell, "_analysis").Disabled,
                 "closing the direct frame modal restores navigation");
             var guide = Nodes(Field<Control>(frame, "_neowEditor")).OfType<Button>().Single(button => button.Text is "Guide ↗" or "百科 ↗");
             guide.EmitSignal(BaseButton.SignalName.Pressed); await Frames();

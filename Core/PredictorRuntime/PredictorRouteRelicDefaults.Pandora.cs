@@ -12,7 +12,7 @@ internal sealed partial class PredictorRun
             Synchronize(state);
             var strikes = Deck.Project(PredictorDeckProjectionScope.BasicStrike);
             var defends = Deck.Project(PredictorDeckProjectionScope.BasicDefend);
-            // No targets means no transformation, receipt callbacks or Niche
+            // No targets means no transformation, receipt callbacks or RNG
             // consumption. Acquiring the box itself is still a real receipt.
             if (strikes.KnownCount == 0 && defends.KnownCount == 0) return state;
 
@@ -38,13 +38,11 @@ internal sealed partial class PredictorRun
             var definitions = catalog.CardDefinitions.ToDictionary(definition => definition.Prototype.Key);
             // Match Transform's pool/rarity exclusion, including the actual
             // source character. No representative replacement is generated.
-            var possible = possibleOriginals.SelectMany(original =>
+            var possible = possibleOriginals.Select(card => card.Key).Distinct().SelectMany(original =>
             {
-                var options = catalog.TransformationPools.Single(pool => pool.Key == definitions[original.Key].TransformationPool).Cards
-                    .Where(key => key != original.Key && (definitions[key].Rarity is "Common" or "Uncommon" or "Rare"))
-                    .Select(key => definitions[key].Prototype).ToArray();
+                var options = PredictorCardChanges.ReplacementPool(catalog, definitions, original);
                 if (options.Length == 0) throw new InvalidOperationException("PredictorTransformPoolDepleted");
-                return options;
+                return options.Select(key => definitions[key].Prototype);
             }).DistinctBy(card => card.Key).ToImmutableArray();
 
             var identity = PredictorRouteCauseEvidence.CreateExplicit("PandoraTransformIdentityPending", node,
@@ -76,13 +74,11 @@ internal sealed partial class PredictorRun
                 ChangedCardStateEntries = [], AffectedCardIds = countKnown ? [] : possibleOriginals.Select(card => card.Id).Where(id => id > 0).ToImmutableArray()
             });
 
-            AddStreamGap(PredictorStream.Niche, node, "PandoraTransformConsumptionPending", [identity], operation);
+            AddStreamGap(_context.RelicTransformStream, node, "PandoraTransformConsumptionPending", [identity], operation);
 
-            // Each original replacement is received once. Every Bing Bong
-            // listener adds one suppressed clone; Hoarder adds two. Suppressed
-            // clones still invoke Gold/Book/health callbacks, but never recurse.
-            int copies = 1 + state.Relics.Count(relic => !relic.Melted && relic.Key.Entry == "BING_BONG") +
-                (_context.HasRunModifier("HOARDER") ? 2 : 0);
+            // Transform supplies Deck as the old pile. Bing Bong copies it,
+            // and its clones still notify receipt hooks. Hoarder needs None.
+            int copies = 1 + state.Relics.Count(relic => !relic.Melted && relic.Key.Entry == "BING_BONG");
             int receipts = checked(targets.Length * copies);
             for (int receipt = 0; receipt < receipts; receipt++)
             {

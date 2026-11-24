@@ -21,6 +21,7 @@
     <Compile Include="AncientTransformationLocalEditorChecks.cs" />
     <Compile Include="TransformationAncientPrefilterChecks.cs" />
     <Compile Include="NeowCapsuleNonCombatChecks.cs" />
+    <Compile Include="BonesOrderReuseChecks.cs" />
     <Compile Include="PredictorCrystalContextChecks.cs" />
     <Compile Include="EventOpportunityPersistenceChecks.cs" />
     <Compile Include="EventOpportunityChecks.cs" />
@@ -74,6 +75,7 @@
     <Compile Include="PersistenceChecks.cs" />
     <Compile Include="DeveloperNotesArchiveChecks.cs" />
     <Compile Include="PresetWorkbenchChecks.cs" />
+    <Compile Include="PartySearchContextChecks.cs" />
     <Compile Include="NativeWorkbenchCheckEnvironment.cs" />
     <Compile Include="SaveStatusVersionChecks.cs" />
     <Compile Include="SeedLibraryWorkflowChecks.cs" />
@@ -96,6 +98,8 @@
     <Compile Include="MapLossyIntegrationChecks.cs" />
     <Compile Include="MapDrawingProgramChecks.cs" />
     <Compile Include="UnknownRoomChecks.cs" />
+    <Compile Include="UnknownSequenceUiChecks.cs" />
+    <Compile Include="RouteNotebookChecks.cs" />
     <Compile Include="InitialRoomExactChecks.cs" />
     <Compile Include="MorphicFilterChecks.cs" />
     <Compile Include="TransformationAggregateChecks.cs" />

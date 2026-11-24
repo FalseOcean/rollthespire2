@@ -64,6 +64,7 @@ internal sealed partial class QueryWorkbenchFrame
     internal void SetSearchMode(bool multiplayer, bool render = true)
     {
         if (_persistence.Runtime.Receiving) return;
+        if (multiplayer && !_partyConfigured) UseManualPartyUnlocks();
         _multiplayer = multiplayer;
         _seat = Math.Min(_seat, multiplayer ? _playerCount - 1 : 0);
         if (render) Refresh(_language, _text); else RefreshEditorContexts(false);
@@ -217,7 +218,7 @@ internal sealed partial class QueryWorkbenchFrame
     internal SearchPresetCapture CapturePreset(WorkbenchSearchDraft? authored = null)
     {
         if (_loadFailed) throw new InvalidOperationException("integration.load_shape");
-        var draft = (authored ?? CaptureAuthoredDraft()).WithoutCapturedAuthority();
+        var draft = (authored ?? CaptureDraft()).WithoutCapturedAuthority();
         var time = DateTimeOffset.UtcNow;
         var probability = SearchPresetProbabilitySnapshot.Unavailable(time);
         var provenance = SearchPresetProvenance.Unknown(_runtime.Detection.NormalizedVersion, time);
@@ -289,14 +290,11 @@ internal sealed partial class QueryWorkbenchFrame
     private WorkbenchSearchDraft BindPresetEnvironment(WorkbenchSearchDraft draft)
     {
         var lobby = IsInsideTree() ? LobbyUnlockReadout.Find(GetTree().Root) : null;
-        return draft.BindPresetIntent(_runtime, slot =>
-        {
-            if (lobby is null || lobby.Players.Count != draft.Players.Count)
-                throw new InvalidOperationException(_language == "zh"
-                    ? "此预设需要当前多人解锁信息。请进入对应人数的大厅后重试；原预设已保留。"
-                    : "This preset needs current party unlock data. Open a lobby with the matching player count and retry. The original preset is preserved.");
-            return lobby.Players.Single(p => p.slotId == slot).unlockState;
-        });
+        var players = lobby?.Players.OrderBy(p => p.slotId).ToArray();
+        bool matches = players is not null && players.Length == draft.Players.Count &&
+            !players.Where((p, slot) => p.slotId != slot).Any();
+        return draft.BindPresetIntent(_runtime, slot => matches
+            ? ReadSeatUnlocks(players![slot].unlockState) : ManualSeatUnlocks(slot));
     }
 
     internal void ApplyPreset(SearchPresetDefinition preset, bool render = true)
@@ -329,7 +327,7 @@ internal sealed partial class QueryWorkbenchFrame
         finally { probe._characterIcons.Dispose(); probe.Free(); }
         _persistence.SaveWorkbench(draft); _lastSaved = JsonSerializer.Serialize(draft);
         RestoreDraft(draft, render: false);
-        if (draft.Players.Any(p => p.UnlockSource == "CurrentContext"))
+        if (draft.Players.Any(p => p.UnlockSource == "CapturedLobbySlot"))
         {
             _readLobby = LobbyUnlockReadout.Find(GetTree().Root);
             _readRoster = _readLobby is null ? "" : LobbyUnlockReadout.Roster(_readLobby);

@@ -77,6 +77,9 @@ internal sealed partial class CombatRewardSearchEditor : Control
 
     public event Action? GuideRequested;
 
+    internal void StashPartySeat(int slot, List<Action> restore) =>
+        WorkbenchConditionReset.StashSeat(_partyDrafts, slot, restore);
+
     public void Refresh(string language, IUiTextProvider text, ModelKey character, int ascension,
         int players, int seat, SerializableUnlockState? unlocks = null, bool render = true, EditorRefreshContext? sharedContext = null)
     {

@@ -88,12 +88,15 @@ internal sealed record NeowFamilyGpuPlan(uint[] Meta, uint[] PoolMeta, uint[] Ca
         Meta[NeowCapsuleRarityGate.GpuMetadataIndex] == 0 && DirectNestedMode == 0 && JointTransformMetaOffset < 0;
     internal bool UseTerminalPair => _terminalPairEnabled && EndsAtPairIdentity;
     internal const string TerminalPairRevision = ".PairIdentityTerminal.20261119.v1";
-    internal bool UsePairMask => _pairMaskEnabled && EndsAtPairIdentity && UsesChildShuffle &&
+    internal bool UsePairMask => _pairMaskEnabled && (EndsAtPairIdentity || UsesStagedDense && UsesIndependentBonesOrder(2)) && UsesChildShuffle &&
         Meta[67] == 1 && Meta[8] is >= 2 and <= 32 && Meta[25] < Meta[8] && Meta[26] < Meta[8] &&
         Meta[25] != Meta[26] && Meta[27] != Meta[28] && Meta[12] == 255 && Meta[13] == 255 &&
         !HasAuthoredUpgrades && CapsuleNicheMetaOffset < 0 && ModernTransformGate is null;
     internal const string PairMaskRevision = ".UnorderedPairMask32.20261119.v1";
     internal bool UsesLeafyPreGate => Meta[70] != 0;
+    internal bool ReuseBonesOrder { get; init; }
+    internal bool UsesIndependentBonesOrder(int stage) => ReuseBonesOrder && FixedPairLocalSourceMask >= 0 &&
+        JointTransformMetaOffset < 0 && (stage == 3 || stage == 2 && !UseStagedLeafyKaleidoscope);
     internal bool HasSingleKaleidoscopeWithLeafy { get; init; }
     // Only staged Dense already established Leafy before reaching the pair checkpoint.
     internal bool UseStagedLeafyKaleidoscope => UsesStagedDense && UsesLeafyPreGate && HasSingleKaleidoscopeWithLeafy &&
@@ -126,7 +129,8 @@ internal sealed record NeowFamilyGpuPlan(uint[] Meta, uint[] PoolMeta, uint[] Ca
         (Meta[56] & 2u) == 0 && Meta[81] < 32 && DirectNestedMode == 0 && JointTransformMetaOffset < 0
         ? 1L << (int)Meta[81] : -1;
     internal string LocalSourceRevision(int stage) => stage == 3 && DirectLocalSourceMask >= 0
-        ? ".DirectLocalSource.20261114.v1" : FixedPairLocalSourceRevision(stage);
+        ? ".DirectLocalSource.20261114.v1" : FixedPairLocalSourceRevision(stage) +
+            (UsesIndependentBonesOrder(stage) ? ".IndependentBonesOrder.v2" : "");
     // Bounded N-private scheduling; explicit controls retain the same-build oracle.
     internal int DirectNestedMode { get; init; }
     internal string DirectNestedRevision(bool compact) => $"N.Neow.Gpu.DirectNested.{DirectNestedName}.{(compact ? "Compact" : UsesStagedDense ? "DensePreBones" : "DenseCarry8")}.CanonicalAbi1Ready.20260909.v1.LocalPoolAuthority.20261114.v1";

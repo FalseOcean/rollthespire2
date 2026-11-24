@@ -56,6 +56,8 @@ internal sealed record FilterBodyDescription(PreparedFilter Preparation, string 
     // Expensive CPU replay must be able to return a completed public batch
     // promptly even in a mixed GPU plan. This is not its private chunk size.
     internal int? MaximumRootWindowSize { get; init; }
+    // Dense entry pays replay cost on every root. A downstream replay can receive compact ABI1.
+    internal int? MaximumEntryRootWindowSize { get; init; }
     internal int CpuWorkers { get; init; } = 1;
     internal int PlayersCount { get; init; } = 1;
     internal string InputIdentity { get; init; } = "";

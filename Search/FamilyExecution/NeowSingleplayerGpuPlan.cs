@@ -178,6 +178,7 @@ internal static class NeowSingleplayerGpuPlan
                     plan.First == Beta110FastRelicCatalog.InvalidId && plan.Second == Beta110FastRelicCatalog.InvalidId &&
                     plan.EnabledDomains == Beta110FastDomain.None && plan.StructuredConditions.Length == 0 && plan.FilterRemainders.Length == 0,
                 HasAuthoredUpgrades = plan.AuthoredUpgrades is not null,
+                ReuseBonesOrder = meta[67] == 1 && NeowBonesOrderReuse.CanShare(plan, tracked),
                 HasSingleKaleidoscopeWithLeafy = plan.StructuredConditions.Length == 2 && leafy.Length == 1 &&
                     plan.StructuredConditions.Any(x => x.SourceRelicId == Beta110FastRelicCatalog.Kaleidoscope &&
                         x.Kind == Beta110FastStructuredConditionKind.KaleidoscopeIndependentOfferTargets &&

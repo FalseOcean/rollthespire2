@@ -112,7 +112,9 @@ internal sealed partial class AnalysisPage
         var column = WCard(parent, "", true);
         if (choice is null) { column.AddChild(WNote(Text(Ui1TextKey.AnalysisOpeningSelectRelicPrompt))); return; }
         var binding = choice.OpeningRoutes.FirstOrDefault(r => r.RouteId == opening);
-        if (binding is not null && choice.OpeningRoutes.Count > 1) column.AddChild(WNote(binding.Label));
+        if (binding is not null && choice.OpeningRoutes.Count > 1 &&
+            (choice.BonesOutcome is null || NeowChoiceStrip.HasAmbiguousBonesRoutes(choice)))
+            column.AddChild(WNote(binding.Label));
         var detail = _neowChoiceDetail;
         detail.Reparent(column);
         detail.Bind(choice, opening, Text(Ui1TextKey.MissingIconTooltip));
@@ -412,7 +414,8 @@ internal sealed partial class AnalysisPage
 
     private void RenderRelicInspector()
     {
-        _wbCenter.AddChild(WNote(Text("predictor.design.relic_scope")));
+        _wbCenter.AddChild(WNote(Text(_declaredCapsulePickups.Count > 0
+            ? "query.relic.capsule_deductions" : "predictor.design.relic_scope")));
         var toolbar = new HBoxContainer(); toolbar.AddThemeConstantOverride("separation", 10); _wbCenter.AddChild(toolbar);
         var search = new LineEdit { Name = "RelicQueueSearch", Text = _relicQuery, PlaceholderText = Text("predictor.design.relic_search"),
             ClearButtonEnabled = true, SizeFlagsHorizontal = SizeFlags.ExpandFill, CustomMinimumSize = new Vector2(0, 38) };
@@ -461,8 +464,8 @@ internal sealed partial class AnalysisPage
                         ? "predictor.analysis.bag_empty" : "predictor.unavailable")));
                 }
             }
-            Lanes("predictor.player_relic_bag", _viewModel!.RelicSequenceDomain.Items.Where(l => l.Kind != RelicSequenceKind.Shop));
-            Lanes("predictor.chest_shared_bag", _viewModel.TreasureRoomRelicSequenceDomain.Items);
+            Lanes("predictor.player_relic_bag", PlayerRelicLanes().Where(l => l.Kind != RelicSequenceKind.Shop));
+            Lanes("predictor.chest_shared_bag", _viewModel!.TreasureRoomRelicSequenceDomain.Items);
             Lanes("predictor.shops", _viewModel.RelicSequenceDomain.Items.Where(l => l.Kind == RelicSequenceKind.Shop));
             if (results.GetChildCount() == 0) results.AddChild(WNote(Text(string.IsNullOrWhiteSpace(_relicQuery)
                 ? "predictor.unavailable" : "predictor.design.no_matches")));

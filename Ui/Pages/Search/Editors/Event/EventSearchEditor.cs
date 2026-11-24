@@ -116,6 +116,9 @@ internal sealed partial class EventSearchEditor : Control
             .DistinctBy(source => source.Id).ToArray();
     }
 
+    internal void StashPartySeat(int slot, List<Action> restore) =>
+        WorkbenchConditionReset.StashSeat(_partyDrafts, slot, restore);
+
     public void Refresh(string language, IUiTextProvider text, ModelKey character, int ascension,
         int players, int seat, SerializableUnlockState? unlocks = null, bool render = true,
         Core.Authority.RuntimeContextAuthoritySnapshot? partyAuthority = null, EditorRefreshContext? sharedContext = null)

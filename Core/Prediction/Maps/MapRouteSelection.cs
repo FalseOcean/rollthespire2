@@ -10,9 +10,12 @@ internal sealed class MapRouteCommitment
     public MapPrediction Map { get; }
     public IReadOnlyList<MapPosition> Coordinates { get; }
     public MapRouteCommitment(MapPrediction map, IEnumerable<MapPosition> coordinates)
+        : this(map, coordinates, []) { }
+
+    internal MapRouteCommitment(MapPrediction map, IEnumerable<MapPosition> coordinates, IReadOnlyList<MapPosition> walked)
     {
         var copy = coordinates.ToArray();
-        if (!new MapRouteSet(map).IsLegal(copy)) throw new ArgumentException("Not a complete map route.");
+        if (!new MapRouteSet(map).AllowsObservedPrefix(copy, walked)) throw new ArgumentException("Not a complete map route.");
         Map = map;
         Coordinates = Array.AsReadOnly(copy);
     }
@@ -85,6 +88,18 @@ internal sealed class MapRouteSet
         return true;
     }
 
+    internal bool AllowsObservedPrefix(IReadOnlyList<MapPosition> path, IReadOnlyList<MapPosition> walked)
+    {
+        if (IsLegal(path)) return true;
+        if (walked.Count == 0 || path.Count < 2 || path[0] != _nodes[0].Position || path[^1] != _nodes[_end].Position) return false;
+        int offset = walked[0] == path[0] ? 0 : 1;
+        if (!path.Skip(offset).Take(walked.Count).SequenceEqual(walked)) return false;
+        for (int i = 1; i < path.Count; i++)
+            if (!_indices.TryGetValue(path[i - 1], out int a) || !_indices.TryGetValue(path[i], out int b) ||
+                path[i].Row <= path[i - 1].Row || i >= walked.Count + offset && !_next[a].Contains(b)) return false;
+        return true;
+    }
+
     public BigInteger Rank(IReadOnlyList<MapPosition> path)
     {
         if (!IsLegal(path)) throw new ArgumentException("Route not in this set.");
@@ -96,6 +111,9 @@ internal sealed class MapRouteSet
     }
 
     public MapPosition[] Match(IReadOnlyList<MapStrokePoint> stroke)
+        => MatchFrom(stroke, []);
+
+    public MapPosition[] MatchFrom(IReadOnlyList<MapStrokePoint> stroke, IReadOnlyList<MapPosition> walked)
     {
         if (stroke.Count < 2 || stroke.Any(p => !double.IsFinite(p.Column) || !double.IsFinite(p.Row)))
             throw new ArgumentException("A finite stroke with at least two points is required.");
@@ -110,8 +128,18 @@ internal sealed class MapRouteSet
             foreach (int j in _next[i])
                 if (own + cost[j] < cost[i] - 1e-9) { cost[i] = own + cost[j]; chosen[i] = j; }
         }
-        var path = new List<MapPosition>();
-        for (int i = 0; ; i = chosen[i]) { path.Add(_nodes[i].Position); if (i == _end) return path.ToArray(); }
+        var path = new List<MapPosition> { _nodes[0].Position };
+        int cursor = 0;
+        foreach (var pos in walked)
+        {
+            if (path[^1] == pos) continue;
+            if (!_indices.TryGetValue(pos, out int next) || pos.Row <= path[^1].Row || _counts[next] == 0)
+                return Match(stroke);
+            cursor = next;
+            path.Add(pos);
+        }
+        while (cursor != _end) { cursor = chosen[cursor]; path.Add(_nodes[cursor].Position); }
+        return path.ToArray();
     }
 
     // Row intersections, averaged for loops. Reversing the stroke has the same samples.

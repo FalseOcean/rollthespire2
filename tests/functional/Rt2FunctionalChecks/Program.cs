@@ -126,6 +126,7 @@ if (args.Contains("--silken-tress-order")) return FamilyCombatRewardChecks.Check
 if (args.Contains("--combat-neutral-witness", StringComparer.Ordinal)) return FamilyCombatRewardChecks.Run(0, neutralWitnessOnly: true);
 if (args.Contains("--capsule-obtain-policy")) return FamilyNeowChecks.CheckCapsuleObtainPolicy();
 if (args.Contains("--capsule-noncombat-continuation")) return NeowCapsuleNonCombatChecks.Run();
+if (args.Contains("--bones-order-reuse")) return BonesOrderReuseChecks.Run();
 if (args.Contains("--combination-regressions", StringComparer.Ordinal)) return CombinationRegressionChecks.Run();
 if (args.Contains("--persistence", StringComparer.Ordinal)) return PersistenceChecks.Run();
 if (args.Contains("--in-run-feature-defaults", StringComparer.Ordinal)) return PersistenceChecks.Run(featurePreferencesOnly: true);
@@ -137,6 +138,7 @@ if (args.Contains("--developer-notes-document", StringComparer.Ordinal))
 if (args.Contains("--feedback-export", StringComparer.Ordinal)) return FeedbackBundleChecks.Run();
 if (args.Contains("--feedback-search", StringComparer.Ordinal)) return SearchFeedbackChecks.Run();
 if (args.Contains("--preset-workbench", StringComparer.Ordinal)) return PresetWorkbenchChecks.Run();
+if (args.Contains("--party-search-context", StringComparer.Ordinal)) return PresetWorkbenchChecks.RunPartySearchContext();
 if (args.Contains("--seed-library-workflow", StringComparer.Ordinal)) return SeedLibraryWorkflowChecks.Run();
 if (args.Contains("--seed-library-persistence", StringComparer.Ordinal)) return SeedLibraryPersistenceChecks.Run();
 if (args.Contains("--card-collection-store", StringComparer.Ordinal)) return CardCollectionStoreChecks.Run();
@@ -148,6 +150,8 @@ if (args.Contains("--result-navigation")) return WorkbenchContractChecks.RunResu
 if (args.Contains("--save-status-version-ui", StringComparer.Ordinal)) return SaveStatusVersionChecks.Run();
 if (args.Contains("--combat-rarity-audit")) return CombatRarityAuditChecks.Run();
 if (args.Contains("--object-picker-context")) return ObjectPickerContextChecks.Run();
+if (args.Contains("--unknown-series-odds", StringComparer.Ordinal)) return UnknownRoomChecks.RunMarkedSeries();
+if (args.Contains("--unknown-series-ui", StringComparer.Ordinal)) return UnknownSequenceUiChecks.Run();
 if (args.Contains("--unknown-room", StringComparer.Ordinal)) return UnknownRoomChecks.Run();
 if (args.Contains("--treasure-room", StringComparer.Ordinal)) { Console.WriteLine("TREASURE_ROOM_PASS " + RelicCpuChecks.CheckTreasureProjection()); return 0; }
 if (args.Contains("--initial-room-exact", StringComparer.Ordinal)) return InitialRoomExactChecks.Run();

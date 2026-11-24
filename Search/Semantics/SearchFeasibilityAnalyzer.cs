@@ -175,6 +175,11 @@ internal static class SearchFeasibilityAnalyzer
                                 condition.Lane is RelicSequenceKind.Common or RelicSequenceKind.Uncommon or RelicSequenceKind.Rare)
             .ToArray();
 
+        // This direct-route proof assigns only the structured row's targets.
+        // Mixed declarations can remove additional identities from the tested range.
+        if (explicitConditions.Length > 0 &&
+            ExplicitOpeningRelicFacts.DeclaredCapsuleContents(compiled.NormalizedQuery).Except(targets).Any())
+            return false;
         if (!TryBuildExactPlayerRelicLanes(compiled, out ModelKey[][] lanes))
             return false;
 
@@ -228,7 +233,10 @@ internal static class SearchFeasibilityAnalyzer
                         .ToArray();
                     if (laneConditions.Length == 0 && laneFacts.Length == 0) continue;
 
-                    if (!TryHasSatisfyingLanePermutation(lanes[lane], laneConditions, laneFacts, out bool possible))
+                    var rawConditions = ExplicitOpeningRelicFacts.InitialQueueConditions(laneConditions,
+                        lanes[lane].Length, laneFacts.Select(f => (f.Position.Ordinal, f.Target)));
+                    if (rawConditions is null) { scenarioPossible = false; break; }
+                    if (!TryHasSatisfyingLanePermutation(lanes[lane], rawConditions, laneFacts, out bool possible))
                     {
                         encounteredUnknown = true;
                         scenarioPossible = false;

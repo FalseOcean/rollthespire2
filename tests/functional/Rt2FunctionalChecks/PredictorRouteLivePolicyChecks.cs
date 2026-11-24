@@ -280,6 +280,7 @@ internal static class PredictorRouteLivePolicyChecks
         bool Basic(PredictorCard card) => PredictorCardChanges.Definition(captured.Context, card.Key) is { Rarity: "Basic" } definition &&
             (definition.IsStrike || definition.IsDefend);
         var initial = captured.Checkpoints[0].State;
+        string transformCursor = "rng." + captured.Context.RelicTransformStream + ".calls";
         int count = initial.Deck.Select(initial.Card).Count(card => Basic(card) && card.Removable);
         Check(count > 0, "Pandora fixture has real removable basic targets");
         var plainRun = Route(captured, "PANDORAS_BOX");
@@ -288,8 +289,8 @@ internal static class PredictorRouteLivePolicyChecks
             !plain.Cards.Any(card => Basic(card.Value) && card.Value.Removable) &&
             plain.PendingCauses.Any(cause => cause.Code == "PandoraTransformIdentityPending") &&
             Fact(plain, "deck.BasicStrike.count").DisplayValue == "0" && Fact(plain, "deck.BasicDefend.count").DisplayValue == "0" &&
-            Fact(plain, "rng.Niche.calls").Status == PredictorKnowledgeStatus.Unknown,
-            "Pandora removes proven basics without publishing representative replacements or Niche progress");
+            Fact(plain, transformCursor).Status == PredictorKnowledgeStatus.Unknown,
+            "Pandora removes proven basics without publishing representative replacements or transform stream progress");
         var luckyRun = Route(captured, "PANDORAS_BOX", held: [Held("LUCKY_FYSH", 0)]);
         var lucky = Preview(luckyRun, [], count: 1).Nodes[0];
         Check(lucky.Treasure!.GoldBalance == plain.Treasure!.GoldBalance + 15 * count &&
@@ -301,18 +302,21 @@ internal static class PredictorRouteLivePolicyChecks
             Fact(book, "relic.20000.cardsAdded").Status == PredictorKnowledgeStatus.Known &&
             Fact(book, "relic.20000.cardsAdded").DisplayValue == count.ToString(),
             "unknown replacement identities do not erase Pandora's known Book receipt count");
-        var copies = Preview(Route(captured, "PANDORAS_BOX",
-            held: [Held("LUCKY_FYSH", 0), Held("BOOK_OF_FIVE_RINGS", 1), Held("BING_BONG", 2)], hoarder: true), [], count: 1).Nodes[0];
-        Check(copies.Treasure!.GoldBalance == plain.Treasure.GoldBalance + 15 * count * 4 &&
-            copies.Inventory!.Relics.Single(item => item.Value.Key == R("BOOK_OF_FIVE_RINGS")).Value.BookOfFiveRingsCardsAdded == count * 4,
-            "Bing Bong and Hoarder clones notify receipt hooks without recursive copying");
+        var copyRun = Route(captured, "PANDORAS_BOX",
+            held: [Held("LUCKY_FYSH", 0), Held("BOOK_OF_FIVE_RINGS", 1), Held("BING_BONG", 2)], hoarder: true);
+        var copies = Preview(copyRun, [], count: 1).Nodes[0];
+        var exactCopies = Preview(copyRun, [Treasure(copyRun, true)], PredictorRoutePreviewPolicy.AuthoredChoices, 1).Nodes[0];
+        Check(copies.Treasure!.GoldBalance == plain.Treasure.GoldBalance + 15 * count * 2 &&
+            copies.Treasure.GoldBalance == exactCopies.Treasure!.GoldBalance &&
+            copies.Inventory!.Relics.Single(item => item.Value.Key == R("BOOK_OF_FIVE_RINGS")).Value.BookOfFiveRingsCardsAdded == count * 2,
+            "Pandora's transformations trigger only Bing Bong copies and their receipt hooks");
         var noBasics = initial.Deck.Select(initial.Card).Where(card => !Basic(card)).ToImmutableArray();
         var emptyPlain = Preview(Route(captured, "PANDORAS_BOX", deck: noBasics), [], count: 1).Nodes[0];
         var emptyLucky = Preview(Route(captured, "PANDORAS_BOX", held: [Held("LUCKY_FYSH", 0)], deck: noBasics), [], count: 1).Nodes[0];
         Check(emptyLucky.Treasure!.GoldBalance == emptyPlain.Treasure!.GoldBalance &&
             !emptyLucky.PendingCauses.Any(cause => cause.Code.StartsWith("Pandora", StringComparison.Ordinal)) &&
-            Fact(emptyLucky, "rng.Niche.calls").Status == PredictorKnowledgeStatus.Known,
-            "Pandora with no basic targets adds no gold and invalidates no Niche stream");
+            Fact(emptyLucky, transformCursor).Status == PredictorKnowledgeStatus.Known,
+            "Pandora with no basic targets adds no gold and invalidates no transform stream");
         var exact = Preview(luckyRun, [Treasure(luckyRun, true)], PredictorRoutePreviewPolicy.AuthoredChoices, 1).Nodes[0];
         Check(exact.Cards.All(card => card.IsKnown) && exact.Treasure!.GoldBalance == lucky.Treasure.GoldBalance,
             "authored Pandora retains concrete transforms and agrees on mandatory receipt gold");

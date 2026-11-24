@@ -5,6 +5,7 @@ using RolltheSpire2.Search.Compilation;
 using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.FamilyExecution;
 using RolltheSpire2.Search.Semantics;
+using RolltheSpire2.Search.Runtime;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Relics;
 using RolltheSpire2.Core.Seed;
@@ -150,6 +151,58 @@ internal static class RelicCpuChecks
         return 65;
     }
 
+    // All three eggs are in the same captured lane. A real double-Capsule
+    // witness lets every partial declaration distinguish a different queue.
+    private static int CheckDeclaredCapsuleQueues(ProductionSearchReplayWorkload workload,
+        ProductionSearchReplayContext context)
+    {
+        var query = workload.Query;
+        var small = query.StructuredOpeningEffects.Single(row => row.SourceRelicKey == BaseGameModelKeys.Relics.SmallCapsule);
+        var large = query.StructuredOpeningEffects.Single(row => row.SourceRelicKey == BaseGameModelKeys.Relics.LargeCapsule);
+        var eggs = small.OutputKeys.Concat(large.OutputKeys).ToArray();
+        var profile = Beta111Profile.Instance;
+        PreparedSearch Prepare(SearchQuery q) {
+            var result = SearchPreparationCompiler.Compile(SearchCompiler.Compile(q, context.Context), workload.Options);
+            return result.Plan ?? throw new InvalidDataException("Declared Capsule queues: " + result.Issue);
+        }
+        var baseline = Prepare(query);
+        var input = TrustedRootHashInput.FromCanonicalSeed(profile, workload.Options.StartSeed);
+        if (!ProductionExactSearchEvaluator.Evaluate(baseline.Model, input).IsMatch)
+            throw new InvalidDataException("Expected the two-Capsule opening with all three specified eggs");
+        var lanes = RelicSequencePredictor.PredictFromRootHash(profile, input.RootHash, "DeclaredCapsules",
+            baseline.Model.Authority.WorldAuthority, 10).Lanes;
+        var lane = lanes.Single(l => eggs.All(egg => l.FullEntries.Any(item => item.RelicKey == egg)));
+        var initial = lane.FullEntries.Select(e => e.RelicKey).ToArray();
+        if (!initial.Take(3).ToHashSet().SetEquals(eggs)) throw new InvalidDataException("Three-egg witness prefix");
+        int checks = 0;
+        foreach (int mask in Enumerable.Range(0, 8))
+        foreach (bool grouped in new[] { false, true })
+        {
+            var named = eggs.Where((_, i) => (mask & (1 << i)) != 0).ToArray();
+            var rows = grouped
+                ? new[] { small with { SourceRelicKey = BaseGameModelKeys.Relics.NeowsBones,
+                    Kind = NeowStructuredConditionKind.ExactGroupedCapsuleMultiset, OutputKeys = named } }
+                : query.StructuredOpeningEffects.Select(row => row with { OutputKeys = row.OutputKeys.Intersect(named).ToArray() });
+            var opening = query with { StructuredOpeningEffects = rows.Where(row => row.OutputKeys.Count > 0).ToArray() };
+            var remaining = initial.Except(named).ToArray();
+            foreach (int position in new[] { 1, 2, 10 })
+            {
+                var expected = remaining[position - 1];
+                var condition = new RelicSequenceSearchCondition(lane.Kind, SearchSequenceRangeMode.ExactSlot, position,
+                    new([expected], [], []));
+                var plan = Prepare(opening with { RelicSequenceConstraints = [condition] });
+                if (!plan.Model.Evaluation.DeclaredCapsuleContents.ToHashSet().SetEquals(named) ||
+                    !ProductionExactSearchEvaluator.Evaluate(plan.Model, input).IsMatch ||
+                    !RelicFamilyPlanCompiler.TryCompile(plan.Model, out var ranks, out _) ||
+                    !RelicCpuPlan.TryCompile(ranks!)!.Matches(input.RootHash))
+                    throw new InvalidDataException($"Double Capsule queue: mask={mask} grouped={grouped} position={position} expected={expected}");
+                checks++;
+            }
+        }
+        Console.WriteLine($"DECLARED_CAPSULE_QUEUE_PASS seed={input.CanonicalSeed};checks={checks}");
+        return checks;
+    }
+
     internal static int Run(int count)
     {
         var context = ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/v1/context.json");
@@ -192,8 +245,13 @@ internal static class RelicCpuChecks
             Beta110FastRelicCatalog.TryGetId(key, out byte id) && RelicFullGpuPlan.CapsuleContinuationNeutralCompanion(id)).ToArray();
         var basis = cases[0].workload;
         var directSmall = cases.Single(c => c.path == "direct-capsule-v1/Small-C-check.json").workload;
+        var sameRelic = directSmall.Query with { RelicSequenceConstraints = basis.Query.RelicSequenceConstraints };
+        if (SearchPreparationCompiler.Compile(SearchCompiler.Compile(sameRelic, context.Context), directSmall.Options).Plan is not null)
+            throw new InvalidDataException("The specified Capsule relic cannot still occupy the first queue position");
+        var queue = basis.Query.RelicSequenceConstraints.Single() with
+            { Keys = new([new ModelKey("RELIC", "VAJRA")], [], []) };
         cases.Add(("authored/direct-capsule-plus-ordinary", directSmall with { Query = directSmall.Query with
-            { RelicSequenceConstraints = basis.Query.RelicSequenceConstraints } }));
+            { RelicSequenceConstraints = [queue] } }));
         var baseRequest = SearchPreparationCompiler.Compile(SearchCompiler.Compile(basis.Query, context.Context), basis.Options).Plan!;
         RelicFamilyPlanCompiler.TryCompilePool(baseRequest.Model, out _, out var dense, out var lanes, out _);
         for (int lane = 0; lane < 3; lane++)
@@ -210,7 +268,8 @@ internal static class RelicCpuChecks
                     { RelicSequenceConstraints = [new(kind, mode, depth, filters[f])] } }));
             }
         }
-        int checks = CheckTreasureProjection() + CheckLargeTargetPlan() + CheckNeutralCapsuleContinuation(source, context);
+        int checks = CheckTreasureProjection() + CheckLargeTargetPlan() + CheckNeutralCapsuleContinuation(source, context)
+            + CheckDeclaredCapsuleQueues(source, context);
         foreach (var (path, workload) in cases)
         {
             var result = SearchPreparationCompiler.Compile(SearchCompiler.Compile(workload.Query, context.Context), workload.Options);

@@ -141,6 +141,14 @@ internal sealed partial class NeowSearchEditor : Control
     public NeowSearchEditor(ModRuntimeSnapshot runtime, ObjectPickerPanel picker)
     { _runtime = runtime; _picker = picker; AddChild(_body); }
 
+    internal void StashPartySeat(int slot, List<Action> restore)
+    {
+        WorkbenchConditionReset.StashSeat(_partyCatalogDrafts, slot, restore);
+        WorkbenchConditionReset.StashSeat(_partyOffers, slot, restore);
+        WorkbenchConditionReset.StashSeat(_partyModes, slot, restore);
+        WorkbenchConditionReset.StashSeat(_partyChoices, slot, restore);
+    }
+
     public void Refresh(string language, ModelKey character, int ascension, int players, int seat,
         MegaCrit.Sts2.Core.Unlocks.SerializableUnlockState? unlocks = null, bool render = true, EditorRefreshContext? sharedContext = null)
     {

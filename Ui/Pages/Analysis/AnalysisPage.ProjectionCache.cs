@@ -23,11 +23,14 @@ internal sealed partial class AnalysisPage
         _overviewLifetime?.Cancel();
         _overviewLifetime?.Dispose();
         _overviewLifetime = null;
+        _unknownSequenceRows = null;
+        Array.Clear(_unknownMaximums);
         _overviewMaps.Clear();
         _overviewRoutes.Clear();
         _overviewRouteMetrics.Clear();
         _ancientPremiseVariants = null;
         _expandedAncientTransforms.Clear();
+        _expandedEncounters.Clear();
         _pandoraCountOverride = null;
         _merchantProjection = null;
         _eventProjection = null;
@@ -47,7 +50,11 @@ internal sealed partial class AnalysisPage
         bool secondBoss = LastFacts.World?.SelectedActs is { Count: > 0 } selectedActs
             ? request.Ascension >= 10 && act == selectedActs.Count
             : _viewModel!.BossDomain.Items.Any(b => b.Act == act && b.Ordinal == 2);
-        var task = Task.Run(() => Beta111MapPredictor.Predict(seed, request.Authority.ProfileId,
+        bool spoils = act == 2 && actKey.Entry == "HIVE" && SpoilsPreview;
+        var task = SeenMap(act) is { } seen ? Task.FromResult(seen.Map(seed, act)) :
+            spoils ? Task.Run(() => Beta111StandardMapGenerator.GenerateSpoilsMap(seed, actKey, request.Ascension,
+                cancellation, multiplayer: request.PlayersCount > 1, semantics: request.Authority.VersionResolution.SemanticProfileId), cancellation) :
+            Task.Run(() => Beta111MapPredictor.Predict(seed, request.Authority.ProfileId,
             actKey, act - 1, request.Ascension, request.PlayersCount, secondBoss, cancellation,
             request.Authority.VersionResolution.SemanticProfileId), cancellation);
         _overviewMaps[act] = task;

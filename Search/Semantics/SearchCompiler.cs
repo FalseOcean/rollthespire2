@@ -408,12 +408,18 @@ public static class SearchCompiler
             identity += "|" + FishingRodDrawResearch.SemanticIdentity(query.FishingRodDrawRequirements);
         if (query.TreasureRelics is { } treasure) identity +=
             $"|treasureRelics={treasure.StartOrdinal}:{treasure.Count}:{treasure.OrderMode}:{string.Join(">", treasure.Slots.Select(key => key?.Serialized ?? "*"))}";
+        if (UsesDeclaredCapsuleQueue(query) || query.Players.Any(player => UsesDeclaredCapsuleQueue(player.Conditions)))
+            identity += "|RelicQueue.DeclaredCapsuleContents.v1";
         if (UsesRevisedTreasureClaims(context, query)) identity += TreasureRelicSearchCondition.ClaimSequenceRevision;
         if (query.FirstActUnknownEventPrefixCount > 0) identity += "|unknownEventPrefix=" + query.FirstActUnknownEventPrefixCount;
         if (query.FirstActUnknownMonsterPrefixCount > 0) identity += "|unknownMonsterPrefix=" + query.FirstActUnknownMonsterPrefixCount;
         return query.TransformationAggregate is { } aggregate
             ? identity + "|transformationAggregate=" + aggregate.SemanticIdentity : identity;
     }
+
+    private static bool UsesDeclaredCapsuleQueue(SearchQuery query) =>
+        query.RelicSequenceConstraints.Any(row => !row.IsEmpty && row.Lane != RelicSequenceKind.Shop) &&
+        ExplicitOpeningRelicFacts.DeclaredCapsuleContents(query).Length != 0;
 
     internal static bool UsesRevisedTreasureClaims(SearchContext context, SearchQuery query) =>
         context.Authority.PlayersCount == 1 && context.Party is null &&
@@ -1043,7 +1049,7 @@ internal static class SearchQueryNormalizer
                 SemanticRelationKind.SameFact,
                 capsule,
                 bag,
-                "Capsule nested relics and explicit Common/Uncommon/Rare Relic Queue filters observe the same runtime-consumed initial player RelicGrabBag lanes; Shop is not runtime-consumed by Capsule."));
+                "Capsules draw from the initial personal bag. Common, Uncommon and Rare queue positions exclude the explicitly specified Capsule contents."));
             relations.Add(new SemanticRelation(
                 SemanticRelationKind.SequenceMembership,
                 capsule,

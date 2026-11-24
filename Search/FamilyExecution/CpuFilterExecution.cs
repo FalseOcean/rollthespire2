@@ -16,7 +16,7 @@ internal sealed class CpuFilterExecution : IFilterExecution
     private readonly Func<ulong, bool> _matches;
     private readonly NeowCpuFourWayPreGate? _fourWayPreGate;
     private readonly string _id;
-    private readonly int _workers, _windowCapacity, _rootMode;
+    private readonly int _workers, _windowCapacity, _rootMode, _minimumPartitionInputs;
     private readonly bool _partitioned;
     private readonly Action? _disposeDiagnostics;
     private bool _disabled;
@@ -27,11 +27,14 @@ internal sealed class CpuFilterExecution : IFilterExecution
     internal bool UsesFourWayPreGate => _fourWayPreGate is not null;
     internal double? CalibrationMeanInput { get; set; }
     internal CpuFilterExecution(FilterBodyDescription body, IRuntimeProfile profile, Func<ulong, bool> matches,
-        bool numericalRoots, bool packedSeedRoots = false, NeowCpuFourWayPreGate? gate = null,Action? disposeDiagnostics=null)
+        bool numericalRoots, bool packedSeedRoots = false, NeowCpuFourWayPreGate? gate = null, Action? disposeDiagnostics = null,
+        int minimumPartitionInputs = 1024)
     {
         Body = body; _profile = profile; _matches = matches; _id = body.FamilyId;
         _workers = body.CpuWorkers; _windowCapacity = body.WindowCapacity; _fourWayPreGate = gate;
         _disposeDiagnostics=disposeDiagnostics;
+        ArgumentOutOfRangeException.ThrowIfLessThan(minimumPartitionInputs, 1);
+        _minimumPartitionInputs = minimumPartitionInputs;
         if (_workers is < 1 or > 32 || _windowCapacity is < 1024 or > (1 << 20))
             throw new ArgumentOutOfRangeException(nameof(body));
         if (packedSeedRoots && !numericalRoots) throw new ArgumentException("Packed roots require numerical roots", nameof(packedSeedRoots));
@@ -146,7 +149,7 @@ internal sealed class CpuFilterExecution : IFilterExecution
         int length = inputLength ?? input.Count;
         // Pure, batch-local CPU work. All partitions join before publishing ABI1;
         // the existing producer, Exact pipeline and safe cursor remain owners.
-        int count = Math.Min(_workers, Math.Max(1, length / 1024));
+        int count = Math.Min(_workers, Math.Max(1, length / _minimumPartitionInputs));
         parts = count;
         var populations = new List<ulong>[count];
         void Partition(int part)

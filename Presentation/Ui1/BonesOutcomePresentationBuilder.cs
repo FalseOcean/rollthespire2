@@ -202,7 +202,7 @@ internal static class BonesOutcomePresentationBuilder
                     routeSet.RawLegalSelectionCount,
                     routeSet.DistinctDeckStateCount,
                     outcomes.Length),
-                outcomes);
+                outcomes) { AcquisitionOrder = routeSet.AcquisitionOrder };
         }).ToArray();
 
         return new PlayerChoiceImpactViewModel(

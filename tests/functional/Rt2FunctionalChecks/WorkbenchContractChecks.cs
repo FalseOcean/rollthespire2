@@ -1760,8 +1760,9 @@ internal static class WorkbenchContractChecks
         Check(rejected,"C7 is not truncated");
         cd.GetType().GetField("BattleRange")!.SetValue(cd,3);
         frame.RestoreDraft(empty,render:false);
-        typeof(QueryWorkbenchFrame).GetField("_multiplayer",BindingFlags.Instance|BindingFlags.NonPublic)!.SetValue(frame,true);
-        Check(frame.CaptureDraft().Players.All(p => p.UnlockSource == "AssumedFullyUnlocked"), "Multiplayer defaults to explicit full unlocks outside lobby");
+        frame.SetSearchMode(true, render: false);
+        Check(frame.CaptureDraft().Players.Select(p => p.UnlockSource).SequenceEqual(["CapturedLocalProfile", "AssumedFullyUnlocked"]),
+            "Multiplayer defaults to the local profile at P1 and full unlocks at P2");
         var partyBase=frame.CaptureDraft();
         var otherAncients=ac.Sections.First().Rows.Where(r=>r.IdentityAvailable&&r.AncientKey!=ancient.AncientKey)
             .Select(r=>r.AncientKey).Distinct().Take(2).ToArray();
@@ -1809,16 +1810,18 @@ internal static class WorkbenchContractChecks
             "Shared Ancient and individual preferences survive persistence");
         var sharedAncientEditor=(AncientSearchEditor)typeof(QueryWorkbenchFrame)
             .GetField("_ancientEditor",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(frame)!;
-        var beforeSharedChange=JsonSerializer.Serialize(sharedAncientEditor.ExportEditorState());
-        sharedAncientEditor.ImportSharedPartyQuery(partyAncientDraft.Query,partyAncientDraft.PartyAncientEditor);
+        frame.RestoreDraft(partyAncientDraft, render: false);
+        string PersonalDrafts() => JsonSerializer.Serialize(partyAncientDraft.Players.Select(p =>
+            sharedAncientEditor.ExportPartyEditorState(p.Slot)));
+        var beforeSharedChange=PersonalDrafts();
         Check(sharedAncientEditor.ExportSharedPartyQuery(SearchQuery.Empty).LegacyWorld.AncientIdentityFilters
             .Single().Keys.Any.Single()==ancient.AncientKey,"Shared Ancient identity imports into its own editor state");
         sharedAncientEditor.ImportSharedPartyQuery(SearchQuery.Empty with {LegacyWorld=LegacyWorldSemanticConstraints.Empty with
             {AncientIdentityFilters=[new(2,new([otherAncients[0]],[],[]))]}});
         Check(sharedAncientEditor.ExportSharedPartyQuery(SearchQuery.Empty).LegacyWorld.AncientIdentityFilters
             .Single().Keys.Any.Single()==otherAncients[0] &&
-            JsonSerializer.Serialize(sharedAncientEditor.ExportEditorState())==beforeSharedChange,
-            "Editing common Ancient leaves the current player's mode drafts unchanged");
+            PersonalDrafts()==beforeSharedChange,
+            "Changing a shared Ancient identity in advanced mode preserves each player's mode drafts");
         var uiText=RolltheSpire2.Presentation.Localization.JsonUiTextProvider.CreateUi13("en");
         var partyUnlocks=MegaCrit.Sts2.Core.Unlocks.UnlockState.all.ToSerializable();
         AncientEditorStateSnapshot PersonalAncient(ModelKey personalOption) => new(0,2,
@@ -1850,8 +1853,11 @@ internal static class WorkbenchContractChecks
             "Returning to the shared Ancient restores each player's own option draft");
         var unlockField = typeof(QueryWorkbenchFrame).GetField("_lobbyUnlocks",BindingFlags.Instance|BindingFlags.NonPublic)!;
         ((Array)unlockField.GetValue(frame)!).SetValue(null, 1);
-        rejected=false;try{frame.CaptureDraft();}catch(InvalidOperationException e){rejected=e.Message.StartsWith("Party.UnlocksUnread:",StringComparison.Ordinal);}
-        Check(rejected,"Multiplayer missing member authority never submitted as P1");
+        var broken = frame.CaptureDraft();
+        Check(broken.Players[0].Unlocks is not null && broken.Players[1].Unlocks is null,
+            "artificially missing P2 authority never inherits P1 progress");
+        rejected=false;try{broken.Compile(runtime,out _);}catch(InvalidOperationException e){rejected=e.Message=="Party.UnlocksUnread";}
+        Check(rejected,"incomplete internal party authority is rejected at compilation");
         frame.RestoreDraft(empty,render:false);
         object Private(object instance,string field) => instance.GetType().GetField(field,BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(instance)!;
         void Refused(string issue)
@@ -2099,12 +2105,11 @@ internal static class WorkbenchContractChecks
         double tContribution=attribution.Rows.Single(r=>r.Kind==RolltheSpire2.Presentation.Ui1.SearchProbabilityRowKind.TransformationAggregate).Probability!.Value;
         Check(Math.Abs(nContribution-TransformationAggregateProbability.Build(aggregate).IdentityProbability)<1e-12 &&
             Math.Abs(nContribution*tContribution-tProbability!.Value)<1e-12,"N identity and conditional T contribution are visible and charged once");
-        var merge=typeof(ProductionExactSearchEvaluator).GetMethod("MergeCanonicalGlobalEvidence",BindingFlags.Static|BindingFlags.NonPublic)!;
         var positive=ProductionExactSearchEvaluator.Evaluate(plan.Model,root).Evaluation;
         var proof=positive.Evidence.First(e=>e.Code=="TransformationAggregateMatched");
         var oppositeWitness=positive.Witnesses[0] with {AcquisitionOrder=proof.AcquisitionOrder!.Reverse().ToArray()};
         var incompatible=SearchQueryEvaluation.Match([], [oppositeWitness.OpeningRouteId], [oppositeWitness]);
-        var intersection=(SearchQueryEvaluation)merge.Invoke(null,new object[]{incompatible,SearchQueryEvaluation.Match([proof])})!;
+        var intersection=ProductionExactSearchEvaluator.MergeCanonicalGlobalEvidence(incompatible,SearchQueryEvaluation.Match([proof]));
         Check(intersection.Disposition==SearchDisposition.NoMatch,"Exact cannot combine opposite pickup route witnesses");
         if(Environment.GetEnvironmentVariable("RT2_BONES_C_GPU")=="1")
         {

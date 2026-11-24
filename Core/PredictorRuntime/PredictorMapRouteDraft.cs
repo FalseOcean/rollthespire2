@@ -67,6 +67,17 @@ internal sealed class PredictorMapRouteDraft
         return PredictorMapDraftEditResult.Changed;
     }
 
+    internal void RestoreDrawnPoints(IEnumerable<MapPosition> saved)
+    {
+        var points = Order(saved.Distinct().Where(p => _points.ContainsKey(p) &&
+            (Previous is null || p.Row > Previous.Value.Row)));
+        _undo.Clear();
+        _fragments = points.IsEmpty ? [] : [new(points, points[0].Row, ++_revision)];
+        // Keep the visible intent after the player took a different branch.
+        // SetSelection supplies a usable prediction prefix only when it is reachable.
+        SetSelection(points);
+    }
+
     /// <summary>
     /// Merge one newly recognized native gesture, never accumulated drawings.
     /// Shared points split competing intent into sections: lower section starts

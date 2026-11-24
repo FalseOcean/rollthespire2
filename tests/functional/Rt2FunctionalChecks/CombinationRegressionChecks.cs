@@ -352,7 +352,10 @@ internal static partial class CombinationRegressionChecks
                 new Beta109RelicBucketSnapshot(g.Key.ToString(), g.Select(r => r.RelicKey).ToArray(), true) {
                     OrderedEntries = g.Select(r => new Beta109RelicBucketEntrySnapshot(r.RelicKey, r.IsAllowedInShops, true)).ToArray()
                 }), new("Shop", [], true) { OrderedEntries = [] }];
-            generation = generation with { SharedRelicBuckets = buckets, PlayerRelicBuckets = buckets };
+            generation = generation with {
+                SharedRelicBuckets = buckets.Select(b => b with { BucketId = "shared:" + b.BucketId }).ToArray(),
+                PlayerRelicBuckets = buckets.Select(b => b with { BucketId = "player:" + b.BucketId }).ToArray()
+            };
         }
         var players = Enumerable.Range(0, count).Select(slot => new RuntimeContextAuthoritySnapshot(
             source.Character, source.Ascension, slot, count, source.NoRunModifiers, source.VanillaNeowCatalogExact,

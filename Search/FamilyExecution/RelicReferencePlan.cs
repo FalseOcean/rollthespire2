@@ -20,6 +20,7 @@ internal sealed class RelicReferencePlan(ExactSearchEvaluationProjection evaluat
 
     internal static ExactSearchEvaluationProjection ProjectEvaluation(SearchModel model) =>
         ExactSearchEvaluationProjection.Empty with {
+            DeclaredCapsuleContents = model.Evaluation.DeclaredCapsuleContents,
             RelicSequenceConditions = model.Evaluation.RelicSequenceConditions,
             RelicShopSequenceConditions = model.Evaluation.RelicShopSequenceConditions,
             CapsuleContainedRelics = model.Evaluation.CapsuleContainedRelics,
@@ -47,12 +48,18 @@ internal sealed class RelicReferencePlan(ExactSearchEvaluationProjection evaluat
         bool? result = true;
         foreach (var condition in evaluation.RelicSequenceConditions.Where(c => !c.IsEmpty))
         {
-            var lane = prediction.GetPlayerLane(condition.Lane);
+            var lane = prediction.GetPlayerLane(condition.Lane, evaluation.DeclaredCapsuleContents);
             if (lane?.Precision != PredictionPrecision.Exact) { result = null; continue; }
             var range = condition.RangeMode == SearchSequenceRangeMode.FirstN
                 ? lane.Entries.Where(item => item.Position <= condition.RangeValue).Select(item => item.RelicKey).ToArray()
                 : lane.Entries.Where(item => item.Position == condition.RangeValue).Select(item => item.RelicKey).ToArray();
-            if (condition.RangeMode == SearchSequenceRangeMode.ExactSlot && range.Length != 1) return false;
+            if (condition.RangeMode == SearchSequenceRangeMode.ExactSlot && range.Length != 1)
+            {
+                if (condition.RangeValue > lane.TotalCount && condition.RangeValue <= prediction.GetPlayerLane(condition.Lane)!.TotalCount)
+                    return false;
+                result = null;
+                continue;
+            }
             if (!QueryKeySetPredicate.MatchesKeySet(range, condition.Keys)) return false;
         }
         var shop = prediction.GetPlayerLane(RelicSequenceKind.Shop);

@@ -26,4 +26,10 @@ internal static class NativeMapRoomIcons
         var path = PathFor(type);
         return ResourceLoader.Exists(path) ? ResourceLoader.Load<Texture2D>(path) : null;
     }
+
+    internal static Texture2D? ResolveHistoryIcon(GameMapPointType point, MegaCrit.Sts2.Core.Rooms.RoomType room)
+    {
+        var path = MegaCrit.Sts2.Core.Helpers.ImageHelper.GetRoomIconPath(point, room, null);
+        return path is not null && ResourceLoader.Exists(path) ? ResourceLoader.Load<Texture2D>(path) : null;
+    }
 }

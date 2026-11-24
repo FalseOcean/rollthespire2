@@ -149,6 +149,7 @@ public sealed record PlayerChoiceRouteSetViewModel(
     string CountsLabel,
     IReadOnlyList<PlayerChoiceOutcomeViewModel> DistinctOutcomes)
 {
+    public IReadOnlyList<ModelKey> AcquisitionOrder { get; init; } = [];
     public string ChoiceRelicName => ChoiceRelic.DisplayName;
 }
 

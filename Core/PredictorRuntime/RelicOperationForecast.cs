@@ -188,6 +188,11 @@ internal static class RelicOperationForecast
         ImmutableArray<PredictorInput> rootInputs, ModelKey source, PredictorOperationResult before,
         PredictorOperationResult initial, CancellationToken token, OperationForecastExecution execution, ImmutableArray<long> orderedPrefix = default)
     {
+        if (snapshot.Scene is PredictorOperationAncientScene && rootInputs is [ChooseAncientOffer] &&
+            (source.Entry, initial.Waiting.Phase) is ("ASTROLABE", PredictorPhase.ObtainDeckCards) or ("NEW_LEAF", PredictorPhase.TransformCards) &&
+            ForecastDirectTransform(snapshot.Context, source, initial, token) is { } independent)
+            return independent;
+
         var faults = ImmutableArray.CreateBuilder<OperationForecastFault>();
         var pending = ImmutableArray.CreateBuilder<string>();
         var outcomes = new Dictionary<int, List<(PredictorCard Card, int Rank)>>();
@@ -284,6 +289,25 @@ internal static class RelicOperationForecast
             [new([], sections.ToImmutable(), pending.Distinct().ToImmutableArray(), examined,
                 faults.Count == 0 && pending.Count == 0) { Faulted = faults.Count > 0 }], [])
             { Faults = faults.ToImmutable() };
+    }
+
+    private static OperationForecast? ForecastDirectTransform(PredictorContext context, ModelKey source,
+        PredictorOperationResult initial, CancellationToken token)
+    {
+        var state = initial.State;
+        var selection = initial.Waiting.Selection;
+        var candidates = state.Deck.Where(selection.CandidateCardIds.Contains).ToImmutableArray();
+        int slots = selection.MaximumCardCount;
+        if (selection.MinimumCardCount != slots) return null;
+        bool astrolabe = source.Entry == "ASTROLABE";
+        var rng = state.Streams.Single(stream => stream.Stream == context.RelicTransformStream).Restore();
+        var projections = PredictorCardChanges.ProjectReplacementSlots(context, state, candidates, slots, rng, astrolabe, token, out int examined);
+        if (projections.IsDefault) return null;
+        var groups = projections.Select((cards, slot) => new OperationOutcomeChoices(-101 - slot, cards, 0, 1, false, true)
+            { Kind = astrolabe ? (slot + 1).ToString() : null, OrderedAlternatives = true }).ToImmutableArray();
+        var section = new OperationOutcomeSource(source, [], groups)
+            { Category = OperationOutcomeCategory.CardTransform };
+        return new(source, [], [], false, [new([], [section], [], examined, true)], []);
     }
 
     private static IEnumerable<ImmutableArray<long>> OrderedTargets(ImmutableArray<long> candidates, int count,

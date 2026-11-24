@@ -69,10 +69,6 @@ internal sealed partial class QueryWorkbenchFrame
             CombatRewardEditor = _combatEditor.ExportEditorState(), MapEditor = _actInformationEditor.ExportMapState() };
     }
 
-    private WorkbenchSearchDraft CaptureAuthoredDraft() => _multiplayer
-        ? CapturePartyDraft(forStorage: true) with { ManualFamilyOrder = _manualFamilyOrder?.ToArray() }
-        : CaptureDraft();
-
     internal void RestoreDraft(WorkbenchSearchDraft draft, bool render = true, bool migrateLegacyTransformations = true)
     {
         using var observation = _editorInputs.Observe(_runtime);
@@ -294,7 +290,7 @@ internal sealed partial class QueryWorkbenchFrame
         {
             // Unavailable catalogs must not replace the saved intent on panel closure.
             _ = RolltheSpire2.Compatibility.ProfileSeedGenerator.CreateProbeSeed(_runtime.Profile);
-            var draft=CaptureAuthoredDraft().WithoutCapturedAuthority();
+            var draft=CaptureDraft().WithoutCapturedAuthority();
             stage = "DraftSave";
             string serialized = JsonSerializer.Serialize(draft);
             if (_restoredCaptureStamp == serialized || _lastSaved == serialized) return;
@@ -337,9 +333,6 @@ internal sealed partial class QueryWorkbenchFrame
         }
         catch (Exception exception)
         {
-            if (_multiplayer && (exception.Message.StartsWith("Party.UnlocksUnread", StringComparison.Ordinal) ||
-                exception.Message is "Party.LobbySizeMismatch" or "Party.LobbyChangedReadUnlocksAgain"))
-                SaveDraft();
             _lastIssue = exception.Message;
             if (_start is not null) _start.Disabled = true;
             if (_status is not null) _status.Text = Explain(exception, "DraftCapture");
@@ -380,6 +373,11 @@ internal sealed partial class QueryWorkbenchFrame
         {
             if (_loadFailed) throw new InvalidOperationException(_restoreFailure.Length == 0 ? "integration.load_shape" : _restoreFailure);
             if (_editorContextIssue.Length > 0) throw new InvalidOperationException(_editorContextIssue);
+            if (_multiplayer && DropExpiredLobby())
+            {
+                UpdateSeatReadLabels();
+                RefreshEditorContexts();
+            }
             var feasibility = _persistence.Runtime.Start(CaptureDraft(), _runtime, _target, SearchWorkers,
                 IsInsideTree() ? GetTree() : null, requestedAt);
             if (feasibility.IsImpossible)
@@ -435,7 +433,7 @@ internal sealed partial class QueryWorkbenchFrame
             int count = ResultCount;
             if (!_showResults && !_persistence.Runtime.Receiving)
             {
-                try { count = _persistence.ResultCountForQuery(CaptureAuthoredDraft()); }
+                try { count = _persistence.ResultCountForQuery(CaptureDraft()); }
                 catch { count = 0; }
             }
             _savedResultsEntry.Text = _text.Format("workflow.results.view_last", count);
@@ -452,7 +450,7 @@ internal sealed partial class QueryWorkbenchFrame
             try
             {
                 _persistence.EnsureEnvironment(SearchEnvironmentSignatureBuilder.Capture(_runtime));
-                _persistence.ActivateQueryResults(CaptureAuthoredDraft());
+                _persistence.ActivateQueryResults(CaptureDraft());
             }
             catch (Exception ex) { ReceiptText(Explain(ex)); return; }
         }

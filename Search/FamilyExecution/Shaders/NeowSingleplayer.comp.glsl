@@ -19,6 +19,7 @@
 #define N_INTERNAL_ORDER 0
 #define N_TERMINAL_PAIR 0
 #define N_PAIR_MASK 0
+#define N_PAIR_ROOT_ONLY 0
 #define N_MODERN_TRANSFORM_GATE 0
 #define N_DIRECT_FIRST_DRAW 0
 #define N_DENSE_PREFIX_TABLE 0
@@ -320,11 +321,11 @@ bool pair_identity(uint64_t root, inout RngState rewards, out uint a, out uint b
                 // tail bit down to j. Future draws never inspect the old tail bit.
                 if (((required>>j)&1u)!=0u) return false;
                 required|=((required>>tail)&1u)<<j;
-#if !N_TERMINAL_PAIR
+#if !N_TERMINAL_PAIR && !N_PAIR_ROOT_ONLY
                 if (p==tail) p=j;
 #endif
             }
-#if N_TERMINAL_PAIR
+#if N_TERMINAL_PAIR || N_PAIR_ROOT_ONLY
             // Only the unordered set below is observed before appending the ordinal.
             // The private child state and the final two-slot orientation are discarded.
             a=plan_value(27u); b=plan_value(28u);
@@ -434,6 +435,7 @@ bool local_matches(uint64_t root, RngState rewards, uint a, uint b) {
     return bones_capsule_composite(a,b,rewards,root);
 #endif
     if (NR_CAPSULE==0 && plan_value(84u)==0u && plan_value(83u)==0u) return true;
+    /*__RT2_N_INDEPENDENT_BONES_ORDER__*/
     bool forward=route(root,rewards,a,b);
 #if N_DIRECT_NESTED == 100 || N_DIRECT_NESTED == 101
     if(forward) return true;
@@ -653,6 +655,11 @@ void main() {
 #if N_TERMINAL_PAIR
         // With no remaining local predicate or continuation, the pair is the output.
         append_ordinal(ordinal);
+#elif N_PAIR_ROOT_ONLY
+        // The local predicate needs the root. The child shuffle leaves Rewards untouched.
+        uint dst=slot*3u;
+        pair_survivors.values[dst]=ordinal;
+        pair_survivors.values[dst+1u]=uint(root); pair_survivors.values[dst+2u]=uint(root>>32u);
 #else
         uint dst=slot*12u;
         pair_survivors.values[dst]=ordinal;
@@ -664,6 +671,12 @@ void main() {
         pair_survivors.values[dst+10u]=uint(rewards.s3); pair_survivors.values[dst+11u]=uint(rewards.s3>>32u);
 #endif
 #else
+#if N_PAIR_ROOT_ONLY
+        uint src=(first+lane)*3u;
+        uint64_t root=make_u64(pair_survivors.values[src+1u],pair_survivors.values[src+2u]);
+        RngState rewards=rng_initialize(root+plan_u64(33u));
+        if(local_matches(root,rewards,plan_value(27u),plan_value(28u))) append_ordinal(pair_survivors.values[src]);
+#else
         uint src=(first+lane)*12u;
         uint64_t root=make_u64(pair_survivors.values[src+1u],pair_survivors.values[src+2u]);
         uint pair=pair_survivors.values[src+3u];
@@ -673,6 +686,7 @@ void main() {
         rewards.s2=make_u64(pair_survivors.values[src+8u],pair_survivors.values[src+9u]);
         rewards.s3=make_u64(pair_survivors.values[src+10u],pair_survivors.values[src+11u]);
         if(local_matches(root,rewards,pair&255u,pair>>8u)) append_ordinal(pair_survivors.values[src]);
+#endif
 #endif
     }
 }

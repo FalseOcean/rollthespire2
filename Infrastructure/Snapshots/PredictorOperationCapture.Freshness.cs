@@ -25,26 +25,8 @@ internal static partial class PredictorOperationCapture
         NDeckTransformSelectScreen selector, out string? stamp, CaptureTiming? timing = null)
     {
         stamp = null;
-        // Only these callers finish the ordinary direct obtain after Astrolabe's
-        // await. Composite obtains/events can resume additional work and retain
-        // their existing complete publication capture.
-        long relicId = snapshot.Scene switch
-        {
-            PredictorOperationObtainScene { Source.Entry: "ASTROLABE", Kind: PredictorOperationObtainChildKind.Deck,
-                Destination: PredictorObtainReturn.Ancient, Parent: PredictorOperationAncientScene } scene => scene.RelicId,
-            PredictorOperationObtainScene { Source.Entry: "ASTROLABE", Kind: PredictorOperationObtainChildKind.Deck,
-                Destination: PredictorObtainReturn.Reward, Parent: PredictorOperationRewardsScene } scene => scene.RelicId,
-            PredictorOperationShopScene { PendingRelic.Choice.Source.Entry: "ASTROLABE" } scene => scene.PendingRelic.Choice.RelicId,
-            _ => 0
-        };
-        if (relicId == 0) return false;
-        if (!snapshot.Context.Modifiers.IsEmpty || snapshot.Context.Operation is not { } operation || operation.OpaqueModels.IsDefault ||
-            operation.IgnoresBehavior(snapshot.Context.Character) || snapshot.State.Deck.Any(id =>
-                operation.IgnoresBehavior(snapshot.State.Card(id).Key) || snapshot.State.Card(id).Enchantment is { } enchantment &&
-                operation.IgnoresBehavior(enchantment)) || snapshot.State.Relics.Any(relic => !relic.Melted &&
-                (operation.IgnoresBehavior(relic.Key) || relic.Key.Entry is "MOLTEN_EGG" or "TOXIC_EGG" or "FROZEN_EGG" or
-                    "FRESNEL_LENS" or "BING_BONG" or "LUCKY_FYSH" or "DARKSTONE_PERIAPT" or "BOOK_OF_FIVE_RINGS"))) return false;
-        if (!SelectionSources.TryGetValue(selector, out var source) || source.Parent != null ||
+        if (TransformSelectionForecast.DirectAstrolabeRelicId(snapshot) is not { } relicId ||
+            !SelectionSources.TryGetValue(selector, out var source) || source.Parent != null ||
             Id(source.Relic) != relicId) return false;
         stamp = DirectTransformObservationStamp(snapshot, run, selector, timing: timing);
         return stamp != null;

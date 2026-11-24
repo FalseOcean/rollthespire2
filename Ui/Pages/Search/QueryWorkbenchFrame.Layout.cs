@@ -39,7 +39,7 @@ internal sealed partial class QueryWorkbenchFrame
             {
                 if (_persistence.LoadWorkbench() is { } saved)
                 {
-                    RestoreDraft(saved, render: false);
+                    RestoreDraft(PrepareSavedEditorParty(saved), render: false);
                     restoredDraft = true;
                 }
             }
@@ -47,7 +47,7 @@ internal sealed partial class QueryWorkbenchFrame
         }
         SyncSavedResults();
         foreach (var child in GetChildren())
-        { if (child != _objectPicker && child != _searchTooltipLayer && child != _configOverlay && child != _neowEditor && child != _combatEditor && child != _shopEditor && child != _relicEditor && child != _ancientEditor && child != _eventEditor && child != _actInformationEditor && child != _transformationEditor) { RemoveChild(child); child.QueueFree(); } }
+        { if (child != _objectPicker && child != _searchTooltipLayer && child != _neowEditor && child != _combatEditor && child != _shopEditor && child != _relicEditor && child != _ancientEditor && child != _eventEditor && child != _actInformationEditor && child != _transformationEditor) { RemoveChild(child); child.QueueFree(); } }
         _domainButtons.Clear();
         _domainCountLabels.Clear();
         _researchIdeasPanel = null;
@@ -58,7 +58,6 @@ internal sealed partial class QueryWorkbenchFrame
         _removeFishingRodDraw.Clear();
         _seatButtons.Clear();
         _currentUnlockStatus = null;
-        _configButton = null;
         var names = RuntimeGameContentNameResolver.Create(language);
         const float presetWidth = (RailContentWidth - 8) / 2;
         var back = _p.CompactButton(_text.Get("preset.title"), AuthoringHeaderHeight); back.Name = "OpenPresets";

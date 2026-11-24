@@ -435,7 +435,7 @@ public static partial class FamilyExecutionCoordinator
         // smaller public boundary was selected.
         int fallback = gpu ? FamilyPhysicalExecutionDefaults.DefaultCandidateBatchSize : families.Min(f => f.WindowCapacity);
         return families.Where(f => !gpu || f.UsesGpu).Select(f => f.PreferredRootWindowSize).Where(size => size.HasValue)
-            .Select(size => size!.Value).Append(fallback)
+            .Select(size => size!.Value).Append(Math.Min(fallback, families[0].MaximumEntryRootWindowSize ?? fallback))
             .Concat(families.Where(f => f.MaximumRootWindowSize.HasValue).Select(f => f.MaximumRootWindowSize!.Value)).Min();
     }
 

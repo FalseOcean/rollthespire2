@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Identity;
+using RolltheSpire2.Core.Rng;
 
 namespace RolltheSpire2.Core.PredictorRuntime;
 
@@ -161,15 +162,32 @@ internal static class EventOperationForecast
                 Add(sections.Add(new(scene.Event, [], [group])), label);
                 return;
             }
-            if (result.Waiting.Phase == PredictorPhase.EventCards && IsRandomTransform(scene.Event.Entry, optionKey))
+            if (result.Waiting.Phase == PredictorPhase.EventCards &&
+                TransformSelectionForecast.IsRandomEventTransform(scene.Event.Entry, optionKey))
             {
+                var selection = result.Waiting.Selection;
+                var candidates = result.State.Deck.Where(selection.CandidateCardIds.Contains).ToImmutableArray();
+                if (result.EventRngAfter is { } rng)
+                {
+                    // The option already consumed any opening draws and added
+                    // cards required before showing the picker (e.g. Trial).
+                    // This overview only displays the primary transforms.
+                    var groups = PredictorCardChanges.ProjectReplacementSlots(snapshot.Context, result.State, candidates,
+                        selection.RequiredCardCount, Xoshiro256StarStar.FromState(rng.S0, rng.S1, rng.S2, rng.S3, rng.Calls),
+                        upgradeBeforeAdd: false, token, out int projected);
+                    if (!groups.IsDefault)
+                    {
+                        _evaluations += projected;
+                        AddTransformAlternatives(groups, true);
+                        return;
+                    }
+                }
+
                 int examined = 0;
-                var slots = Enumerable.Range(0, result.Waiting.Selection.RequiredCardCount)
+                var slots = Enumerable.Range(0, selection.RequiredCardCount)
                     .Select(_ => new List<(PredictorCard Card, int Rank)>()).ToArray();
                 bool complete = true;
-                var candidates = result.State.Deck.Where(result.Waiting.Selection.CandidateCardIds.Contains).ToImmutableArray();
-                foreach (var ids in OrderedTargets(candidates,
-                    result.Waiting.Selection.RequiredCardCount, []))
+                foreach (var ids in OrderedTargets(candidates, selection.RequiredCardCount, []))
                 {
                     if (examined++ >= MaximumAlternatives)
                     { _pending.Add("EventTargetAlternativesLimit:256"); complete = false; break; }
@@ -185,17 +203,21 @@ internal static class EventOperationForecast
                         slots[slot].Add((card, rank));
                     }
                 }
-                _transformAlternatives = true;
-                var groups = slots.Select((cards, slot) => new OperationOutcomeChoices(-1 - slot,
-                    cards.OrderBy(item => item.Rank).DistinctBy(item => item.Card with { Id = 0 })
-                        .Select(item => item.Card).ToImmutableArray(), 1, 1, false, true)
-                    { Kind = (slot + 1).ToString(), OrderedAlternatives = true }).ToImmutableArray();
+                AddTransformAlternatives(slots.Select(cards => cards.OrderBy(item => item.Rank)
+                    .DistinctBy(item => item.Card with { Id = 0 }).Select(item => item.Card).ToImmutableArray()).ToImmutableArray(), complete);
+                return;
+
                 // Query records its actual rejection/fault and the cap records
                 // its actual limit. Incompleteness does not invent a missing
                 // player input in addition to those originating causes.
-                _branches.Add(new([], sections.Add(new(scene.Event, [], groups)
-                    { Category = OperationOutcomeCategory.CardTransform }), [], _evaluations, complete));
-                return;
+                void AddTransformAlternatives(ImmutableArray<ImmutableArray<PredictorCard>> cardsBySlot, bool finished)
+                {
+                    _transformAlternatives = true;
+                    var groups = cardsBySlot.Select((cards, slot) => new OperationOutcomeChoices(-1 - slot, cards, 1, 1, false, true)
+                        { Kind = (slot + 1).ToString(), OrderedAlternatives = true }).ToImmutableArray();
+                    _branches.Add(new([], sections.Add(new(scene.Event, [], groups)
+                        { Category = OperationOutcomeCategory.CardTransform }), [], _evaluations, finished));
+                }
             }
             if (scene.Event.Entry == "DENSE_VEGETATION" && optionKey is "REST" or "FIGHT")
             {
@@ -602,10 +624,5 @@ internal static class EventOperationForecast
             return sections.ToImmutable();
         }
     }
-
-    private static bool IsRandomTransform(string ev, string option) => (ev, option) is
-        ("AROMA_OF_CHAOS", "LET_GO") or ("MORPHIC_GROVE", "GROUP") or
-        ("SYMBIOTE", "KILL_WITH_FIRE") or ("WHISPERING_HOLLOW", "HUG") or
-        ("ENDLESS_CONVEYOR", "GRAB_JELLY_LIVER") or ("TRIAL", "NONDESCRIPT_INNOCENT");
 
 }

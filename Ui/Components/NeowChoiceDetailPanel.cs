@@ -106,11 +106,20 @@ internal sealed partial class NeowChoiceDetailPanel : VBoxContainer
             if (group is not null)
             {
                 _content.AddChild(BuildBones(choice, group, missingIconTooltip));
-                if (bones.PlayerChoiceImpact is not null)
+                if (bones.PlayerChoiceImpact is { } impact)
                 {
-                    var fallback = new PlayerChoiceImpactSummaryList(_icons);
-                    fallback.Bind(bones.PlayerChoiceImpact, missingIconTooltip);
-                    _content.AddChild(fallback);
+                    if (bones.OutcomeGroups.Count > 1)
+                    {
+                        var order = group.RelicResults.Select(relic => relic.SourceRelicKey).ToArray();
+                        impact = impact with { RouteSets = impact.RouteSets.Where(set =>
+                            set.AcquisitionOrder.SequenceEqual(order)).ToArray() };
+                    }
+                    if (impact.RouteSets.Count > 0)
+                    {
+                        var summary = new PlayerChoiceImpactSummaryList(_icons);
+                        summary.Bind(impact, missingIconTooltip);
+                        _content.AddChild(summary);
+                    }
                 }
                 Visible = true;
                 return;

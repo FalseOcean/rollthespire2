@@ -736,7 +736,10 @@ internal static class CapsuleRelicProbabilityEstimator
             if (explicitLane.Length == 0 && implicitLane.Length == 0) continue;
 
             var constraints = new List<FiniteSequenceProbabilitySolver.Constraint>();
-            constraints.AddRange(explicitLane.Select(condition => new FiniteSequenceProbabilitySolver.Constraint(
+            var rawConditions = ExplicitOpeningRelicFacts.InitialQueueConditions(explicitLane, lanes[lane].Length,
+                implicitLane.Select(f => (f.Position.Ordinal, f.Target)));
+            if (rawConditions is null) return 0d;
+            constraints.AddRange(rawConditions.Select(condition => new FiniteSequenceProbabilitySolver.Constraint(
                 condition.RangeMode,
                 condition.RangeValue,
                 condition.Keys)));

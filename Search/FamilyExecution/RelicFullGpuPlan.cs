@@ -334,27 +334,9 @@ internal sealed partial record RelicFullGpuPlan(RelicFamilyPlan SequencePlan, ui
     // This is NOT a claim that the pickup leaves all player state unchanged.
     // Census: CAPSULE_COMPOSITION_FOUNDATION_20260913.md. MassiveScroll consumes
     // Rewards (and is outside the single-player pool), so is not neutral.
-    internal static bool CapsuleContinuationNeutralCompanion(byte relic) => relic is
-        Beta110FastRelicCatalog.CursedPearl or
-        Beta110FastRelicCatalog.DowsingRod or
-        Beta110FastRelicCatalog.NeowsSacrifice or
-        Beta110FastRelicCatalog.PrecariousShears or
-        Beta110FastRelicCatalog.SilkenTress or
-        Beta110FastRelicCatalog.SilverCrucible or
-        Beta110FastRelicCatalog.BoomingConch or
-        Beta110FastRelicCatalog.FishingRod or
-        Beta110FastRelicCatalog.GoldenPearl or
-        Beta110FastRelicCatalog.LeafyPoultice or
-        Beta110FastRelicCatalog.NeowsTorment or
-        Beta110FastRelicCatalog.NewLeaf or
-        Beta110FastRelicCatalog.PhialHolster or
-        Beta110FastRelicCatalog.PreciseScissors or
-        Beta110FastRelicCatalog.WingedBoots or
-        Beta110FastRelicCatalog.LavaRock or
-        Beta110FastRelicCatalog.NeowsTalisman or
-        Beta110FastRelicCatalog.NutritiousOyster or
-        Beta110FastRelicCatalog.Pomander or
-        Beta110FastRelicCatalog.StoneHumidifier;
+    internal static bool CapsuleContinuationNeutralCompanion(byte relic) =>
+        NeowBonesOrderReuse.IsStreamNeutralPickup(relic) || relic is
+            Beta110FastRelicCatalog.LeafyPoultice or Beta110FastRelicCatalog.NewLeaf or Beta110FastRelicCatalog.PhialHolster;
 
     private static void WriteHash(uint[] metadata, int offset, ulong value)
     {

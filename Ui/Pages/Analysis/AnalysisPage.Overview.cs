@@ -43,6 +43,7 @@ internal sealed partial class AnalysisPage
     private string? SharedRoomIssue => LastFacts?.World?.RoomGenerationIssueCode;
 
     private ModelKey OverviewActKey(int act) =>
+        SeenMap(act) is { } observed && ModelKey.TryParseExact(observed.Act, out var liveAct) ? liveAct :
         LastFacts?.World?.SelectedActs.ElementAtOrDefault(act - 1) is { IsValid: true } selected ? selected :
         _viewModel?.EncounterSequences.FirstOrDefault(a => a.Act == act)?.ActKey ??
         _viewModel?.EventPoolSequenceDomain.Items.FirstOrDefault(a => a.Act == act)?.ActKey ?? default;
@@ -103,29 +104,23 @@ internal sealed partial class AnalysisPage
             Icon(boss.BossDisplay.ModelKey, GameContentKind.Encounter, IconVariant.WorldCompendiumBossIcon);
     }
 
-    private HBoxContainer WIconStrip(Node parent, string name)
-    {
-        var scroll = new ScrollContainer { Name = name, CustomMinimumSize = new Vector2(0, 70),
-            SizeFlagsHorizontal = SizeFlags.ExpandFill, VerticalScrollMode = ScrollContainer.ScrollMode.Disabled,
-            HorizontalScrollMode = ScrollContainer.ScrollMode.Auto };
-        parent.AddChild(scroll);
-        var row = new HBoxContainer(); row.AddThemeConstantOverride("separation", 8); scroll.AddChild(row);
-        return row;
-    }
+    private const int EncounterTileWidth = 136, EncounterTileHeight = 116, EncounterGap = 8;
+    private readonly HashSet<(int Act, bool Elite)> _expandedEncounters = [];
 
     private Control WQueueTile(ModelKey encounter, bool elite, int ordinal, string name)
     {
         var tile = _palette.Button("");
         tile.Name = "Encounter" + ordinal;
-        tile.CustomMinimumSize = new Vector2(72, 66);
+        tile.CustomMinimumSize = new Vector2(EncounterTileWidth, EncounterTileHeight);
+        tile.SizeFlagsHorizontal = SizeFlags.ShrinkBegin;
         var artwork = new TextureRect { Texture = VerticalMapView.ResolveRoomIcon(elite ? MapPointType.Elite : MapPointType.Monster),
             ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
             MouseFilter = MouseFilterEnum.Ignore };
         tile.AddChild(artwork); artwork.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
-        artwork.OffsetLeft = 7; artwork.OffsetRight = -5; artwork.OffsetTop = 10; artwork.OffsetBottom = -4;
-        var number = new Label { Text = ordinal.ToString(), Position = new Vector2(5, 2),
-            Size = new Vector2(18, 20), MouseFilter = MouseFilterEnum.Ignore };
-        number.AddThemeFontSizeOverride("font_size", 12);
+        artwork.OffsetLeft = 5; artwork.OffsetRight = -5; artwork.OffsetTop = 21; artwork.OffsetBottom = -4;
+        var number = new Label { Text = ordinal.ToString(), Position = new Vector2(6, 1),
+            Size = new Vector2(28, 20), MouseFilter = MouseFilterEnum.Ignore };
+        number.AddThemeFontSizeOverride("font_size", 15);
         tile.AddChild(number);
         if (elite)
         {
@@ -181,15 +176,16 @@ internal sealed partial class AnalysisPage
     {
         if (_combatSurface is null || !IsInstanceValid(_combatSurface) || !_combatSurface.IsInsideTree()) return;
         var body = _combatSurface; WClear(body);
-        var header = new HBoxContainer(); header.AddThemeConstantOverride("separation", 16); body.AddChild(header);
+        var bosses = new HBoxContainer(); bosses.AddThemeConstantOverride("separation", 16); body.AddChild(bosses);
         var actBosses = _viewModel!.BossDomain.Items.Where(b => b.Act == act).OrderBy(b => b.Ordinal).ToArray();
-        var bosses = WColumn(); bosses.SizeFlagsHorizontal = SizeFlags.Fill;
-        bosses.CustomMinimumSize = new Vector2(actBosses.Length > 1 ? 340 : 220, 0); header.AddChild(bosses);
-        WTitle(bosses, "predictor.boss");
+        var bossTitle = WLabel(Text("predictor.boss"), true);
+        bossTitle.AutowrapMode = TextServer.AutowrapMode.Off;
+        bossTitle.SizeFlagsHorizontal = SizeFlags.ShrinkBegin;
+        bosses.AddChild(bossTitle);
         if (actBosses.Length == 0 || LastRequest?.Ascension >= 10 && LastFacts?.World?.SelectedActs.Count == act && actBosses.Length == 1)
             bosses.AddChild(WNote(WorldIssueText(_viewModel.BossDomain.IssueCode, actBosses.Length == 0
                 ? "predictor.world.boss_unknown" : "predictor.world.second_boss_unknown")));
-        var bossIdentities = new HBoxContainer { Name = "BossIdentities" };
+        var bossIdentities = new HBoxContainer { Name = "BossIdentities", SizeFlagsHorizontal = SizeFlags.ExpandFill };
         bossIdentities.AddThemeConstantOverride("separation", 16); bosses.AddChild(bossIdentities);
         for (int index = 0; index < actBosses.Length; index++)
         {
@@ -206,7 +202,7 @@ internal sealed partial class AnalysisPage
             row.AddChild(WObject(boss.BossDisplay.ModelKey, GameContentKind.Encounter,
                 boss.BossDisplay.DisplayName, 38));
         }
-        var eliteColumn = WColumn(); eliteColumn.Name = "EliteQueueSection"; header.AddChild(eliteColumn);
+        var eliteColumn = WColumn(); eliteColumn.Name = "EliteQueueSection"; body.AddChild(eliteColumn);
         var normalColumn = WColumn(); normalColumn.Name = "NormalQueueSection"; body.AddChild(normalColumn);
         _eliteQueueSurface = eliteColumn; _normalQueueSurface = normalColumn;
         UpdateCombatQueueVisibility(act);
@@ -222,20 +218,47 @@ internal sealed partial class AnalysisPage
             normalColumn.AddChild(WLabel(Text("predictor.encounter_partial")));
         int elites = map is null ? sequence.Elite.Count : new MapRouteSet(map, MapPointType.Elite).Value + 1;
         int monsters = map is null ? sequence.Normal.Count : new MapRouteSet(map, MapPointType.Monster).Value;
-        WTitle(eliteColumn, "predictor.elite_sequence");
-        var eliteRow = WIconStrip(eliteColumn, "ElitePreview");
-        ((ScrollContainer)eliteRow.GetParent()).CustomMinimumSize = new Vector2(0, 70);
-        void Add(HBoxContainer row, IEnumerable<EncounterSequenceEntryViewModel> entries, bool elite)
+        AddEncounterQueue(eliteColumn, sequence.Elite, act, true, Math.Min(5, elites));
+        AddEncounterQueue(normalColumn, sequence.Normal, act, false, monsters);
+    }
+
+    private void AddEncounterQueue(VBoxContainer column, IReadOnlyList<EncounterSequenceEntryViewModel> entries,
+        int act, bool elite, int previewLimit)
+    {
+        var header = new HBoxContainer();
+        column.AddChild(header);
+        WTitle(header, elite ? "predictor.elite_sequence" : "predictor.combat_sequence");
+        if (entries.Count == 0)
         {
-            foreach (var entry in entries)
-                row.AddChild(WQueueTile(entry.EncounterDisplay.ModelKey, elite, entry.Ordinal, entry.EncounterDisplay.DisplayName));
+            column.AddChild(WNote(Text("predictor.world.queue_empty")));
+            return;
         }
-        Add(eliteRow, sequence.Elite.Take(elites), true);
-        if (sequence.Elite.Count == 0) eliteColumn.AddChild(WNote(Text("predictor.world.queue_empty")));
-        WTitle(normalColumn, "predictor.combat_sequence");
-        var normalRow = WIconStrip(normalColumn, "NormalPreview");
-        ((ScrollContainer)normalRow.GetParent()).CustomMinimumSize = new Vector2(0, 70);
-        Add(normalRow, sequence.Normal.Take(monsters), false);
-        if (sequence.Normal.Count == 0) normalColumn.AddChild(WNote(Text("predictor.world.queue_empty")));
+        string prefix = elite ? "Elite" : "Normal";
+        var expand = WAction("predictor.encounters.show_all");
+        expand.Name = prefix + "QueueExpand";
+        header.AddChild(expand);
+        var tiles = new HFlowContainer { Name = prefix + "Preview", SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        tiles.AddThemeConstantOverride("h_separation", EncounterGap);
+        tiles.AddThemeConstantOverride("v_separation", EncounterGap);
+        column.AddChild(tiles);
+        var key = (act, elite);
+        void Layout()
+        {
+            int fits = Math.Max(1, (int)((tiles.Size.X + EncounterGap) / (EncounterTileWidth + EncounterGap)));
+            int preview = Math.Min(fits, previewLimit);
+            bool expanded = _expandedEncounters.Contains(key);
+            expand.Visible = entries.Count > preview;
+            expand.Text = Text(expanded ? "predictor.collapse" : "predictor.encounters.show_all");
+            int shown = expanded ? entries.Count : Math.Min(entries.Count, preview);
+            for (int i = tiles.GetChildCount(); i < shown; i++)
+            {
+                var entry = entries[i];
+                tiles.AddChild(WQueueTile(entry.EncounterDisplay.ModelKey, elite, entry.Ordinal, entry.EncounterDisplay.DisplayName));
+            }
+            for (int i = 0; i < tiles.GetChildCount(); i++) tiles.GetChild<Control>(i).Visible = i < shown;
+        }
+        expand.Pressed += () => { if (!_expandedEncounters.Remove(key)) _expandedEncounters.Add(key); Layout(); };
+        tiles.Resized += Layout;
+        Layout();
     }
 }

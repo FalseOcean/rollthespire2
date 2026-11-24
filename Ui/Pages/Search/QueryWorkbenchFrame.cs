@@ -52,19 +52,15 @@ internal sealed partial class QueryWorkbenchFrame : Control
     private bool _multiplayer;
     private int _seat, _playerCount = 2;
     private readonly MegaCrit.Sts2.Core.Unlocks.SerializableUnlockState?[] _lobbyUnlocks = Enumerable.Range(0, MaximumPreviewPlayers).Select(_ => (MegaCrit.Sts2.Core.Unlocks.SerializableUnlockState?)MegaCrit.Sts2.Core.Unlocks.UnlockState.all.ToSerializable()).ToArray();
-    private readonly int[] _unlockReadStatus = Enumerable.Repeat(4, MaximumPreviewPlayers).ToArray(); // 0 unread, 1 copied, 2 failed, 3 absent, 4 assumed full.
     private readonly Dictionary<int, Button> _seatButtons = [];
     private MegaCrit.Sts2.Core.Multiplayer.Game.Lobby.StartRunLobby? _readLobby;
     private string _readRoster = "";
     private double _rosterPoll;
-    private readonly Control _configOverlay = new() { Visible = false, Theme = MainPanelTheme.Create() };
     // Godot embeds popup Windows on canvas layer 1024. This text-only layer
     // remains above them without creating another window or intercepting input.
     private readonly CanvasLayer _searchTooltipLayer = new() { Layer = 1025, Name = "SearchTextTooltips" };
     private readonly AnchoredTooltipHost _searchTooltipHost = new(new RuntimeRelicTooltipResolver(),
         new RuntimePotionTooltipResolver(), new RuntimeCardTooltipResolver());
-    private readonly Dictionary<Button, bool> _configBlocked = [];
-    private Button? _configButton;
     private ModelKey _soloCharacter = BaseGameModelKeys.Characters.Ironclad;
     private int _soloAscension = 10;
     private readonly ModelKey[] _seatCharacters = Enumerable.Repeat(BaseGameModelKeys.Characters.Ironclad, MaximumPreviewPlayers).ToArray();
@@ -156,7 +152,6 @@ internal sealed partial class QueryWorkbenchFrame : Control
         _ancientEditor.TransformationContextChanged += AncientTransformationContextChanged;
         _characterIcons = new NativeCharacterPoolIconProvider(_icons);
         Name = "QueryWorkbenchFrame";
-        AddChild(_configOverlay);
         AddChild(_searchTooltipLayer);
         _searchTooltipLayer.AddChild(_searchTooltipHost);
         SearchTooltip.AttachScope(this, _searchTooltipHost);
@@ -175,11 +170,9 @@ internal sealed partial class QueryWorkbenchFrame : Control
 
     public void AttachOverlay(Control shell)
     {
-        _configOverlay.Reparent(shell); _configOverlay.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         _objectPicker.AttachOverlay(shell, this); _ancientEditor.AttachOverlay(shell); _eventEditor.AttachOverlay(shell); AttachPresetOverlays(shell);
         _searchTooltipLayer.Reparent(shell);
         SearchTooltip.AttachScope(this, _searchTooltipHost, shell);
-        SearchTooltip.AttachScope(_configOverlay, this);
     }
 
     public override void _Process(double delta)
@@ -195,29 +188,15 @@ internal sealed partial class QueryWorkbenchFrame : Control
         if (_rosterPoll > 0) return;
         _rosterPoll = 1;
         // A captured player's status must not silently transfer to a replacement in the same slot.
-        var current = LobbyUnlockReadout.Find(GetTree().Root);
-        if (ReferenceEquals(current, _readLobby) && LobbyUnlockReadout.Roster(current!) == _readRoster) return;
-        _readLobby = null; _readRoster = "";
-        _lobbyReadExpired = true;
-        for (int slot = 0; slot < _unlockReadStatus.Length; slot++)
-            if (_partyUnlockSources[slot] != "AssumedFullyUnlocked") _unlockReadStatus[slot] = 0;
-        UpdateSeatReadLabels();
-        RefreshEditorContexts();
+        if (!_persistence.Runtime.Receiving && DropExpiredLobby())
+        {
+            UpdateSeatReadLabels();
+            RefreshEditorContexts();
+            Receipt("query.context.roster_changed");
+        }
     }
 
-    public bool CloseModal()
-    {
-        if (ClosePresetModal()) return true;
-        if (_objectPicker.ClosePicker()) return true;
-        if (_eventEditor.CloseQueuePicker()) return true;
-        if (!_configOverlay.Visible) return false;
-        _configOverlay.Hide();
-        foreach (var (button, disabled) in _configBlocked)
-            if (GodotObject.IsInstanceValid(button)) button.Disabled = disabled;
-        _configBlocked.Clear(); ModalChanged?.Invoke(false);
-        if (_configButton is not null && GodotObject.IsInstanceValid(_configButton)) _configButton.GrabFocus();
-        return true;
-    }
+    public bool CloseModal() => ClosePresetModal() || _objectPicker.ClosePicker() || _eventEditor.CloseQueuePicker();
 
     public override void _ExitTree()
     {
@@ -230,7 +209,6 @@ internal sealed partial class QueryWorkbenchFrame : Control
                 if (_objectPicker.GetParent() != this) _objectPicker.QueueFree();
             }
             SearchTooltip.DetachScope(this);
-            SearchTooltip.DetachScope(_configOverlay);
             if (GodotObject.IsInstanceValid(_searchTooltipLayer) && _searchTooltipLayer.GetParent() != this)
                 _searchTooltipLayer.QueueFree();
             _characterIcons.Dispose();

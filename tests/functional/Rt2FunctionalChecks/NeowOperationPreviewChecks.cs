@@ -113,6 +113,7 @@ internal static class NeowOperationPreviewChecks
         BonesConditionalTargets(baseline);
         KnownInputsAreNotForecasts(baseline);
         TransformGroupsAndGenericAncient(baseline);
+        PandoraLargeDeckDisplay(baseline);
         PotionProjection(baseline);
         PhialHolsterGenerationTrace(baseline);
         HoveredCardTargets(baseline);
@@ -395,6 +396,17 @@ internal static class NeowOperationPreviewChecks
                 .SelectMany(s => s.CardGroups).ToArray();
             var candidates = initial.State.Deck.Where(initial.Waiting.Selection.CandidateCardIds.Contains).ToImmutableArray();
             var expected = new Dictionary<int, List<(long Original, PredictorCard Card)>>();
+            string[] listeners = ["MOLTEN_EGG", "TOXIC_EGG", "FROZEN_EGG", "FRESNEL_LENS", "BING_BONG",
+                "LUCKY_FYSH", "DARKSTONE_PERIAPT", "BOOK_OF_FIVE_RINGS"];
+            long listenerId = snapshot.State.NextInstanceId;
+            var withHooks = snapshot with
+            {
+                Context = snapshot.Context with { Modifiers = [new(new("MODIFIER", "HOARDER"))] },
+                State = snapshot.State with {
+                    Relics = listeners.Select((key, index) => new PredictorRelic(listenerId + index, Relic(key), 0)).ToImmutableArray(),
+                    NextInstanceId = listenerId + listeners.Length }
+            };
+            var withHooksExpected = new Dictionary<int, List<(long Original, PredictorCard Card)>>();
             var equivalentInputs = new HashSet<string>();
             int paths = 0;
             var exhaustiveTime = System.Diagnostics.Stopwatch.StartNew();
@@ -406,6 +418,24 @@ internal static class NeowOperationPreviewChecks
                 var result = PredictorOperation.Preview(snapshot, root.Add(input));
                 Check(result.Disposition == PredictorInputResult.Accepted, "explicit transform reference input rejected");
                 var changes = result.Effects.SelectMany(e => e.Transformations).ToArray();
+                if (source == "ASTROLABE")
+                {
+                    var settled = PredictorOperation.Preview(withHooks, root.Add(input));
+                    Check(settled.Disposition == PredictorInputResult.Accepted &&
+                        settled.State.Deck.Length == result.State.Deck.Length + 3 &&
+                        settled.State.Streams.Single(s => s.Stream == snapshot.Context.RelicTransformStream) ==
+                        result.State.Streams.Single(s => s.Stream == snapshot.Context.RelicTransformStream),
+                        "Astrolabe's add hooks lost copies or changed the transformation stream");
+                    var transformed = settled.Effects.SelectMany(e => e.Transformations).ToArray();
+                    for (int slot = 0; slot < transformed.Length; slot++)
+                    {
+                        var card = settled.State.Card(transformed[slot].ReplacementId) with { Id = 0 };
+                        Check(card.Key == result.State.Card(changes[slot].ReplacementId).Key,
+                            "Astrolabe's add hooks changed the replacement identity");
+                        if (!withHooksExpected.TryGetValue(slot, out var cards)) withHooksExpected.Add(slot, cards = []);
+                        cards.Add((ids[slot], card));
+                    }
+                }
                 for (int i = 0; i < changes.Length; i++)
                 {
                     if (!expected.TryGetValue(i, out var cards)) expected.Add(i, cards = []);
@@ -421,8 +451,10 @@ internal static class NeowOperationPreviewChecks
                     expected[slot].OrderBy(item => initial.State.Deck.IndexOf(item.Original)).Select(item => item.Card).Distinct())),
                     "rank-order fixture must expose tuple traversal's incorrect second and third slot candidate order");
             Check(preview.Faults.IsEmpty && preview.Branches.Single().FullyEnumerated, source + " projection has faults or incomplete paths");
-            Check(preview.Branches.Single().PathsExamined == equivalentInputs.Count,
-                source + $" query reduction differs: actual={preview.Branches.Single().PathsExamined}; expected={equivalentInputs.Count}; exhaustive={paths}");
+            int expectedChecks = (source == "ASTROLABE" ? 3 : 1) *
+                candidates.Select(id => initial.State.Card(id).Key).Distinct().Count();
+            Check(preview.Branches.Single().PathsExamined == expectedChecks,
+                source + $" query reduction differs: actual={preview.Branches.Single().PathsExamined}; expected={expectedChecks}; exhaustive={paths}");
             Check(equivalentInputs.Count < paths, source + " fixture did not retain semantically equivalent native copies");
             Check(groups.Length == (source == "NEW_LEAF" ? 1 : 3), source + " lost transform ordinal groups");
             foreach (var (group, slot) in groups.Select((group, slot) => (group, slot)))
@@ -436,18 +468,52 @@ internal static class NeowOperationPreviewChecks
             Console.WriteLine($"TRANSFORM_PREVIEW {source}; exhaustiveInputs={paths}; modelExecutions={preview.Branches.Single().PathsExamined}; exhaustiveMs={exhaustiveTime.Elapsed.TotalMilliseconds:F2}; projectionMs={projectionTime.Elapsed.TotalMilliseconds:F2}; ordinalCandidateParity=true");
             if (source == "ASTROLABE")
             {
-                long hookId = snapshot.State.NextInstanceId;
-                var withHook = snapshot with { State = snapshot.State with
-                    { Relics = [new(hookId, Relic("BING_BONG"), 0)], NextInstanceId = hookId + 1 } };
-                var hookPreview = RelicOperationPreview.Build(withHook, OfferId(withHook));
+                var hookPreview = RelicOperationPreview.Build(withHooks, OfferId(withHooks));
                 Check(hookPreview.Faults.IsEmpty && hookPreview.Branches.Single().FullyEnumerated &&
-                    hookPreview.Branches.Single().PathsExamined == paths,
-                    "Astrolabe merged target instances across a card-add listener context");
+                    hookPreview.Branches.Single().PathsExamined == expectedChecks &&
+                    hookPreview.Branches.Single().Sections is [{ CardGroups: var hookGroups }] &&
+                    hookGroups.Length == groups.Length && hookGroups.Select((group, slot) => group.Cards.Select(card => card with { Id = 0 })
+                        .SequenceEqual(withHooksExpected[slot].OrderBy(item => initial.State.Deck.IndexOf(item.Original))
+                            .Select(item => item.Card).Distinct())).All(equal => equal),
+                    "Astrolabe's ordered card faces with add hooks differ from exhaustive settlement or required full replay");
             }
             using var cancellation = new CancellationTokenSource();
             cancellation.Cancel();
             try { RelicOperationPreview.Build(snapshot, root, Relic(source), cancellation.Token); throw new InvalidOperationException("canceled transform completed"); }
             catch (OperationCanceledException) { }
+        }
+    }
+
+    private static void PandoraLargeDeckDisplay(PredictorRun baseline)
+    {
+        var snapshot = Snapshot(baseline, "PANDORAS_BOX");
+        var context = snapshot.Context;
+        var basic = snapshot.State.Deck.Select(snapshot.State.Card).First(card =>
+            PredictorCardChanges.Definition(context, card.Key) is { Rarity: "Basic", IsStrike: true });
+        int count = snapshot.State.Deck.Select(snapshot.State.Card).Count(card => card.Removable &&
+            PredictorCardChanges.Definition(context, card.Key) is { Rarity: "Basic" } definition && (definition.IsStrike || definition.IsDefend));
+        foreach (int size in new[] { 20, 21, 26 })
+        {
+            while (count < size)
+            {
+                snapshot = snapshot with { State = PredictorObtainSources.AddCard(context, snapshot.State, basic) };
+                count++;
+            }
+            var preview = RelicOperationPreview.Build(snapshot, OfferId(snapshot));
+            var branch = preview.Branches.Single();
+            var results = Rows(preview).Single(row => row.Action == OperationPreviewAction.TransformCard).Cards;
+            var display = NeowOperationOverlay.DisplaySections(preview, branch).Single(section => section.Source.Entry == "PANDORAS_BOX");
+            Check(preview.Faults.IsEmpty && results.Length == size, "Pandora must transform all eligible basics");
+            if (size == 20)
+                Check(display.Rows.Single().Cards.SequenceEqual(results) && display.CardGroups.IsEmpty &&
+                    OperationDisplayPolicy.Resolve(preview, display).Cards == OperationCardLayout.Spread,
+                    "Pandora with twenty targets must keep its existing spread");
+            else
+                Check(display.Rows.IsEmpty && OperationDisplayPolicy.Resolve(preview, display).Cards == OperationCardLayout.Groups &&
+                    display.CardGroups.Select(group => group.Cards.Length).SequenceEqual(results.Chunk(5).Select(chunk => chunk.Length)) &&
+                    display.CardGroups.All(group => group.EarliestFirst) &&
+                    display.CardGroups.SelectMany(group => group.Cards).SequenceEqual(results),
+                    "Large Pandora display must keep every ordered card in five-card stacks");
         }
     }
 
@@ -814,13 +880,21 @@ internal static class NeowOperationPreviewChecks
                 group.Cards.Select(card => card with { Id = 0 }).ToHashSet().SetEquals(mixedExpected[slot])).All(value => value),
             "three representative Astrolabe inputs differ from independent exhaustive mixed-pool target tuples");
         long listenerId = unselected.State.NextInstanceId;
+        var withBingBong = unselected with { State = unselected.State with
+            { Relics = unselected.State.Relics.Add(new(listenerId, Relic("BING_BONG"), 0)), NextInstanceId = listenerId + 1 } };
+        var copyPreview = CardTargetOperationPreview.Build(withBingBong, colorlessId);
+        Check(copyPreview.Faults.IsEmpty && copyPreview.Branches is [{ FullyEnumerated: true, PathsExamined: 3 }] &&
+            copyPreview.Branches.Single().Sections is [{ CardGroups: var copyGroups }] && copyGroups.Length == 3 &&
+            copyGroups.Select((group, slot) => group.Cards.Select(card => card with { Id = 0 })
+                .ToHashSet().SetEquals(mixedExpected[slot])).All(value => value),
+            "Bing Bong changed hovered Astrolabe outcomes or forced exhaustive filler replay");
         var withListener = unselected with { State = unselected.State with
             { Relics = unselected.State.Relics.Add(new(listenerId, Relic("DARKSTONE_PERIAPT"), 0)), NextInstanceId = listenerId + 1 } };
         var listenerPreview = CardTargetOperationPreview.Build(withListener, colorlessId);
-        Check(listenerPreview.Faults.IsEmpty && listenerPreview.Branches.Single().PathsExamined == 3 * (candidates.Length - 1) * (candidates.Length - 2) &&
+        Check(listenerPreview.Faults.IsEmpty && listenerPreview.Branches.Single().PathsExamined == 3 &&
             listenerPreview.Branches.Single().Sections.SelectMany(section => section.CardGroups).Select((group, slot) =>
                 group.Cards.Select(card => card with { Id = 0 }).ToHashSet().SetEquals(mixedExpected[slot])).All(value => value),
-            "an active card-add listener incorrectly entered representative-filler projection or changed exact target results");
+            "Darkstone Periapt changed hovered Astrolabe outcomes or forced exhaustive filler replay");
         var fixedChoice = choice with { Operation = PredictorObtainDeckOperation.Remove, Source = Relic("EMPTY_CAGE") };
         var fixedSnapshot = captured with { Scene = new PredictorOperationShopScene([entry], true,
             PendingRelic: new(entryId, 500, false, fixedChoice)) };
@@ -852,7 +926,7 @@ internal static class NeowOperationPreviewChecks
                 var change = exact.Effects.SelectMany(effect => effect.Transformations).Single(change => change.OriginalId == deck[1]);
                 eventExpected[targets.IndexOf(deck[1])].Add(exact.State.Card(change.ReplacementId) with { Id = 0 });
             }
-        Check(eventPreview.Faults.IsEmpty && eventPreview.Branches is [{ FullyEnumerated: true }] && eventGroups.Length == 2 &&
+        Check(eventPreview.Faults.IsEmpty && eventPreview.Branches is [{ FullyEnumerated: true, PathsExamined: 2 }] && eventGroups.Length == 2 &&
             eventGroups.Select((group, slot) => group.Highlighted == (slot == 0) &&
                 group.Cards.Select(card => card with { Id = 0 }).ToHashSet().SetEquals(eventExpected[slot])).All(value => value) &&
             eventSnapshot.State.GoldBudget == 37,

@@ -271,13 +271,14 @@ internal static partial class PartyPhase1Checks
         var frame = Field<QueryWorkbenchFrame>(shell, "_references");
         var references = frame;
         Set(frame, "_target", 1);
-        Set(frame, "_multiplayer", true);
+        frame.SetSearchMode(true);
         var defaultDraft = frame.CaptureDraft();
-        Check(defaultDraft.Players.All(p => p.UnlockSource == "AssumedFullyUnlocked"), "offline default full-unlock premise");
+        var defaultSources = new[] { "CapturedLocalProfile", "AssumedFullyUnlocked" };
+        Check(defaultDraft.Players.Select(p => p.UnlockSource).SequenceEqual(defaultSources), "offline editable P1 local and P2 full");
         var defaultCompiled = defaultDraft.Compile(runtimeUi, out _);
         Check(defaultCompiled.Context.Party!.Players.Count == 2, "offline full-unlock compile");
         var defaultInfo = PartySeedInformation.Project("0000000002MY", defaultCompiled.Context.Party!);
-        Check(defaultInfo.Players.All(p => p.UnlockSource == "AssumedFullyUnlocked"), "information retains assumed premise");
+        Check(defaultInfo.Players.Select(p => p.UnlockSource).SequenceEqual(defaultSources), "information retains offline seat premises");
         var capturedEquivalent = defaultDraft with { Players = defaultDraft.Players.Select(p => p with { UnlockSource = "CapturedLobbySlot" }).ToArray() };
         Check(capturedEquivalent.Compile(runtimeUi, out _).SemanticFingerprint != defaultCompiled.SemanticFingerprint, "source premise participates in fingerprint");
         liveDefaultRoundtrip();
@@ -287,10 +288,9 @@ internal static partial class PartyPhase1Checks
             frame.RestoreDraft(uiStore.LoadWorkbench()!);
             Check(frame.CaptureDraft().Compile(runtimeUi, out _).SemanticFingerprint == defaultCompiled.SemanticFingerprint, "offline default persisted premise roundtrip");
         }
-        typeof(QueryWorkbenchFrame).GetMethod("ReadLobbyUnlocks", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(frame, null);
-        Reject(() => frame.CaptureDraft(), "failed explicit lobby read does not silently assume full unlocks");
-        typeof(QueryWorkbenchFrame).GetMethod("UseFullyUnlockedParty", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(frame, null);
-        Check(frame.CaptureDraft().Players.All(p => p.UnlockSource == "AssumedFullyUnlocked"), "explicit reset to full unlocks");
+        ((Button)frame.FindChild("PartyReadLobby", owned: false)).EmitSignal(Button.SignalName.Pressed);
+        Check(frame.CaptureDraft().Compile(runtimeUi, out _).SemanticFingerprint == defaultCompiled.SemanticFingerprint,
+            "unavailable lobby keeps the editable offline party and unlock premises");
         uiDraft = uiDraft! with { Players = uiDraft.Players.Select(p => p with { UnlockSource = "AssumedFullyUnlocked" }).ToArray() };
         frame.RestoreDraft(uiDraft); frame.Refresh("en", JsonUiTextProvider.CreateUi13("en"));
         var liveStore = Field<SearchWorkspace>(frame, "_persistence");

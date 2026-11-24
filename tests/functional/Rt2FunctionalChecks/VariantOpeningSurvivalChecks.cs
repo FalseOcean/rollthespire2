@@ -64,14 +64,31 @@ internal static class VariantOpeningSurvivalChecks
             "stronger explicit variant still filters after W");
         Near(strongerModel.ResolveWorld(passedV).SurvivalProbability, .5, "W conditioned on stronger explicit allowance");
 
-        var unknown = physical with { Acts = physical.Acts.Select(act => act with { AncientIdentityPredicates = [Any(30)] }).ToArray() };
+        var identities = physical with { Acts = physical.Acts.Select(act => act with {
+            Ancients = [30, 31], AncientIdentityPredicates = [Any(30)] }).ToArray() };
+        var withIdentity = VariantOpeningWorldSurvival.Create(request, prep, identities);
+        Near(withIdentity.WorldProbability, 1d / 12, "event, identity and variant on the compiled W body");
+        Near(withIdentity.ResolveWorld(passedV).SurvivalProbability, .25, "after V only the event and local identity remain");
+        var sharedPlan = physical with { SharedAncients = [32, 33],
+            ActSelectionGroups = [new(1, 0, [0]), new(2, 0, [1]), new(3, 0, [2])] };
+        var second = identities.Acts[0] with { Act = 2, AncientIdentityPredicates = [], AncientBranchIdentityPredicates = [Any(32)] };
+        var third = second with { Act = 3 };
+        Near(VariantOpeningWorldSurvival.EstimateAncientIdentity(sharedPlan, second), 5d / 36,
+            "second act receives a uniform prefix of shared entries");
+        Near(VariantOpeningWorldSurvival.EstimateAncientIdentity(sharedPlan, third), 2d / 27,
+            "third act receives a uniform prefix of the previous remainder");
+        Check(VariantOpeningWorldSurvival.EstimateAncientIdentity(sharedPlan with { Acts = [second, third] }, second) is null,
+            "two acts competing for shared identities require a joint allocation model");
+
+        var unknown = physical with { Acts = physical.Acts.Select(act => act with {
+            Ancients = [], AncientIdentityPredicates = [Any(30)] }).ToArray() };
         var unknownModel = VariantOpeningWorldSurvival.Create(request, prep, unknown);
         Check(unknownModel.WorldProbability is null && unknownModel.ResolveWorld(passedV).SurvivalProbability is null,
             "unavailable Ancient physical block stays Unknown");
         Near(unknownModel.ResolveVariant(passedW, 1).SurvivalProbability, 1,
             "actual event impossibility still proves variant after W despite independent unknown probability");
         var unknownPartial = VariantOpeningWorldSurvival.Create(request, prep,
-            partial with { Acts = partial.Acts.Select(act => act with { AncientIdentityPredicates = [Any(30)] }).ToArray() });
+            partial with { Acts = partial.Acts.Select(act => act with { Ancients = [], AncientIdentityPredicates = [Any(30)] }).ToArray() });
         Check(unknownPartial.ResolveVariant(passedW, 1).SurvivalProbability is null,
             "unpriced partial W supplies no invented conditional mass");
 

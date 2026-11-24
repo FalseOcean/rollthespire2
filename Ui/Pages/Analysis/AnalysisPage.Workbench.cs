@@ -38,13 +38,33 @@ internal sealed partial class AnalysisPage
     private Label? _searchOriginNotice;
     private bool _searchOpeningUnavailable;
     private SeedLibraryResultProvenance? _resultOrigin;
-    internal void SetSearchSource(SeedLibraryResultProvenance? provenance, bool openingUnavailable)
+    private IReadOnlyList<ModelKey> _declaredCapsulePickups = [];
+    internal void SetSearchSource(SeedLibraryResultProvenance? provenance, bool openingUnavailable,
+        IReadOnlyList<ModelKey>? pickups = null)
     {
         _resultOrigin = provenance;
         _searchOpeningUnavailable = openingUnavailable;
         RefreshSearchOrigin();
         RefreshMapWitnessEntries();
+        pickups ??= [];
+        if (!_declaredCapsulePickups.SequenceEqual(pickups))
+        {
+            _declaredCapsulePickups = pickups;
+            if (_wbPage == 3) RenderWorkbench();
+        }
     }
+
+    private IEnumerable<RelicSequenceLaneViewModel> PlayerRelicLanes()
+    {
+        foreach (var lane in _viewModel!.RelicSequenceDomain.Items)
+        {
+            if (_declaredCapsulePickups.Count == 0 || lane.Kind == RelicSequenceKind.Shop) { yield return lane; continue; }
+            var remaining = RelicSequencePredictionResult.AfterDeclaredPickups(lane.FullEntries, _declaredCapsulePickups,
+                entry => entry.RelicDisplay.ModelKey).Select((entry, i) => entry with { Position = i + 1 }).ToArray();
+            yield return lane with { FullEntries = remaining, TotalCount = remaining.Length };
+        }
+    }
+
     private void RefreshSearchOrigin()
     {
         // Source/confirmation state still belongs to the controller's transport.
@@ -100,7 +120,14 @@ internal sealed partial class AnalysisPage
         _searchOriginNotice.Visible = false;
         workspace.AddChild(_searchOriginNotice);
         var centerScroll = WScroll(); centerScroll.Name = "PredictorMainScroll";
-        workspace.AddChild(centerScroll); _wbCenter = WColumn(); _wbCenter.AddThemeConstantOverride("separation", 18); centerScroll.AddChild(_wbCenter);
+        centerScroll.VerticalScrollMode = ScrollContainer.ScrollMode.ShowAlways;
+        workspace.AddChild(centerScroll);
+        var contentInset = new MarginContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        contentInset.AddThemeConstantOverride("margin_right", 12);
+        centerScroll.AddChild(contentInset);
+        _wbCenter = WColumn();
+        _wbCenter.AddThemeConstantOverride("separation", 18);
+        contentInset.AddChild(_wbCenter);
         _wbAuxiliaryInset = WorkbenchInset("PredictorAuxiliaryInset", WorkspaceLayout.RightRailLeft, WorkspaceLayout.RightRailWidth,
             WorkspaceLayout.HeaderHeight, WorkspaceLayout.CanvasHeight - WorkspaceLayout.HeaderHeight);
         _workbenchRoot.AddChild(_wbAuxiliaryInset);
@@ -446,7 +473,7 @@ internal sealed partial class AnalysisPage
             else WEmpty(col);
         }
         var bags = WResponsiveGrid(_wbCenter, "RelicBagPreviews", 560, 2);
-        var playerBag = RenderRelicPreviewRow(bags, "predictor.player_relic_bag", _viewModel.RelicSequenceDomain.Items);
+        var playerBag = RenderRelicPreviewRow(bags, "predictor.player_relic_bag", PlayerRelicLanes().ToArray());
         playerBag.Name = "PlayerRelicBagPreview";
         if (LastRequest?.PlayersCount == 1) AlignRelicPreviewRows(playerBag, RenderInitialTreasureRelicPreview(bags));
         else RenderRelicPreviewRow(bags, "predictor.chest_shared_bag", _viewModel.TreasureRoomRelicSequenceDomain.Items);
@@ -541,7 +568,8 @@ internal sealed partial class AnalysisPage
         var section = WCard(parent, "");
         var title = WLabel(Text(titleKey), true); title.AddThemeFontSizeOverride("font_size", 18);
         section.AddChild(title);
-        section.AddChild(WNote(Text("predictor.design.relic_preview_scope")));
+        section.AddChild(WNote(Text(titleKey == "predictor.player_relic_bag" && _declaredCapsulePickups.Count > 0
+            ? "query.relic.capsule_deductions" : "predictor.design.relic_preview_scope")));
         var row = new GridContainer { Columns = 3, SizeFlagsHorizontal = SizeFlags.ExpandFill };
         row.AddThemeConstantOverride("h_separation", 10);
         section.AddChild(row);
@@ -690,14 +718,25 @@ internal sealed partial class AnalysisPage
             _combatSurface.Name = "CombatDetails";
             if (!mapSupported || !actKey.IsValid) PopulateCombatDetails(act, null);
         }
+        if (!openingPage && mapSupported) BuildUnknownSequenceCard();
         ShowMapRail(true);
         var mapHeader = new HBoxContainer { Name = "PredictorMapHeader", CustomMinimumSize = new Vector2(0, WorkspaceLayout.HeaderHeight) };
         _wbRight.AddChild(mapHeader);
         AddMapWitnessEntry(_wbRight, act);
-        mapHeader.AddChild(WLabel(_uiText!.Format(_liveRunPremises?.IsStandardReference == true
-            ? "predictor.live.map_reference" : "predictor.map", act), true));
+        var seen = SeenMap(act);
+        bool canSwitch = mapSupported && act == 2 && actKey.Entry == "HIVE" && seen is null;
+        string mapTitle = seen is not null ? "predictor.map.played" : canSwitch && SpoilsPreview ? "predictor.map.spoils_title" :
+            _liveRunPremises?.IsStandardReference == true ? "predictor.live.map_reference" : "predictor.map";
+        mapHeader.AddChild(WLabel(_uiText!.Format(mapTitle, act), true));
         var clearRoute = WAction("ui1.map.route.clear"); clearRoute.Name = "ClearMapRoute"; clearRoute.Disabled = true;
         mapHeader.AddChild(clearRoute);
+        if (canSwitch)
+        {
+            var toggle = new CheckButton { Name = "SpoilsMapToggle", Text = Text("predictor.map.spoils_toggle"),
+                ButtonPressed = SpoilsPreview };
+            toggle.Toggled += SetSpoilsPreview;
+            _wbRight.AddChild(toggle);
+        }
         if (!mapSupported)
         { _wbRight.AddChild(WNote(Text("ui1.map.unavailable"))); return; }
         if (!actKey.IsValid)
@@ -741,6 +780,7 @@ internal sealed partial class AnalysisPage
                 !ReferenceEquals(LastRequest?.Authority, request.Authority) || _wbPage != act - 1) return;
             surface.Bind(map, bosses.Select(b => _icons.Resolve(b.BossDisplay.ModelKey, GameContentKind.Encounter, IconVariant.WorldCompendiumBossIcon).Texture).ToArray(),
                 ancient is null ? null : _icons.Resolve(ancient.AncientDisplay.ModelKey, GameContentKind.Ancient, IconVariant.WorldCompendiumAncientIcon).Texture, _uiText!);
+            RestoreDrawnRoute(map);
             RenderMapStats(map, surface, mapStats, clearRoute, routeStatus, routeBrowser);
             PopulateCombatDetails(act, map);
         }
@@ -777,11 +817,13 @@ internal sealed partial class AnalysisPage
         routeBrowser.AddChild(previous); routeBrowser.AddChild(routeCount); routeBrowser.AddChild(next);
         void PresentRoute()
         {
+            RefreshUnknownSequenceRows();
             var route = _overviewRoutes.GetValueOrDefault(act);
             surface.SetPointTypeHighlight(selected);
             surface.SetRoute(route?.Coordinates, committed: route is not null, clearStroke: true);
             surface.SetUnknownRooms(null);
-            routeStatus.Text = Text("predictor.design.map_draw");
+            surface.SetWalkedRoute(SeenMap(act));
+            routeStatus.Text = Text(SeenMap(act) is null ? "predictor.design.map_draw" : "predictor.map.walked");
             clearRoute.Disabled = route is null;
             routeBrowser.Visible = optimalRoutes is not null;
             previous.Disabled = next.Disabled = optimalRoutes is null || optimalRoutes.Count <= 1;
@@ -793,16 +835,23 @@ internal sealed partial class AnalysisPage
             }
             foreach (var item in buttons) _palette.SetActive(item.Button, item.Type == selected);
             if (route is null) return;
+            if (SeenMap(act) is { } played && played.Walked.Any(p => !route.Coordinates.Contains(p)))
+            {
+                routeStatus.Text = Text("predictor.map.diverged");
+                return;
+            }
             var prior = Enumerable.Range(1, act - 1).Select(a => _overviewRoutes.GetValueOrDefault(a)).ToArray();
             int missing = Array.FindIndex(prior, p => p is null);
-            if (missing >= 0)
+            if (missing >= 0 && _playedUnknownCounts.Length < act - 1)
             {
                 routeStatus.Text = _uiText!.Format("predictor.design.map_prior", missing + 1);
                 return;
             }
             // Reuse the existing ordinary-room contract. This is local map annotation,
             // not a played-route simulation or a change to the rewards/event queues.
-            var sequence = OrdinaryUnknownRoomPredictor.ForRoute(route, prior.Cast<MapRouteCommitment>().ToArray());
+            var sequence = _playedUnknownCounts.Length >= act - 1 ?
+                OrdinaryUnknownRoomPredictor.ForRoute(route, _playedUnknownCounts.Take(act - 1).Sum()) :
+                OrdinaryUnknownRoomPredictor.ForRoute(route, prior.Cast<MapRouteCommitment>().ToArray());
             surface.SetUnknownRooms(sequence.Steps);
             routeStatus.Text = Text("predictor.design.map_drawn");
         }
@@ -821,16 +870,19 @@ internal sealed partial class AnalysisPage
             if (optimalRoutes is null) return;
             rank = (rank + delta + optimalRoutes.Count) % optimalRoutes.Count;
             _overviewRoutes[act] = new MapRouteCommitment(map, optimalRoutes.At(rank));
+            StoreDrawnRoute(act);
             PresentRoute();
         }
         previous.Pressed += () => Browse(-1);
         next.Pressed += () => Browse(1);
         surface.StrokeFinished += stroke =>
         {
-            _overviewRoutes[act] = new MapRouteCommitment(map, allRoutes.Match(stroke));
+            var walked = SeenMap(act)?.Walked ?? [];
+            _overviewRoutes[act] = new MapRouteCommitment(map, allRoutes.MatchFrom(stroke, walked), walked);
+            StoreDrawnRoute(act);
             SelectMetric(null);
         };
-        clearRoute.Pressed += () => { _overviewRoutes.Remove(act); SelectMetric(null); };
+        clearRoute.Pressed += () => { _overviewRoutes.Remove(act); StoreDrawnRoute(act); SelectMetric(null); };
         foreach (var (type, textKey) in new[]
                  {
                      (MapPointType.RestSite, "query.map.node.rest"),
@@ -857,7 +909,7 @@ internal sealed partial class AnalysisPage
             button.AddThemeFontSizeOverride("font_size", 15);
             button.TooltipText = _uiText!.Format("ui1.map.route.max", Text(textKey), maximum) + "\n" + Text("predictor.design.map_scope");
             button.CustomMinimumSize = new Vector2(54, 34);
-            button.Pressed += () => SelectMetric(selected == type ? null : type);
+            button.Pressed += () => { SelectMetric(selected == type ? null : type); StoreDrawnRoute(act); };
             row.AddChild(button);
             buttons.Add((type, button));
         }

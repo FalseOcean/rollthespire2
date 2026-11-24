@@ -85,15 +85,20 @@ internal static partial class UiSurfaceChecks
         await HoverOriginal(originals[1], "astrolabe-switch-b", 1);
         await HoverOriginal(originals[0], "astrolabe-return-a", 1);
         var moltenEgg = ModelDb.Relic<MoltenEgg>().ToMutable();
+        var fresnel = ModelDb.Relic<FresnelLens>().ToMutable();
+        var bingBong = ModelDb.Relic<BingBong>().ToMutable();
         player.AddRelicInternal(moltenEgg, silent: true);
-        // Two actual fixture selections bound the complex branch to three
-        // complete tuples while retaining its full publication capture guard.
-        foreach (var card in originals.Take(2))
-            AccessTools.Method(typeof(NDeckTransformSelectScreen), "OnCardClicked").Invoke(screen, [card]);
-        try { await HoverOriginal(originals[2], "astrolabe-molten-egg-full-capture", 3, direct: false); }
+        player.AddRelicInternal(fresnel, silent: true);
+        player.AddRelicInternal(bingBong, silent: true);
+        try
+        {
+            await HoverOriginal(originals[0], "astrolabe-with-add-hooks", 1);
+            await HoverOriginal(originals[0], "astrolabe-with-add-hooks-warm", 1);
+        }
         finally
         {
-            AccessTools.Method(typeof(NDeckTransformSelectScreen), "CancelSelection").Invoke(screen, [null]);
+            player.RemoveRelicInternal(bingBong, silent: true);
+            player.RemoveRelicInternal(fresnel, silent: true);
             player.RemoveRelicInternal(moltenEgg, silent: true);
         }
         var beforeSelection = PredictorOperationCapture.Capture(run, runtime.Detection.NormalizedVersion, NGame.Instance, out string beforeStamp);
@@ -362,7 +367,7 @@ internal static partial class UiSurfaceChecks
         }, new JsonSerializerOptions { WriteIndented = true }));
         GD.Print($"TRANSFORM_CONFIRMATION_UI_PASS checks={checks};demoCalls={demoCalls};nativeInitialize=true;reselection=true");
 
-        async Task HoverOriginal(CardModel original, string name, int highlightedOrdinal, bool direct = true)
+        async Task HoverOriginal(CardModel original, string name, int highlightedOrdinal)
         {
             var viewport = (SubViewport)screen.GetViewport();
             var hoverRoot = NGame.Instance!.HoverTipsContainer!;
@@ -386,7 +391,7 @@ internal static partial class UiSurfaceChecks
             var observedWork = PredictorOperationCapture.ReadNullable(controller!, "_work") as Task<OperationPreview>;
             double? captureObservedMs = captured != null ? elapsed.Elapsed.TotalMilliseconds : null;
             while (elapsed.Elapsed < TimeSpan.FromSeconds(name.Contains("darv", StringComparison.Ordinal) ? 5 : 30) &&
-                View() is not { Visible: true })
+                View() is not { Visible: true, Modulate.A: > .99f })
             {
                 captured ??= PredictorOperationCapture.ReadNullable(controller!, "_snapshot") as PredictorOperationSnapshot;
                 observedWork ??= PredictorOperationCapture.ReadNullable(controller!, "_work") as Task<OperationPreview>;
@@ -397,10 +402,10 @@ internal static partial class UiSurfaceChecks
             {
                 name, deckCount = player.Deck.Cards.Count, focusOwner = PredictorOperationCapture.ReadNullable(controller!, "_owner")?.GetType().Name,
                 captureObservedMs, scene = captured?.Scene.GetType().Name, workerStatus = observedWork?.Status.ToString(),
-                elapsedMs = elapsed.Elapsed.TotalMilliseconds, visible = View() is { Visible: true },
+                elapsedMs = elapsed.Elapsed.TotalMilliseconds, visible = View() is { Visible: true, Modulate.A: > .99f },
                 pathsExamined = observedWork is { IsCompletedSuccessfully: true } ? observedWork.Result.Branches.Sum(branch => branch.PathsExamined) : (int?)null
             }, new JsonSerializerOptions { WriteIndented = true }));
-            if (View() is not { Visible: true })
+            if (View() is not { Visible: true, Modulate.A: > .99f })
             {
                 viewport.PushInput(new InputEventMouseMotion { Position = new(4, viewport.Size.Y - 4),
                     GlobalPosition = new(4, viewport.Size.Y - 4) }, true);
@@ -412,7 +417,7 @@ internal static partial class UiSurfaceChecks
                     runAndRngUnchanged = RunSignature() == before, selectedUnchanged = selected.SequenceEqual(selectedBefore)
                 }, new JsonSerializerOptions { WriteIndented = true }));
             }
-            Check(View() is { Visible: true }, name + " real focus/capture/worker/publication shows a visible result;owner=" +
+            Check(View() is { Visible: true, Modulate.A: > .99f }, name + " real focus/capture/worker/publication shows a visible result;owner=" +
                 PredictorOperationCapture.ReadNullable(controller!, "_owner")?.GetType().Name + ";snapshot=" +
                 (PredictorOperationCapture.ReadNullable(controller!, "_snapshot") as PredictorOperationSnapshot)?.Scene.GetType().Name +
                 ";work=" + (PredictorOperationCapture.ReadNullable(controller!, "_work") as Task)?.Status);
@@ -420,15 +425,15 @@ internal static partial class UiSurfaceChecks
             double publicationMs = elapsed.Elapsed.TotalMilliseconds;
             var preview = PredictorOperationCapture.Read<OperationPreview>(view, "_preview");
             var timing = PredictorOperationCapture.Read<NeowOperationHoverController.HoverTiming>(controller!, "_timing");
-            if (name is "astrolabe-same-card-warm" or "astrolabe-switch-b" or "astrolabe-return-a")
+            if (name is "astrolabe-same-card-warm" or "astrolabe-switch-b" or "astrolabe-return-a" or "astrolabe-with-add-hooks-warm")
                 Check(timing.Capture.SnapshotReuses == 1 && timing.Capture.CatalogLevelReads == 0 && timing.Capture.DirectPoolReads > 0,
                     name + " leaving and switching native holders reuses selector inputs after current pool/dynamic observation");
+            if (name == "astrolabe-with-add-hooks")
+                Check(timing.Capture.SnapshotReuses == 0, "changed held relics invalidate the earlier selector snapshot");
             Check(timing.InitialObservationMs == 0 && timing.PublishCaptureMs > 0,
                 name + " reuses its captured observation and validates before publication");
-            Check(direct
-                    ? ReferenceEquals(PredictorOperationCapture.ReadNullable(controller!, "_directTransformSelector"), screen)
-                    : PredictorOperationCapture.ReadNullable(controller!, "_directTransformSelector") == null && timing.Publication.CatalogMs > 0,
-                name + " publication uses its required direct or complete capture guard");
+            Check(ReferenceEquals(PredictorOperationCapture.ReadNullable(controller!, "_directTransformSelector"), screen),
+                name + " publication uses the direct selector freshness check");
             if (name == "astrolabe-none-selected" || name == "astrolabe-darv-none-selected")
             {
                 await Until(() => timing.PollCount > 0, name + " unchanged hover performs its native freshness poll");
@@ -449,7 +454,7 @@ internal static partial class UiSurfaceChecks
             Check(Enumerable.Range(1, ordinalStacks.Length - 1).All(index =>
                 Math.Abs(ordinalStacks[index].GlobalPosition.X - ordinalStacks[index - 1].GetGlobalRect().End.X - 8) < .2f),
                 name + " adjacent native transform ordinals use the compact eight-pixel gap");
-            if (name.Contains("darv", StringComparison.Ordinal))
+            if (name.Contains("darv", StringComparison.Ordinal) || name.StartsWith("astrolabe-with-add-hooks", StringComparison.Ordinal))
                 Check(preview.Branches.Sum(branch => branch.PathsExamined) == 3,
                     name + " direct mixed-pool Astrolabe uses exactly three complete representative inputs");
             Check(Descendants(view).OfType<NCard>().Count() >= 3 && view.VisibleRegions.Count > 0 &&
@@ -460,7 +465,7 @@ internal static partial class UiSurfaceChecks
             hoverCases.Add(new { name, selected = selectedBefore.Select(PredictorLiveRunCapture.Id),
                 hovered = PredictorLiveRunCapture.Id(original), groups = groups.Length, highlightedOrdinal,
                 deckCount = player.Deck.Cards.Count, captureObservedMs,
-                publicationValidation = direct ? "DirectAstrolabeDynamicStamp" : "FullCapture",
+                publicationValidation = "DirectAstrolabeDynamicStamp",
                 pathsExamined = preview.Branches.Sum(branch => branch.PathsExamined), predictionMs = publicationMs,
                 timing = new { timing.CaptureMs, timing.InitialObservationMs, timing.WorkerMs, timing.PublishCaptureMs,
                     capture = new { timing.Capture.NativeStampMs, timing.Capture.CatalogMs, timing.Capture.CompleteCatalogMs,

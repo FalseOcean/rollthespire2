@@ -209,6 +209,15 @@ internal static partial class CombinationRegressionChecks
         var explicitPrayer = aligned with { StructuredOpeningEffects = [ArcaneTarget("UNMOVABLE"),
             new(Large, NeowStructuredConditionKind.ExactUnorderedPair, NeowStructuredEffectScope.NestedRelics,
                 NeowStructuredOutputKind.Relic, [new("RELIC", "PRAYER_WHEEL")])] };
+        var prayerKey = new ModelKey("RELIC", "PRAYER_WHEEL");
+        var queue = SearchQuery.Empty with { RelicSequenceConstraints = [new(RolltheSpire2.Core.Relics.RelicSequenceKind.Uncommon,
+            SearchSequenceRangeMode.ExactSlot, 1, new([prayerKey], [], []))] };
+        // Both seats have the same one-item Uncommon lane. Only P1 specifies
+        // the Prayer Wheel in a Capsule, leaving P2's first position intact.
+        Expect(context, Table(2, (0, explicitPrayer), (1, queue)), seed, true,
+            "The other seat keeps its personal queue head");
+        Expect(context, Table(2, (0, explicitPrayer with { RelicSequenceConstraints = queue.RelicSequenceConstraints })),
+            seed, false, "The Capsule owner's single-item lane is exhausted");
         Expect(context, Table(2, (0, explicitPrayer)), seed, true,
             "explicit Prayer Wheel and Arcane output share the same real route with the extra C reward");
         CheckCpuFamilies(context, Table(2, (0, explicitPrayer)), seed, ["N.Neow", "R.Relic", "C.CombatReward"]);

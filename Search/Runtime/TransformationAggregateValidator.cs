@@ -154,13 +154,23 @@ internal static class TransformationAggregateValidator
         if (opening is not { } selectedOpening)
             return Witness(OpeningTransformationContinuation.Initial(authority.EffectAuthority), "events", null, null);
 
-        if (!authority.HasExactModernNeowIdentityInputs || authority.EffectAuthority is null)
+        string? pendingOffer = null;
+        if (authority.EffectAuthority is null)
             return Witness(null, selectedOpening.Serialized, null, null, "TransformationAggregate.NeowAuthorityUnavailable");
-        var identity = ModernNeowIdentityPredictor.PredictModernCore(root, authority, profile, true);
-        if (identity.UnknownEligibilityAffectedPool)
-            return Witness(null, selectedOpening.Serialized, null, null, "TransformationAggregate.NeowEligibilityUnknown");
-        if (!identity.RelicKeys.Contains(selectedOpening))
-            return SearchQueryEvaluation.NoMatch("TransformationAggregate.OpeningNotOffered");
+        if (!authority.HasExactModernNeowIdentityInputs)
+            pendingOffer = "TransformationAggregate.NeowAuthorityUnavailable";
+        else
+        {
+            var identity = ModernNeowIdentityPredictor.PredictModernCore(root, authority, profile, true);
+            if (identity.UnknownEligibilityAffectedPool)
+                pendingOffer = "TransformationAggregate.NeowEligibilityUnknown";
+            else if (!identity.RelicKeys.Contains(selectedOpening))
+                return SearchQueryEvaluation.NoMatch("TransformationAggregate.OpeningNotOffered");
+        }
+        // Under a direct pickup premise the transform count can contradict
+        // the request even when the offer menu remains unknown.
+        if (pendingOffer is not null && selectedOpening == BaseGameModelKeys.Relics.NeowsBones)
+            return Witness(null, selectedOpening.Serialized, null, null, pendingOffer);
         var engine = new NeowEffectProjectionEngine(profile, "TransformationAggregate.Neow", root, authority,
             request.CompiledSearch.RequiresComplexBonesDeckInteractionEvaluation)
             { CaptureTransformationContinuation = condition.UsesAncient };
@@ -172,7 +182,7 @@ internal static class TransformationAggregateValidator
                 (condition.UsesAncient || request.Evaluation.RequiresNormalCombatRewardDomain ||
                  TransformationAggregateCondition.HasBoundDirectRelicContinuation(request.CompiledSearch.NormalizedQuery));
             return Witness(projectionOfOpening.TransformationContinuation, selectedOpening.Serialized,
-                boundContinuation ? [selectedOpening] : null, projectionOfOpening.EffectGroups);
+                boundContinuation ? [selectedOpening] : null, projectionOfOpening.EffectGroups, pendingOffer);
         }
 
         if (projectionOfOpening.BonesOutcome is not { } bones)
