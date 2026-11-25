@@ -22,7 +22,7 @@ internal static partial class StandardMapProbabilityEstimator
         var conditions = input.CompiledSearch.NormalizedQuery.StandardMaps;
         if (conditions.Count == 0) return JointSelectivityResult.Exact(1,
             JointSelectivityCombinationMethod.SingleAuthorityTerm, "Probability.StandardMap.Party.Empty", "No map predicates.", "1");
-        if (input.ProfileId != RuntimeProfileId.Beta111 || input.CompiledSearch.Context.Detection.NormalizedVersion != "0.111.0" ||
+        if (!UsesSampledMapRules(input) ||
             input.Authority.PlayersCount is < 2 or > 4 || !input.Authority.IsVanilla)
             return JointSelectivityResult.Unpriced("Probability.StandardMap.Party.CorpusContextMismatch",
                 "Paired corpus requires Beta111 vanilla standard multiplayer maps.", "No single-player corpus substitution.");

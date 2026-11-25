@@ -84,13 +84,10 @@ internal sealed record ProbabilitySemanticView(
     private bool HasWorldQuery() =>
         NormalizedQuery.EncounterQueues.Count > 0 ||
         NormalizedQuery.VariantBossBranches.Any(branch => branch.IsValid) ||
-        NormalizedQuery.AncientBranches.Any(branch => branch.IsValid) ||
+        AncientProbabilityEstimator.HasConditions(NormalizedQuery) ||
         NormalizedQuery.EventSequenceConstraints.Any(condition => !condition.IsEmpty) ||
         NormalizedQuery.LegacyWorld.BossFilters.Any(filter => !filter.IsEmpty) ||
-        NormalizedQuery.LegacyWorld.BossOrdinalFilters.Any(filter => !filter.IsEmpty) ||
-        NormalizedQuery.LegacyWorld.AncientIdentityFilters.Any(filter => !filter.IsEmpty) ||
-        NormalizedQuery.LegacyWorld.AncientOptionFilters.Any(filter => !filter.IsEmpty) ||
-        NormalizedQuery.LegacyWorld.AncientSeaGlassTargetFilters.Any(filter => !filter.IsEmpty);
+        NormalizedQuery.LegacyWorld.BossOrdinalFilters.Any(filter => !filter.IsEmpty);
 }
 
 internal enum ProbabilitySemanticDependencyKind : byte

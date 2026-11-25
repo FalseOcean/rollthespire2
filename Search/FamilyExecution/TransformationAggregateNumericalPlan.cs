@@ -21,6 +21,7 @@ internal sealed partial class TransformationAggregateNumericalPlan
     private readonly (ulong Hash, int Prefix, int[][] Pools)[] _events;
     private readonly bool _closedNeow;
     private readonly bool _probabilityClosedNeow;
+    internal SearchModel Model { get; }
     internal bool UsesModern113 { get; }
     internal bool HasTwoSharedTransformOrders => UsesModern113 && _condition.Opening == TransformationOpening.BonesLeafyNewLeaf &&
         _condition.PickupOrder == TransformationPickupOrder.Any;
@@ -35,6 +36,7 @@ internal sealed partial class TransformationAggregateNumericalPlan
 
     internal TransformationAggregateNumericalPlan(SearchModel request)
     {
+        Model = request;
         _condition = request.Evaluation.TransformationAggregate ?? throw new ArgumentException("MissingAggregate");
         UsesModern113 = request.Authority.VersionResolution.SemanticProfileId == RngSemanticProfileId.Modern113;
         var keys = new Dictionary<ModelKey, int>();

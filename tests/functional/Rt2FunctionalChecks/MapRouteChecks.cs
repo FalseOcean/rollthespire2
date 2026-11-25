@@ -93,9 +93,14 @@ internal static class MapRouteChecks
     }
     private static void CheckProbabilityCorpus()
     {
-        var authority=RolltheSpire2.Tests.FastSearch.Beta110FastSearchFixtureAuthority.CreateBeta111(BaseGameModelKeys.Characters.Ironclad,10,0,1);
-        var context=RolltheSpire2.Search.Semantics.SearchContextFactory.From(RuntimeProfileId.Beta111,BaseGameModelKeys.Characters.Ironclad,10,authority,
-            new("0.111.0","0.111.0","beta","MapProbability",true,""),RolltheSpire2.Core.World.AncientOptionConditionProfile.BroadDefault);
+        RolltheSpire2.Search.Semantics.SearchContext ContextForVersion(string version)
+        {
+            var character = BaseGameModelKeys.Characters.Ironclad;
+            var authority = RolltheSpire2.Tests.FastSearch.Beta110FastSearchFixtureAuthority.CreateBeta111(character, 10, 0, 1, version);
+            return RolltheSpire2.Search.Semantics.SearchContextFactory.From(RuntimeProfileId.Beta111, character, 10, authority,
+                new(version, version, "", "MapProbability", true, ""), RolltheSpire2.Core.World.AncientOptionConditionProfile.BroadDefault);
+        }
+        var context = ContextForVersion("0.111.0");
         RolltheSpire2.Search.Selectivity.JointSelectivityResult Price(params RolltheSpire2.Search.Semantics.StandardMapSearchCondition[] conditions) =>
             RolltheSpire2.Search.Selectivity.JointSelectivityEstimator.EstimateQuery(RolltheSpire2.Search.Selectivity.SearchSelectivityInput.From(
                 RolltheSpire2.Search.Semantics.SearchCompiler.Compile(RolltheSpire2.Search.Semantics.SearchQuery.Empty with {StandardMaps=conditions},context)));
@@ -113,6 +118,14 @@ internal static class MapRouteChecks
         var unseen=Price(above with {Value=100});
         Check(RolltheSpire2.Ui.Pages.Search.QueryWorkbenchFrame.MapProbabilityExplanation(unseen.EvidenceCode,false,true).Contains("没有命中"),"No-sample explanation reaches UI");
         Check(RolltheSpire2.Ui.Pages.Search.QueryWorkbenchFrame.MapProbabilityExplanation(unseen.EvidenceCode,false,false).Contains("does not prove impossibility"),"No-sample is not impossible in English UI");
+        var original = Price(above).Probability;
+        foreach (string version in new[] { "0.111.1", "0.112.0" })
+        {
+            context = ContextForVersion(version);
+            Check(Price(above).Probability == original, "Same map rules inherit the sampled frequency: " + version);
+        }
+        context = ContextForVersion("0.114.0");
+        Check(Price(above).Probability is null, "Earlier rest-site row requires a different map sample");
         Console.WriteLine("MAP_PROBABILITY_CORPUS_PASS");
     }
     private static string Key(IEnumerable<MapPosition> path) => string.Join(";", path.Select(p => $"{p.Row:D2},{p.Column:D2}"));

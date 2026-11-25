@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Text.Json;
+using MapCoord = MegaCrit.Sts2.Core.Map.MapCoord;
 using MegaCrit.Sts2.Core.Runs;
 using Godot;
 using RolltheSpire2.Core.Identity;
@@ -25,13 +26,21 @@ internal sealed record SeenRoom(MapPosition Position, RoomType Type);
 internal sealed record SeenAct(string Act, int Columns, IReadOnlyList<MapPredictionPoint> Points,
     MapPosition[] Walked, SeenRoom[] Rooms)
 {
+    private static readonly Func<IRunState, IReadOnlyList<MapCoord>>? InterfaceVisited =
+        typeof(IRunState).GetProperty(nameof(RunState.VisitedMapCoords))?.GetMethod?
+            .CreateDelegate<Func<IRunState, IReadOnlyList<MapCoord>>>();
+
+    internal static IReadOnlyList<MapCoord> VisitedCoords(IRunState run) => run is RunState native
+        ? native.VisitedMapCoords
+        : InterfaceVisited?.Invoke(run) ?? throw new NotSupportedException("VisitedMapCoordsUnavailable");
+
     internal MapPrediction Map(string seed, int act) => new(seed,
         ModelKey.TryParseExact(Act, out var key) ? key : default, act - 1, Columns, Points, 0);
 
     internal static SeenAct Capture(IRunState run)
     {
         var map = InRunMapSnapshot.Actual(run);
-        var visited = run.VisitedMapCoords.Select(InRunMapSnapshot.Position).ToArray();
+        var visited = VisitedCoords(run).Select(InRunMapSnapshot.Position).ToArray();
         var history = run.MapPointHistory.ElementAtOrDefault(run.CurrentActIndex);
         var rooms = new List<SeenRoom>();
         if (history is not null)

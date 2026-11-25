@@ -76,13 +76,13 @@ internal static class RuntimeVersionProfileChecks
         var opening113 = RuntimeVersionCompatibility.Resolve("0.113.0");
         Check(opening113.IsProvisional && opening113.AllowsProductionSearch && !opening113.RuntimeAccepted &&
             opening113.SemanticProfileId == RngSemanticProfileId.Modern113 &&
-            !opening113.IsReleaseSupported && opening113.RulesAdaptedThroughVersion == "0.113.1" &&
+            !opening113.IsReleaseSupported && opening113.RulesAdaptedThroughVersion == "0.114.0" &&
             opening113.SemanticProfileId != RuntimeVersionCompatibility.Resolve("0.111.0").SemanticProfileId,
             "0.113 uses its own opening rules while remaining provisional");
         foreach (var (target, origin, semantics) in new[]
         {
             ("0.111.1", "0.111.0", RngSemanticProfileId.Modern110),
-            ("0.113.1", "0.113.0", RngSemanticProfileId.Modern113)
+            ("0.114.0", "0.113.0", RngSemanticProfileId.Modern113)
         })
         {
             var adapted = RuntimeVersionCompatibility.Resolve(target);
@@ -102,14 +102,14 @@ internal static class RuntimeVersionProfileChecks
         Check(!RuntimeVersionCompatibility.Resolve("unknown").IsReleaseSupported &&
             RuntimeVersionCompatibility.Resolve("0.107.1").RulesAdaptedThroughVersion == string.Empty,
             "An undetected or archived version is never labeled as an active adapted rule set");
-        foreach (string futureVersion in new[] { "0.113.9", "0.114.0", "1.0.0" })
+        foreach (string futureVersion in new[] { "0.113.9", "0.114.1", "1.0.0" })
         {
             var future = RuntimeVersionCompatibility.Resolve(futureVersion);
             Check(future.IsProvisional && future.AllowsProductionSearch && !future.RuntimeAccepted &&
                 future.SupportKind == RuntimeVersionSupportKind.LatestKnownFallback &&
                 future.GameVersionIdentity.ExactVersion == futureVersion &&
                 future.ReferenceVersion == RuntimeVersionCompatibility.LatestKnownProfileVersion &&
-                !future.IsReleaseSupported && future.RulesAdaptedThroughVersion == "0.113.1" &&
+                !future.IsReleaseSupported && future.RulesAdaptedThroughVersion == "0.114.0" &&
                 future.SemanticProfileId == opening113.SemanticProfileId &&
                 RuntimeProfilePolicies.UsesChildStreamShuffle(future.SemanticProfileId),
                 $"Unknown later version {futureVersion} inherits the latest known rules without claiming validation");

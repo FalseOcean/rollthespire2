@@ -46,6 +46,22 @@ public sealed record TransformationAggregateCondition(
     internal bool IsBones => Opening is TransformationOpening.BonesLeafyNewLeaf or TransformationOpening.BonesLeafyOther;
     internal ModelKey BonesCompanion => Opening == TransformationOpening.BonesLeafyOther ? CompanionRelic!.Value : BaseGameModelKeys.Relics.NewLeaf;
     internal bool LeafyFirst => PickupOrder is TransformationPickupOrder.LeafyThenNewLeaf or TransformationPickupOrder.LeafyThenCompanion;
+    // When T is removed for estimating the other domains, its selected opening
+    // and both Bones grants remain necessary. Pickup order is a player's choice.
+    internal SearchQuery WithOpeningPremise(SearchQuery query)
+    {
+        if (!UsesNeow || query.OpeningRoute is not null) return query;
+        var route = new NeowRouteSearchCondition(RequiredOpeningKey);
+        if (!IsBones) return query with { OpeningRoute = route };
+        var leafy = BaseGameModelKeys.Relics.LeafyPoultice;
+        return query with
+        {
+            OpeningRoute = route,
+            OpeningRouteRelicRequirement = new(RequiredOpeningKey,
+                PickupOrder == TransformationPickupOrder.Any || LeafyFirst ? [leafy, BonesCompanion] : [BonesCompanion, leafy],
+                PickupOrder == TransformationPickupOrder.Any ? BonesRouteOrderMode.AnyOrder : BonesRouteOrderMode.ExactOrder)
+        };
+    }
     public bool UsesNeow => Opening != TransformationOpening.None;
     public bool UsesEvents => MorphicGrove || AromaOfChaos || WhisperingHollow || Symbiote || TrialNondescript;
     public int OpportunityCount => (int)Math.Min(int.MaxValue, (long)(Opening switch {

@@ -70,7 +70,7 @@ internal sealed class NeowTransformationComposite
                 sharedMeta.AddRange([(uint)sharedData.Count, (uint)pool.Length]);
                 sharedData.AddRange(pool.Select(id => numerical.TargetBits(id) | (numerical.IsRare(id) ? 0x80000000u : 0u)));
             }
-            bool measuredShape = request.Authority.GameVersion == "0.113.0" && request.Authority.Character.CharacterKey == BaseGameModelKeys.Characters.Fool &&
+            bool measuredShape = request.Authority.Character.CharacterKey == BaseGameModelKeys.Characters.Fool &&
                 neow.Authority.Ascension == 10 && neow.Authority.AllCharacterCardPoolsUnlocked &&
                 neow.Authority.BonesEligibleRelicIds.Length == 28 && neow.Authority.EligibleCurseRelicIds.Length == 10 &&
                 neow.Authority.EffectCatalog.GeneratedCurseIds.Length == 10 && neow.RequiredFinalCurseIds.Length == 1 && neow.BannedFinalCurseIds.Length == 0 &&

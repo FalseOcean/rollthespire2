@@ -254,9 +254,7 @@ internal static class JointSelectivityEstimator
 
         if (activeDomains.Length == 1 && activeDomains[0] == SearchSelectivityDomain.WorldEvent)
         {
-            bool hasAncientIdentity = semantic.NumericalFilter.AncientBranchConditions.Any(branch => branch.IsValid) ||
-                                      semantic.NumericalFilter.AncientIdentityFilters.Any(item => !item.IsEmpty);
-            if (!hasAncientIdentity)
+            if (!AncientProbabilityEstimator.HasConditions(semantic.NormalizedQuery) && semantic.NumericalFilter.EncounterQueues.Count == 0)
             {
                 JointSelectivityResult? world = WorldProbabilityEstimator.Estimate(plan);
                 if (world is not null) return world;

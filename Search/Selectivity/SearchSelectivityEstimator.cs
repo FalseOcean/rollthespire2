@@ -759,12 +759,11 @@ internal static class SearchSelectivityEstimator
     {
         if (ProbabilitySemanticProjection.From(plan).NumericalFilter.EncounterQueues.Count > 0)
             return SearchSelectivityEstimate.Unpriced("Probability.EncounterQueue.Unpriced", "Initial encounter queues include shared no-repeat tags and refill ordering; no joint estimator is available.");
-        bool hasAncientIdentity = ProbabilitySemanticProjection.From(plan).NumericalFilter.AncientBranchConditions.Any(branch => branch.IsValid) ||
-                                  ProbabilitySemanticProjection.From(plan).NumericalFilter.AncientIdentityFilters.Any(item => !item.IsEmpty);
+        bool hasAncient = AncientProbabilityEstimator.HasConditions(plan.CompiledSearch.NormalizedQuery);
         bool hasBossOrEvent = ProbabilitySemanticProjection.From(plan).NumericalFilter.BossFilters.Any(item => !item.IsEmpty) ||
                               ProbabilitySemanticProjection.From(plan).NumericalFilter.BossOrdinalFilters.Any(item => !item.IsEmpty) ||
                               ProbabilitySemanticProjection.From(plan).NumericalFilter.EventSequenceConditions.Any(item => !item.IsEmpty);
-        if (hasAncientIdentity && !hasBossOrEvent)
+        if (hasAncient && !hasBossOrEvent)
         {
             JointSelectivityResult? ancient = AncientProbabilityEstimator.Estimate(plan);
             if (ancient is { JointlyPriced: true, Probability: not null })
@@ -790,7 +789,7 @@ internal static class SearchSelectivityEstimator
                     ancient.Assumptions);
             }
         }
-        if (!hasAncientIdentity)
+        if (!hasAncient)
         {
             JointSelectivityResult? worldAuthority = WorldProbabilityEstimator.Estimate(plan);
             if (worldAuthority is { JointlyPriced: true, Probability: not null })

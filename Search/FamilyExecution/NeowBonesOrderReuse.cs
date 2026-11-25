@@ -135,4 +135,7 @@ internal static class NeowBonesOrderReuse
         _ when IsStreamNeutralPickup(source) => Streams.None,
         _ => Streams.Unknown
     };
+
+    internal static bool PreservesTransformationStream(byte source) =>
+        (PickupStreams(source) & (Streams.Transformations | Streams.Unknown)) == 0;
 }

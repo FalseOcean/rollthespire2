@@ -132,7 +132,7 @@ internal static class HextechShopForgeUpgradeCapture
     {
         if (model.CurrentUpgradeLevel < model.MaxUpgradeLevel)
         {
-            model.UpgradeInternal(); model.FinalizeUpgradeInternal();
+            DetachedCardUpgrade.Apply(model);
             return model;
         }
         // Native basic strikes/defends have a player-rune cap but an unowned

@@ -103,11 +103,20 @@ internal static class SearchProbabilityPresentationBuilder
             bool openingOwnedByT = sharedOpeningIdentity;
             if(openingOwnedByT && aggregateAttribution is { } opening)
                 rows.Add(new SearchProbabilityQuickViewRow(SearchProbabilityRowKind.Neow,opening.IdentityProbability));
-            if (filter.HasNeowConstraints && !openingOwnedByT)
+            var neowInput = input;
+            if (resolved.TransformationAggregate is { UsesExtendedRequirements: true, UsesNeow: true } scoped &&
+                compiled.NormalizedQuery.OpeningRoute is null)
+            {
+                // Selecting this source also requires Neow to offer it. Display
+                // that menu probability separately from the conditional T row.
+                var withOpening = scoped.WithOpeningPremise(compiled.NormalizedQuery) with { TransformationAggregate = null };
+                neowInput = SearchSelectivityInput.From(SearchCompiler.Compile(withOpening, compiled.Context));
+            }
+            if (neowInput.Filter.HasNeowConstraints && !openingOwnedByT)
             {
                 rows.Add(new SearchProbabilityQuickViewRow(
                     SearchProbabilityRowKind.Neow,
-                    FindDomainProbability(joint, SearchSelectivityDomain.Neow) ?? SearchSelectivityEstimator.EstimateStage(input, SearchSelectivityDomain.Neow).Probability));
+                    FindDomainProbability(joint, SearchSelectivityDomain.Neow) ?? SearchSelectivityEstimator.EstimateStage(neowInput, SearchSelectivityDomain.Neow).Probability));
             }
 
             if (hasBagRelic || hasShopRelic)
@@ -129,11 +138,11 @@ internal static class SearchProbabilityPresentationBuilder
         bool hasAncientOptions = resolved.AncientBranchConditions.Any(branch => branch.OptionAny.Count > 0 || branch.SeaGlassTargetAny.Count > 0) ||
                                  resolved.AncientOptionFilters.Any(item => !item.IsEmpty) ||
                                  resolved.AncientSeaGlassTargetFilters.Any(item => !item.IsEmpty);
-        double? identityProbability = null;
+        double? identityProbability = 1d;
         if (hasAncientIdentity)
         {
             var identity = AncientIdentityProbabilityEstimator.Estimate(input);
-            if (identity.IsPriced) identityProbability = identity.Probability;
+            identityProbability = identity.IsPriced ? identity.Probability : null;
         }
         if (hasAncientOptions)
         {
@@ -141,7 +150,7 @@ internal static class SearchProbabilityPresentationBuilder
             // P(options | accepted identities) = P(identity AND options) / P(identity).
             // This retains the authority's OR mixtures and cross-Act shared assignment;
             // multiplying individual branch option marginals would be incorrect.
-            double? conditional = resolved.AncientBranchConditions.Any(branch => branch.IsValid) && ancient?.JointlyPriced == true && ancient.Probability is { } combined &&
+            double? conditional = ancient?.JointlyPriced == true && ancient.Probability is { } combined &&
                                   identityProbability is > 0 && combined <= identityProbability.Value + 1e-12
                 ? Math.Clamp(combined / identityProbability.Value, 0, 1) : null;
             rows.Add(new SearchProbabilityQuickViewRow(SearchProbabilityRowKind.Ancient, conditional));

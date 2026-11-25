@@ -25,6 +25,9 @@ internal sealed record PredictorContext(
     [JsonIgnore]
     internal bool UsesNonCombatGeneration => VersionResolution.SemanticProfileId == RngSemanticProfileId.Modern113;
 
+    internal bool Uses114RoomRules => Version.TryParse(GameVersion, out var detected) && detected >= Beta114RoomRulesSince;
+    private static readonly Version Beta114RoomRulesSince = Version.Parse(RuntimeVersionCompatibility.Beta114Version);
+
     internal PredictorStream NonCombatStream(PredictorStream legacyStream) =>
         UsesNonCombatGeneration ? PredictorStream.NonCombatGeneration : legacyStream;
 

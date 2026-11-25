@@ -9,19 +9,12 @@ internal static partial class TransformationAggregateQueryProbability
     internal static JointSelectivityResult Compose(SearchSelectivityInput input,Func<SearchSelectivityInput,JointSelectivityResult> estimateOther)
     {
         var compiled=input.CompiledSearch;
-        if (compiled.NormalizedQuery.TransformationAggregate is { UsesExtendedRequirements: true })
-        {
-            var otherConditions = SearchCompiler.Compile(compiled.NormalizedQuery with { TransformationAggregate = null }, compiled.Context);
-            var remaining = estimateOther(SearchSelectivityInput.From(otherConditions));
-            const string cause = "ScopedTransformations.JointProbabilityUnavailable";
-            return JointSelectivityResult.Partial("Probability.TransformationAggregate.Unknown", cause,
-                "Shared source and pickup witnesses are evaluated together; no independent-group probability product",
-                remaining.KnownComponents, remaining.UnknownComponents.Append(cause).ToArray());
-        }
         // Immutable numerical donor inputs only; no session, GPU owner, pricing
         // or execution is created by probability analysis.
         var request=new SearchModel(compiled,CompiledSearchEvaluationProjector.Project(compiled).Evaluation,
             CombatRewardRoutePolicyContract.None,compiled.SemanticFingerprint);
+        if (compiled.NormalizedQuery.TransformationAggregate is { UsesExtendedRequirements: true } scoped)
+            return ComposeScoped(request, scoped, estimateOther);
         var numerical = new TransformationAggregateNumericalPlan(request);
         var probability=TransformationAggregateProbability.Build(numerical);
         var query = compiled.NormalizedQuery;
@@ -39,6 +32,10 @@ internal static partial class TransformationAggregateQueryProbability
                 probability = probability with { QueryHitProbability = null,
                     Evidence = probability.Evidence + ";SharedSourcePredicatesJointUnavailable" };
         }
+        if (numerical.HasTwoSharedTransformOrders && query.LegacyNeow.EffectOutputConditions.Any(effect =>
+                !effect.IsEmpty && ObservesOpeningDraws(numerical.Condition, effect.SourceRelicKey)))
+            probability = probability with { QueryHitProbability = null,
+                Evidence = probability.Evidence + ";SharedSourcePredicatesJointUnavailable" };
         // A fixed Leafy/NewLeaf Bones transaction draws its final curse after the
         // owned transforms. Under the named-draw model its conditional pool is uniform;
         // the Bones identity and grant pair have already been paid by T.
@@ -97,4 +94,81 @@ internal static partial class TransformationAggregateQueryProbability
             components:components,assumptions:baseline.Assumptions.Concat(assumptions).ToArray(),dependencyCoverage:"ModeledIndependence")
             with { Confidence=SearchSelectivityConfidence.Medium, ExactlyImpossible=joint==0 };
     }
+    private static JointSelectivityResult ComposeScoped(SearchModel model, TransformationAggregateCondition condition,
+        Func<SearchSelectivityInput, JointSelectivityResult> estimateOther)
+    {
+        var compiled = model.CompiledSearch;
+        var query = compiled.NormalizedQuery;
+        if (compiled.Status == QueryNormalizationStatus.Impossible || SearchFeasibilityAnalyzer.Analyze(compiled).IsImpossible)
+            return JointSelectivityResult.Exact(0, JointSelectivityCombinationMethod.ExactImpossible,
+                "Probability.Semantic.FeasibilityProofImpossible", "Canonical query is impossible.", "P=0");
+
+        // Exact requires the selected opening offer and, for an Ancient, the
+        // actual relic on that Act's menu. Both belong to their parent menus:
+        // an authored option alternative cannot waive or charge the pickup twice.
+        var otherQuery = condition.WithOpeningPremise(query) with
+        {
+            TransformationAggregate = null,
+            LegacyWorld = query.LegacyWorld with { AncientOptionFilters = model.Evaluation.AncientOptionFilters }
+        };
+        var baseline = estimateOther(SearchSelectivityInput.From(SearchCompiler.Compile(otherQuery, compiled.Context)));
+        if (baseline.ExactlyImpossible) return baseline;
+        var estimate = FamilyAuxiliaryEvidence.Read(nameof(TransformationAggregateQueryProbability), "ScopedCountProbability",
+            () => ScopedTransformationDistribution.For(model, condition),
+            new ScopedTransformationDistribution.Estimate(null, "ScopedTransformations.EstimationFailed"), compiled.SemanticFingerprint);
+        string evidence = estimate.Evidence;
+        var components = baseline.KnownComponents.ToList();
+        var assumptions = baseline.Assumptions.ToList();
+        var unknown = baseline.UnknownComponents.ToList();
+        if (estimate.Probability is { } count)
+        {
+            assumptions.Add(condition.IsBones
+                ? "Pickup orders use the same draw words; one order must satisfy all transformation requirements."
+                : "Independent uniform indices in captured source pools; one joint count over contributing draws");
+            components.Add(new("transformation-aggregate", "Transformation aggregate", "Selected pickups and event premises",
+                count, evidence, JointSelectivityCombinationMethod.ConditionalChain,
+                SearchSelectivityDependencyClass.AssumedIndependent, true, count > 0, evidence, [assumptions[^1]]));
+            if (count == 0)
+                return JointSelectivityResult.Exact(0, JointSelectivityCombinationMethod.ExactImpossible,
+                    "Probability.TransformationAggregate.ImpossibleCount", evidence, "No combination of captured draws satisfies all count requirements.",
+                    components: components);
+            // A separate condition on the very same opening cards is not another
+            // independent draw. Later Ancient cards use subsequent stream positions.
+            if (condition.UsesNeow && (condition.ResultRequirements.Count == 0 ||
+                    condition.ResultRequirements.Any(r => r.Sources.Any(source => source.StartsWith("N.", StringComparison.Ordinal)))) &&
+                (query.StructuredOpeningEffects.Any(effect => ObservesOpeningDraws(condition, effect.SourceRelicKey) &&
+                    effect.Scope != NeowStructuredEffectScope.FinalCurse) ||
+                 query.LegacyNeow.EffectOutputConditions.Any(effect => !effect.IsEmpty && ObservesOpeningDraws(condition, effect.SourceRelicKey))))
+                unknown.Add("ScopedTransformations.SharedOpeningOutputJointUnavailable");
+        }
+        else unknown.Add(evidence);
+
+        if (condition.TrialNondescript && query.EventResultConditions.Any(result =>
+                result.Kind == EventResultConditionKind.EventRelicRarityRoll &&
+                result.RelicRarityBranch == Core.Events.EventRelicRarityBranch.MerchantGuilty))
+            return JointSelectivityResult.Exact(0, JointSelectivityCombinationMethod.ExactImpossible,
+                "Probability.TransformationAggregate.TrialCaseConflict", "The same Trial requires two distinct cases.", "P=0",
+                components: components);
+
+        if (estimate.Probability is { } priced && baseline.Probability is { } other && unknown.Count == 0)
+        {
+            double joint = priced * other;
+            if (joint > 0)
+                return JointSelectivityResult.Exact(joint, JointSelectivityCombinationMethod.ConditionalChain,
+                    "Probability.TransformationAggregate.ModeledJoint", evidence,
+                    "P(other obligations) × P(scoped count | selected sources and captured pools)",
+                    baseline.DependencyGraph, components, baseline.Branches, assumptions, "ModeledIndependence")
+                    with { Confidence = SearchSelectivityConfidence.Medium };
+            unknown.Add("ScopedTransformations.ProbabilityUnderflow");
+        }
+        if (baseline.Probability is null && baseline.UnknownComponents.Count == 0)
+            unknown.Add(baseline.EvidenceCode);
+        return JointSelectivityResult.Partial("Probability.TransformationAggregate.Partial", string.Join(", ", unknown),
+            "Only modeled components have a probability.", components, unknown, baseline.DependencyGraph, baseline.Branches, assumptions);
+
+    }
+
+    private static bool ObservesOpeningDraws(TransformationAggregateCondition condition, Core.Identity.ModelKey key) =>
+        key == condition.RequiredOpeningKey || condition.IsBones && (key == Core.Identity.BaseGameModelKeys.Relics.LeafyPoultice ||
+            condition.Opening == TransformationOpening.BonesLeafyNewLeaf && key == Core.Identity.BaseGameModelKeys.Relics.NewLeaf);
 }

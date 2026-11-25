@@ -16,7 +16,7 @@ internal sealed record TransformationAggregateProbability(double? QueryHitProbab
         TransformationAggregateNumericalPlan numerical)
     {
         if (!TransformationAggregateCondition.HasSharedNeow(request.Evaluation) ||
-            !(numerical.ProbabilityClosed || SupportsSharedNamedThree(numerical)) ||
+            !(numerical.ProbabilityClosed || numerical.HasTwoSharedTransformOrders && numerical.Closed) ||
             numerical.Neow is null) return null;
         var source = request.CompiledSearch.NormalizedQuery;
         var query = LegacySearchQueryAdapter.FromFilter(NeowReplayPlan.NeowFilter(request, false)) with {
@@ -49,8 +49,15 @@ internal sealed record TransformationAggregateProbability(double? QueryHitProbab
                 return new(joint, joint, identity, 3, [], policy +
                     ";T.SharedTransformOrderUnion;SameDrawRanksAcrossBothOrders;UniformIndependentDrawWordsModel");
             }
+            if (plan.HasTwoSharedTransformOrders)
+            {
+                var union = Selectivity.ScopedTransformationDistribution.For(plan.Model, plan.Condition);
+                double? joint = union.Probability * identity;
+                return new(joint, plan.Closed ? joint : null, identity, plan.Condition.OpportunityCount, [],
+                    policy + ";" + union.Evidence);
+            }
             return new(null, null, identity, plan.Condition.OpportunityCount, [],
-                plan.HasTwoSharedTransformOrders ? "T.SharedTransformOrderJointProbabilityUnavailable" : "T.ObservationAuthorityUnclosed");
+                "T.ObservationAuthorityUnclosed");
         }
         var local = groups.Select(g => RareDistribution(g.Pools.Select(pool => pool.Count(i => plan.IsRare(i)) / (double)pool.Length))).ToArray();
         var c = plan.Condition;
@@ -103,25 +110,6 @@ internal sealed record TransformationAggregateProbability(double? QueryHitProbab
     // when both projections of that same triple satisfy the multiset.
     internal static double SharedNamedThreeMass(uint[] strike, uint[] defend, uint[] newLeaf)
     {
-        Dictionary<(uint First, uint Second), ulong> Pairs(uint[] left, uint[] right)
-        {
-            var output = new Dictionary<(uint First, uint Second), ulong>();
-            int i = 0, j = 0;
-            ulong start = 0;
-            while (i < left.Length && j < right.Length)
-            {
-                ulong endLeft = NeowStaticDrawGateCompiler.Boundary(i + 1, left.Length);
-                ulong endRight = NeowStaticDrawGateCompiler.Boundary(j + 1, right.Length);
-                ulong end = Math.Min(endLeft, endRight);
-                var masks = (left[i], right[j]);
-                output[masks] = output.GetValueOrDefault(masks) + end - start;
-                start = end;
-                if (endLeft == end) i++;
-                if (endRight == end) j++;
-            }
-            return output;
-        }
-
         static bool Matches(uint first, uint second, uint third)
         {
             const uint targets = 7u;
@@ -133,9 +121,9 @@ internal sealed record TransformationAggregateProbability(double? QueryHitProbab
             return RemoveMatch(RemoveMatch(RemoveMatch(targets, first), second), third) == 0;
         }
 
-        var pairs0 = Pairs(strike, newLeaf);
-        var pairs1 = Pairs(defend, strike);
-        var pairs2 = Pairs(newLeaf, defend);
+        var pairs0 = SharedTransformationDrawRanks.CountPairs(strike, newLeaf);
+        var pairs1 = SharedTransformationDrawRanks.CountPairs(defend, strike);
+        var pairs2 = SharedTransformationDrawRanks.CountPairs(newLeaf, defend);
         double space = NeowStaticDrawGateCompiler.MantissaSpace;
         double mass = 0d;
         foreach (var (a, countA) in pairs0)

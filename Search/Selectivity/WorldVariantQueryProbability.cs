@@ -12,7 +12,7 @@ internal static class WorldVariantQueryProbability
     {
         var q=input.CompiledSearch.NormalizedQuery;
         if(q.VariantBossBranches.Count>0) return true;
-        return q.AncientBranches.Count>0 && (q.EventSequenceConstraints.Count>0 || q.LegacyWorld.BossFilters.Count>0 || q.LegacyWorld.BossOrdinalFilters.Count>0) &&
+        return AncientProbabilityEstimator.HasConditions(q) && (q.EventSequenceConstraints.Count>0 || q.LegacyWorld.BossFilters.Count>0 || q.LegacyWorld.BossOrdinalFilters.Count>0) &&
             input.Authority.WorldAuthority?.Beta109Generation?.ActSelectionGroups.Any(g=>g.EligibleActsInSourceOrder.Count>1)==true;
     }
     internal static JointSelectivityResult Compose(SearchSelectivityInput input, Func<SearchSelectivityInput,JointSelectivityResult> estimate)

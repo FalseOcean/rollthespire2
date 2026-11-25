@@ -266,6 +266,17 @@ internal static partial class PredictorOperationEventChecks
             Rows(mirror).Any(r => r.Action == OperationPreviewAction.UpgradeCard),
             "Reflections lost the downgrade stage behind later final upgrade values");
 
+        var dagger = state.Card(targets[0]) with { Key = new("CARD", "DINGY_DAGGER"), UpgradeLevel = 3 };
+        var daggerDefinition = PredictorCardChanges.Definition(context, state.Card(targets[0]).Key) with { Prototype = dagger };
+        var daggerCatalog = context.Catalog! with { CardDefinitions = context.Catalog.CardDefinitions
+            .Where(d => d.Prototype.Key != dagger.Key).Append(daggerDefinition).ToImmutableArray() };
+        foreach (var (version, expectedLevel) in new[] { ("0.113.1", 0), ("0.114.0", 2), ("0.115.0", 2) })
+        {
+            var rules = context with { GameVersion = version, Catalog = daggerCatalog };
+            Require(PredictorCardLevelEffects.Downgrade(rules, dagger).UpgradeLevel == expectedLevel,
+                "Dingy Dagger downgrade level for " + version);
+        }
+
         var restState = state with { Relics = [new(state.NextInstanceId, new("RELIC", "TINY_MAILBOX"), 1),
             new(state.NextInstanceId + 1, new("RELIC", "DREAM_CATCHER"), 1),
             new(state.NextInstanceId + 2, new("RELIC", "WHITE_BEAST_STATUE"), 1)], NextInstanceId = state.NextInstanceId + 3 };

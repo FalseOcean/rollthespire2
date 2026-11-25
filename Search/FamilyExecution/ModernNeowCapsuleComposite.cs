@@ -18,7 +18,7 @@ internal sealed record ModernNeowCapsuleComposite(ModernCapsuleGpuPlan Capsule, 
             device.EnvironmentKey.Split('|') is not [_, var deviceName, _] ||
             !deviceName.EndsWith("RTX 4060 Laptop GPU", StringComparison.OrdinalIgnoreCase) ||
             model.CharacterKey != BaseGameModelKeys.Characters.Ironclad || model.Ascension != 10 ||
-            model.Authority.GameVersion != "0.113.0" || model.Authority.AllCharacterCardPoolsUnlocked != true ||
+            model.Authority.AllCharacterCardPoolsUnlocked != true ||
             !unit.PhysicalRevision.Contains(".TrackedRanks.NativeFloat64", StringComparison.Ordinal) ||
             n.HasFinalCurseFastProjection || n.First != Beta110FastRelicCatalog.InvalidId ||
             n.Second != Beta110FastRelicCatalog.InvalidId || n.TopAny != 0 || n.TopAll != 0 || n.TopBan != 0 ||

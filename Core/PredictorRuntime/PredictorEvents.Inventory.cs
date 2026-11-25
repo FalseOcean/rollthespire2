@@ -182,8 +182,7 @@ internal sealed partial class PredictorRun
                 if (upgradedWongo.Length > 0)
                 {
                     long id = upgradedWongo[_eventRng!.NextInt(upgradedWongo.Length)];
-                    Working = Working.WithCard(PredictorCardLevelEffects.Reconcile(Context,
-                        Working.Card(id) with { UpgradeLevel = 0 }));
+                    Working = Working.WithCard(PredictorCardLevelEffects.Downgrade(Context, Working.Card(id)));
                     Accept(new("WongoLeaveDowngrade", id, [], null, null));
                 }
                 FinishEvent();

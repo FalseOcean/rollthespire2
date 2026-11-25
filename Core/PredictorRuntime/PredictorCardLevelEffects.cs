@@ -9,6 +9,9 @@ internal static class PredictorCardLevelEffects
     internal static bool HasInvariantLevelMetadata(RolltheSpire2.Core.Identity.ModelKey key) =>
         key.Category == "CARD" && key.Entry == "DINGY_DAGGER";
 
+    internal static PredictorCard Downgrade(PredictorContext context, PredictorCard card) =>
+        Reconcile(context, card with { UpgradeLevel = context.Uses114RoomRules ? Math.Max(0, card.UpgradeLevel - 1) : 0 });
+
     internal static PredictorCardLevelMetadata ResolveLevel(PredictorCardDefinition definition, int upgradeLevel)
     {
         if (definition.Levels.IsDefaultOrEmpty)

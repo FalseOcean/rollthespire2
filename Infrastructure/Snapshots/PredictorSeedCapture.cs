@@ -96,7 +96,7 @@ internal static class PredictorSeedCapture
         int lastLevel = PredictorCardLevelEffects.HasInvariantLevelMetadata(new(card.Id.Category, card.Id.Entry)) ? 0 : card.MaxUpgradeLevel;
         for (int level = 0; level <= lastLevel; level++)
         {
-            if (level > 0) { card.UpgradeInternal(); card.FinalizeUpgradeInternal(); }
+            if (level > 0) DetachedCardUpgrade.Apply(card);
             var keywords = card.GetKeywordsWithSources(KeywordSources.Local).ToHashSet();
             levels.Add(new(level, card.EnergyCost.GetWithModifiers(CostModifiers.Local), card.EnergyCost.CostsX,
                 keywords.Contains(CardKeyword.Unplayable), keywords.Contains(CardKeyword.Exhaust),

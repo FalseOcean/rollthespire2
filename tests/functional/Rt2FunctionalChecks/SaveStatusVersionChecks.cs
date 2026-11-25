@@ -28,7 +28,7 @@ internal static class SaveStatusVersionChecks
                 RulesEn: $"Adapted through {stable} (older game version)", RulesZh: $"适配至 {stable}（当前游戏为旧版）"),
             (Game: beta, LauncherEn: $"Adapted for {beta} (beta)", LauncherZh: $"适配 {beta}（测试版）",
                 RulesEn: $"Adapted through {beta}", RulesZh: $"适配至 {beta}"),
-            (Game: "0.114.0", LauncherEn: $"Adapted for {beta} (beta)",
+            (Game: "0.114.1", LauncherEn: $"Adapted for {beta} (beta)",
                 LauncherZh: $"适配 {beta}（测试版）",
                 RulesEn: $"Reusing rules adapted through {beta} (unverified)", RulesZh: $"沿用适配至 {beta} 的规则（未验证）")
         };

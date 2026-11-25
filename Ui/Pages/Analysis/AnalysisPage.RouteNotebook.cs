@@ -93,7 +93,7 @@ internal sealed partial class AnalysisPage
         if (_liveRunPremises is null || LastFacts is null || LastRequest?.OriginalSeed != run.Rng.StringSeed ||
             run.Map is null or MegaCrit.Sts2.Core.Map.NullActMap) return;
         var key = RouteBookKey.ForRun(run);
-        var stamp = $"{run.CurrentActIndex}/{run.VisitedMapCoords.Count}/{run.CurrentMapCoord}/{run.MapPointHistory.ElementAtOrDefault(run.CurrentActIndex)?.Count}/{run.CurrentMapPointHistoryEntry?.Rooms.Count}";
+        var stamp = $"{run.CurrentActIndex}/{SeenAct.VisitedCoords(run).Count}/{run.CurrentMapCoord}/{run.MapPointHistory.ElementAtOrDefault(run.CurrentActIndex)?.Count}/{run.CurrentMapPointHistoryEntry?.Rooms.Count}";
         bool hasSpoils = run.Players.SelectMany(p => p.Deck.Cards).OfType<MegaCrit.Sts2.Core.Models.Cards.SpoilsMap>().Any(c => c.SpoilsActIndex == 1);
         if (key == _liveRouteKey && stamp == _liveRouteStamp && _hasSpoilsCard == hasSpoils &&
             ReferenceEquals(_observedNativeMap, run.Map)) return;

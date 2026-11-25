@@ -4,6 +4,17 @@
   "Blocks": [
     {
       "Type": "Heading",
+      "ReleaseVersion": "1.4.11",
+      "Text": "RT2 1.4.11　适配 0.114.0 测试版"
+    },
+    {
+      "Type": "BulletList",
+      "Items": [
+        "补充了多来源变牌概率的估算。"
+      ]
+    },
+    {
+      "Type": "Heading",
       "ReleaseVersion": "1.4.10",
       "Text": "RT2 1.4.10　变牌筛种优化"
     },

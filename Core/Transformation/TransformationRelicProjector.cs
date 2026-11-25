@@ -10,14 +10,13 @@ internal readonly record struct TransformationRelicCard(ModelKey CardKey, Effect
 
 internal sealed record OpeningTransformationContinuation(int? StreamOffset, int? BasicCount, int? BasicStrikeDefendCount)
 {
-    // Every drawable vanilla Common/Uncommon/Rare capsule pickup in 0.113
-    // leaves the personal transformations stream untouched. Knowing which two
-    // were drawn (or which cards got upgraded) is unnecessary for this cursor.
+    // Under the Modern113 rules, native capsule pickups leave the personal
+    // transformations stream untouched. Newer builds inherit this rule along
+    // with the RNG profile; the actual relic pools still come from the capture.
     internal static bool HasNativeCapsuleCursor(RuntimeContextAuthoritySnapshot authority)
     {
         if (authority.VersionResolution.SemanticProfileId != RngSemanticProfileId.Modern113 ||
-            authority.PlayersCount != 1 ||
-            authority.GameVersion is not (RuntimeVersionCompatibility.Beta113Version or "0.113.1")) return false;
+            authority.PlayersCount != 1) return false;
         var effects = authority.EffectAuthority;
         bool native(NeowEffectRelicSnapshot relic) =>
             relic.Rarity is not (EffectRelicRarity.Common or EffectRelicRarity.Uncommon or EffectRelicRarity.Rare) ||

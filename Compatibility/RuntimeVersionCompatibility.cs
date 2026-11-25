@@ -155,7 +155,8 @@ public static class RuntimeVersionCompatibility
     public const string Stable111Version = "0.111.1";
     public const string Beta113Version = "0.113.0";
     public const string SupportedStableVersion = Stable111Version;
-    public const string SupportedBetaVersion = "0.113.1";
+    public const string Beta114Version = "0.114.0";
+    public const string SupportedBetaVersion = Beta114Version;
 
     public const string LatestAuditedVersion = Beta111Version;
     public const string LatestProductionCompatibleVersion = SupportedBetaVersion;
@@ -255,6 +256,12 @@ public static class RuntimeVersionCompatibility
 
         foreach (var release in SupportedReleases)
             if (normalized == release.DetectedVersion) return release;
+        if (normalized == "0.113.1")
+            return SupportedReleases.Single(release => release.ReferenceVersion == Beta113Version) with
+            {
+                GameVersionIdentity = identity, DetectedVersion = normalized, IsReleaseSupported = false,
+                EvidenceCode = "previous-release-adapted:0.113.1->rules:0.113.0"
+            };
         foreach (var rules in MaintainedRuleReferences)
             if (normalized == rules.ReferenceVersion) return rules;
 

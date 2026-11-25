@@ -3,6 +3,7 @@ using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Cards;
 using MegaCrit.Sts2.Core.Models.Events;
 using MegaCrit.Sts2.Core.Saves.Runs;
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.PredictorRuntime;
 using RolltheSpire2.Core.Effects.Snapshots;
 
@@ -44,8 +45,7 @@ internal static class OperationPreviewCardModel
         }
         else for (int level = 0; level < snapshot.UpgradeLevel; level++)
         {
-            model.UpgradeInternal();
-            model.FinalizeUpgradeInternal();
+            DetachedCardUpgrade.Apply(model);
         }
         if (model is Guilty guilty) guilty.CombatsSeen = snapshot.CombatsSeen;
         if (snapshot.Enchantment is { } enchantmentKey)

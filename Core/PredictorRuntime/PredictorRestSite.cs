@@ -100,7 +100,13 @@ internal sealed partial class PredictorRun
         RestOptions = [PredictorRestAction.Heal, PredictorRestAction.Smith];
         // RunState.IterateHookListeners visits Deck cards before relics.
         _restHatchSuppliers = Working.Deck.Where(id => Working.Card(id).Key.Entry == "BYRDONIS_EGG").ToImmutableArray();
-        foreach (long cardId in _restHatchSuppliers) RestOptions = RestOptions.Add(PredictorRestAction.Hatch);
+        foreach (long cardId in Working.Deck)
+        {
+            var card = Working.Card(cardId);
+            if (card.Key.Entry == "BYRDONIS_EGG") RestOptions = RestOptions.Add(PredictorRestAction.Hatch);
+            if (Context.Uses114RoomRules && card.Enchantment?.Entry == "CLONE" && !RestOptions.Contains(PredictorRestAction.Clone))
+                RestOptions = RestOptions.Add(PredictorRestAction.Clone);
+        }
         _restHatchSelectionCount = 0;
         foreach (var relic in Working.Relics.Where(r => !r.Melted))
             RestOptions = relic.Key.Entry switch
@@ -108,7 +114,7 @@ internal sealed partial class PredictorRun
                 "GIRYA" when relic.TimesLifted < 3 => RestOptions.Add(PredictorRestAction.Lift),
                 "SHOVEL" => RestOptions.Add(PredictorRestAction.Dig),
                 "MEAT_CLEAVER" => RestOptions.Add(PredictorRestAction.Cook),
-                "PAELS_GROWTH" => RestOptions.Add(PredictorRestAction.Clone),
+                "PAELS_GROWTH" when !Context.Uses114RoomRules => RestOptions.Add(PredictorRestAction.Clone),
                 "PUMPKIN_CANDLE" => RestOptions.Add(PredictorRestAction.Kindle),
                 _ => RestOptions
             };

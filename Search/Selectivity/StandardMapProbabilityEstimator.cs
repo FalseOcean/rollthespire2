@@ -11,6 +11,11 @@ internal static partial class StandardMapProbabilityEstimator
 {
     private sealed record Histogram(ulong Count, Dictionary<uint, ulong>[] Families);
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Histogram> Cache = new();
+    // The sampled layout predates the Modern113 change to the earliest rest-site row.
+    private static bool UsesSampledMapRules(SearchSelectivityInput input) =>
+        input.ProfileId == RuntimeProfileId.Beta111 &&
+        input.Authority.VersionResolution.SemanticProfileId == RngSemanticProfileId.Modern110;
+
     internal static JointSelectivityResult Compose(SearchSelectivityInput input, Func<SearchSelectivityInput, JointSelectivityResult> estimate)
     {
         var query = input.CompiledSearch.NormalizedQuery;
@@ -20,7 +25,7 @@ internal static partial class StandardMapProbabilityEstimator
             "The available empirical joint projection cannot price this map query.", "No product of same-map marginals.",
             baseline.KnownComponents, baseline.UnknownComponents.Append("M.StandardMap:" + why).ToArray(), assumptions: baseline.Assumptions);
         if (query.StandardMapRoutes.Count > 0) return Unknown("RouteSequenceJointMissing");
-        if (input.ProfileId != RuntimeProfileId.Beta111 || input.CompiledSearch.Context.Detection.NormalizedVersion != "0.111.0" || input.Authority.PlayersCount != 1 || !input.Authority.IsVanilla)
+        if (!UsesSampledMapRules(input) || input.Authority.PlayersCount != 1 || !input.Authority.IsVanilla)
             return Unknown("CorpusContextMismatch");
         var totals = query.StandardMaps.Where(c => c.Scope == 0).ToArray();
         var totalDimensions = totals.Select(c => MaximumDimension(c.Metric)).Distinct().ToArray();

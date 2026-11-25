@@ -650,10 +650,25 @@ internal static class PredictorShopChecks
         nativePlayer.AddRelicInternal(ModelDb.Relic<Girya>().ToMutable());
         var nativeOptions = RestSiteOption.Generate(nativePlayer).Select(o => o.OptionId).ToArray();
         var optionState = AddRelics(baseline.Working, "SHOVEL", "MEAT_CLEAVER", "PAELS_GROWTH", "PUMPKIN_CANDLE", "GIRYA");
-        var optionRun = new PredictorRun(baseline.Context, optionState);
+        // Compare the native menu with the rules used by the loaded game assembly.
+        bool cloneFromCards = typeof(PaelsGrowth).GetMethod("TryModifyRestSiteOptions")?.DeclaringType != typeof(PaelsGrowth);
+        var modern = baseline.Context with { GameVersion = "0.114.0", Live = new(1, true, []) };
+        var modernStream = PredictorSeedState.Create(modern, [], [], 0, 0, optionState.Odds).Streams
+            .Single(stream => stream.Stream == PredictorStream.NonCombatGeneration);
+        var modernState = optionState with { Streams = optionState.Streams.Add(modernStream) };
+        var optionRun = cloneFromCards ? new PredictorRun(modern, modernState) : new PredictorRun(baseline.Context, optionState);
         optionRun.EnterRestSite(1, 4);
         Check(optionRun.RestOptions.Select(o => o.ToString().ToUpperInvariant()).SequenceEqual(nativeOptions),
             "native rest option generation order");
+        var noClone = new PredictorRun(modern, modernState);
+        noClone.EnterRestSite(1, 4);
+        Check(!noClone.RestOptions.Contains(PredictorRestAction.Clone), "Clone disappears after losing the last enchanted card");
+        var enchanted = modernState;
+        foreach (long id in enchanted.Deck.Take(2))
+            enchanted = enchanted.WithCard(enchanted.Card(id) with { Enchantment = new("ENCHANTMENT", "CLONE"), EnchantmentAmount = 1 });
+        var withClone = new PredictorRun(modern, enchanted);
+        withClone.EnterRestSite(1, 4);
+        Check(withClone.RestOptions.Count(option => option == PredictorRestAction.Clone) == 1, "Clone enchantments contribute one rest option");
         var midas = new PredictorRun(baseline.Context with
             { Modifiers = [new(new ModelKey("MODIFIER", "MIDAS"))] }, optionState);
         midas.EnterRestSite(1, 4);

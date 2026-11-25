@@ -71,7 +71,15 @@ internal sealed partial class PredictorRun
                     RoomLatest("relics.orderedInventory"));
             var girya = run.Working.Relics.FirstOrDefault(r => !r.Melted && r.Key.Entry == "GIRYA");
             if (girya != null) trace.Read("relics.girya.timesLifted", girya.TimesLifted, RoomRelics(), RoomLatest("relics.girya.timesLifted"));
-            trace.Write("options", string.Join(" | ", run.RestOptions), RoomRelics().AddRange(hatchCauses), alias: "options");
+            var causes = RoomRelics().AddRange(hatchCauses);
+            if (run.Context.Uses114RoomRules)
+            {
+                var deck = Domain(PredictorCombatDomain.Deck);
+                trace.Read("cards.clone.suppliers", string.Join(" | ", run.Working.Deck.Where(id =>
+                    run.Working.Card(id).Enchantment?.Entry == "CLONE")), deck, RoomLatest("deck.All.candidates"));
+                causes = causes.AddRange(deck);
+            }
+            trace.Write("options", string.Join(" | ", run.RestOptions), causes, alias: "options");
         }
 
         internal void RecordRestQualification(PredictorRun run, PredictorRestAction action, bool actual)

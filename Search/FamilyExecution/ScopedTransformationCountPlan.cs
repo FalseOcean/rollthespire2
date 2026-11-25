@@ -2,7 +2,6 @@ using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Events;
 using RolltheSpire2.Core.Effects;
-using RolltheSpire2.Core.Effects.Coverage;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Core.Transformation;
@@ -45,12 +44,8 @@ internal sealed class ScopedTransformationCountPlan
     internal static ScopedTransformationCountPlan? TryCreate(SearchModel model)
     {
         var authority = model.Authority;
-        if (model.Evaluation.TransformationAggregate is not { UsesExtendedRequirements: true, IsBones: false } condition ||
-            authority.PlayersCount != 1 || authority.PlayerSlotIndex != 0 ||
-            authority.ProfileId != RuntimeProfileId.Beta111 ||
-            authority.VersionResolution.SemanticProfileId != RngSemanticProfileId.Modern113 ||
-            condition.AncientOpportunityCount is < 0 or > TransformationRelicProjector.ProjectionDrawBudget)
-            return null;
+        if (model.Evaluation.TransformationAggregate is not { } condition ||
+            !ScopedTransformationPools.Supports(model, condition)) return null;
 
         var sources = condition.SourceCounts().Keys.ToArray();
         var requirement = condition.ResultRequirements.Count switch {
@@ -91,25 +86,11 @@ internal sealed class ScopedTransformationCountPlan
 
     private bool AddOpening(DrawStream stream, NeowEffectAuthoritySnapshot effects)
     {
-        if (_opening == BaseGameModelKeys.Relics.LargeCapsule)
-        {
-            // The forced pair adds materials. Nested Whetstone and War Paint
-            // upgrade via non_combat_generation, leaving transformations at zero.
-            return OpeningTransformationContinuation.HasNativeCapsuleCursor(_model.Authority);
-        }
-        if (_opening.HasValue && NeowEffectCoverageRegistry.TryGet(_opening.Value, out var entry) &&
-            entry.Family == NeowEffectFamily.DeterministicImmediate) return true;
-        if (_opening != BaseGameModelKeys.Relics.NewLeaf && _opening != BaseGameModelKeys.Relics.LeafyPoultice) return false;
-        var catalog = Beta110FastEffectCatalogCompiler.Compile(effects, []);
-        ushort[][] pools;
-        if (_opening == BaseGameModelKeys.Relics.NewLeaf && catalog.NewLeafTransformAuthorityExact)
-            pools = [catalog.NewLeafTransformPool];
-        else if (_opening == BaseGameModelKeys.Relics.LeafyPoultice && catalog.LeafyTransformAuthorityExact)
-            pools = [catalog.LeafyStrikeTransformPool, catalog.LeafyDefendTransformPool];
-        else return false;
+        var pools = ScopedTransformationPools.Opening(_model, _opening, effects);
+        if (pools is null) return false;
         bool contributes = _openingSource is not null && _requirement.Sources.Contains(_openingSource);
         foreach (var pool in pools)
-            stream.Blocks.Add(new(pool.Select(id => catalog.DenseKeys[id]).ToArray(), 1, contributes));
+            stream.Blocks.Add(new(pool, 1, contributes));
         return true;
     }
 
@@ -125,24 +106,10 @@ internal sealed class ScopedTransformationCountPlan
             prefixRange, trial ? (int)TrialCaseTarget.Nondescript : null);
         if (counted)
         {
-            if (!scenario.Premises.VanillaLocalDependenciesBound || scenario.Premises.EntryFloor < 0 ||
-                string.IsNullOrWhiteSpace(scenario.Premises.EventOccurrenceBasis)) return false;
-            if ((trial || kind == EventResultConditionKind.SymbioteInitialBasicTransform) &&
-                EventResultTransformSemantics.ClosedPool(EventResultTransformSemantics.ForAggregate(kind, scenario)) is null)
-                return false;
-            int draws = EventResultTransformSemantics.DrawCount(kind);
-            if (scenario.Targets.Count < draws || grove && scenario.Targets.Count != draws) return false;
-            var basics = MorphicGroveCommitment.InitialBasics;
-            for (int i = 0; i < draws; i++)
-            {
-                // Group resolves each committed instance by ID. Single-target events take the
-                // first captured target; Trial's closed contract requires identical ordered pools.
-                string id = i == 0 ? basics.FirstInstanceId : basics.SecondInstanceId;
-                var target = grove ? scenario.Targets.FirstOrDefault(t => t.InstanceId == id) : scenario.Targets[0];
-                if (target is not { Original.CanTransform: true, Original.CardType: not "Quest", OrderedSourceCandidates.Count: > 0 })
-                    return false;
-                stream.Blocks.Add(new(target.OrderedSourceCandidates.Select(card => card.CardKey).ToArray(), 1, true));
-            }
+            var pools = ScopedTransformationPools.Event(kind, scenario);
+            if (pools is null) return false;
+            foreach (var pool in pools)
+                stream.Blocks.Add(new(pool.Select(card => card.CardKey).ToArray(), 1, true));
             _countedEvents.Add(kind);
         }
         if (trial)

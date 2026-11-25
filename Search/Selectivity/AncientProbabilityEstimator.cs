@@ -16,6 +16,12 @@ namespace RolltheSpire2.Search.Selectivity;
 /// </summary>
 internal static class AncientProbabilityEstimator
 {
+    internal static bool HasConditions(SearchQuery query) =>
+        query.AncientBranches.Any(row => row.IsValid) ||
+        query.LegacyWorld.AncientIdentityFilters.Any(filter => !filter.IsEmpty) ||
+        query.LegacyWorld.AncientOptionFilters.Any(filter => !filter.IsEmpty) ||
+        query.LegacyWorld.AncientSeaGlassTargetFilters.Any(filter => !filter.IsEmpty);
+
     private sealed record BranchPolicy(
         ModelKey AncientKey,
         double ConditionalAcceptance,

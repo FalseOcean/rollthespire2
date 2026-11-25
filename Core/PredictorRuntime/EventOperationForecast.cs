@@ -614,8 +614,7 @@ internal static class EventOperationForecast
                 // Reflections may downgrade and then upgrade the same card. Its
                 // final state cannot stand in for the earlier downgrade image.
                 if (effect.Action is "ReflectionsDowngrade" or "WongoLeaveDowngrade")
-                    cardsForEffect = cardsForEffect.Select(c => PredictorCardLevelEffects.Reconcile(snapshot.Context,
-                        c with { UpgradeLevel = 0 })).ToImmutableArray();
+                    cardsForEffect = cardsForEffect.Select(c => PredictorCardLevelEffects.Downgrade(snapshot.Context, before.State.Card(c.Id))).ToImmutableArray();
                 if (!cardsForEffect.IsEmpty) rows.Add(new(action.Value, [], cardsForEffect, false));
             }
             if (rows.Count > 0) sections.Add(new(scene.Event, rows.ToImmutable(), []));

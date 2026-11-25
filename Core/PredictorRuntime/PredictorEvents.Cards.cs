@@ -75,8 +75,7 @@ internal sealed partial class PredictorRun
                     int drawn = _eventRng!.NextInt(upgraded.Count);
                     long id = upgraded[drawn];
                     upgraded.RemoveAt(drawn);
-                    Working = Working.WithCard(PredictorCardLevelEffects.Reconcile(Context,
-                        Working.Card(id) with { UpgradeLevel = 0 }));
+                    Working = Working.WithCard(PredictorCardLevelEffects.Downgrade(Context, Working.Card(id)));
                     Accept(new("ReflectionsDowngrade", id, [], null, null));
                 }
                 var upgradableNow = Working.Deck.Where(id => Working.Card(id).UpgradeLevel < Working.Card(id).MaxUpgradeLevel).ToList();
