@@ -142,8 +142,10 @@ internal static class FamilyGpuComputeUtility
     {
         if (bytes.Length == 0) bytes = new byte[sizeof(uint)];
         long started=System.Diagnostics.Stopwatch.GetTimestamp();
+        GpuRootStorageBudget.Current?.Check(rd, bytes.Length);
         Rid buffer=rd.StorageBufferCreate(checked((uint)bytes.Length), bytes);
         if (!buffer.IsValid) throw CreationFailure("StorageBuffer", name, $"EmptyRid;bytes={bytes.Length};initialBytes={bytes.Length}");
+        GpuRootStorageBudget.Current?.Add(rd, buffer, bytes.Length);
         TraceBuffer(started,bytes.Length,name,bytes.Length);return buffer;
     }
 
@@ -153,8 +155,10 @@ internal static class FamilyGpuComputeUtility
     {
         if (byteCount < sizeof(uint)) byteCount = sizeof(uint);
         long started=System.Diagnostics.Stopwatch.GetTimestamp();
+        GpuRootStorageBudget.Current?.Check(rd, byteCount);
         Rid buffer=rd.StorageBufferCreate(checked((uint)byteCount), Array.Empty<byte>());
         if (!buffer.IsValid) throw CreationFailure("StorageBuffer", name, $"EmptyRid;bytes={byteCount};initialBytes=0");
+        GpuRootStorageBudget.Current?.Add(rd, buffer, byteCount);
         TraceBuffer(started,byteCount,name,0);return buffer;
     }
 
@@ -203,7 +207,8 @@ internal static class FamilyGpuComputeUtility
     private static InvalidOperationException CreationFailure(string operation, string name, string detail)
     {
         RuntimeLog.TryBackgroundWarning($"familyGpuCreationFailed=true;operation={operation};name={Sanitize(name)};stage=Compute;ownerThreadId={System.Environment.CurrentManagedThreadId};detail={Sanitize(detail)}");
-        return new InvalidOperationException($"FamilyGpu.{operation}Failed:{name}:{detail}");
+        string message = $"FamilyGpu.{operation}Failed:{name}:{detail}";
+        return operation == "StorageBuffer" ? new GpuStorageAllocationRefused(message) : new InvalidOperationException(message);
     }
 
     private static string Sanitize(string value) => value.Replace(';', ',').Replace('\r', ' ').Replace('\n', ' ');
@@ -303,7 +308,7 @@ internal static class FamilyGpuComputeUtility
             try
             {
                 if (_borrowedShaders is not null && _borrowedShaders.TryGetValue((rd, owned[index]), out var owner)) owner.Release(owned[index]);
-                else rd.FreeRid(owned[index]);
+                else { rd.FreeRid(owned[index]); GpuRootStorageBudget.Release(rd, owned[index]); }
             }
             catch (Exception ex)
             {

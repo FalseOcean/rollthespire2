@@ -130,6 +130,7 @@ internal sealed record PredictorEventNodeKnowledge(ModelKey? Event,
     internal string? TraceIdentity { get; init; }
     public PredictorEventOccurrenceObservation? Occurrence { get; init; }
     public PredictorEventOccurrenceCandidate? SelectedOccurrence { get; init; }
+    internal PredictorEventOccurrenceCandidate? PendingOccurrence { get; init; }
     public ModelKey? AuthoredEvent { get; init; }
     public bool AuthoredActionsNotApplied { get; init; }
     public ImmutableArray<PredictorCombatPendingCause> OccurrencePendingCauses { get; init; } = [];
@@ -140,6 +141,7 @@ internal sealed record PredictorEventNodeKnowledge(ModelKey? Event,
     public PredictorCombatPreview? Combat { get; init; }
     public ModelKey? CombatEncounter { get; init; }
     public PredictorCrystalView? Crystal { get; init; }
+    public bool CrystalDefaultApplied { get; init; }
     public int? GoldBalance { get; init; }
     public ImmutableArray<PredictorCombatPendingCause> GoldPendingCauses { get; init; } = [];
     public ImmutableArray<PredictorEventHealthDelta> HealthConsequences { get; init; } = [];

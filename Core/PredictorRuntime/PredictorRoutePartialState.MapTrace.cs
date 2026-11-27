@@ -71,11 +71,15 @@ internal sealed partial class PredictorRun
                 Read("forcedEventPredicate", forced, reads: inputs.ToImmutable());
             }
 
-            internal void ReadRandom(bool blockShop, bool blockMonster, PredictorUnknownOdds odds)
+            internal void ReadRandom(bool blockShop, bool juzu, bool dowsing, PredictorUnknownOdds odds)
             {
                 Read("shopBlockedByGeometryOrPreviousRoom", blockShop);
-                Read("juzuBlocksMonster", blockMonster,
+                Read("juzuBlocksMonster", juzu,
                     RouteRelicMembershipCauses(_run, _owner._dependencies, "JUZU_BRACELET"));
+                if (_run.Context.UsesNonCombatGeneration && !juzu)
+                    _reads.Add(_owner.Facts.RecordResult("map.resolve.read.dowsingBlocksCombat", _node, dowsing,
+                        origin: _run._preview.DowsingPremise == null ? PredictorKnowledgeOrigin.Derived : PredictorKnowledgeOrigin.ApprovedDefault,
+                        operation: "Dowsing.ModifyUnknownMapPointRoomTypes"));
                 Read("odds.unknownRoom", FormattableString.Invariant($"monster={odds.Monster}; elite={odds.Elite}; treasure={odds.Treasure}; shop={odds.Shop}"),
                     _owner.Domain(PredictorCombatDomain.Map));
                 Read("deadlyEventsModifier", _run.Context.HasRunModifier("DEADLY_EVENTS"));

@@ -272,11 +272,16 @@ internal static partial class UiSurfaceChecks
         var bottleInventory = new PredictorRouteInventoryKnowledge(PredictorPhase.EventChoice, [], [], [], [], 2,
             [new(0, new PredictorPotion(201, firstBottle), [], false, false), new(1, new PredictorPotion(202, secondBottle), [], false, false)], []);
         var future = new ModelKey("EVENT", "THE_FUTURE_OF_POTIONS");
-        SetEvent(future, [], potionRequirement: PredictorEventPotionRequirement.OrderedSlots, inventory: bottleInventory);
+        SetEvent(future, [], potionRequirement: PredictorEventPotionRequirement.None, inventory: bottleInventory, potionUnresolved: true);
+        presenter = new(session, names, text);
+        check(!FullDetail(presenter).Sections.Any(section => section.EmbeddedEditor != null) && session.Plans.IsEmpty,
+            "Future displays captured bottles without editing the route inventory or asking for a retention premise");
+        var orderedEvent = new ModelKey("EVENT", "STONE_OF_ALL_TIME");
+        SetEvent(orderedEvent, [], potionRequirement: PredictorEventPotionRequirement.OrderedSlots, inventory: bottleInventory);
         presenter = new(session, names, text);
         check(!FullDetail(presenter).Sections.Any(section => section.EmbeddedEditor != null),
             "a potion-consuming event with sufficient known bottles does not force an extra input form");
-        SetEvent(future, [], potionRequirement: PredictorEventPotionRequirement.OrderedSlots, inventory: bottleInventory, potionUnresolved: true);
+        SetEvent(orderedEvent, [], potionRequirement: PredictorEventPotionRequirement.OrderedSlots, inventory: bottleInventory, potionUnresolved: true);
         presenter = new(session, names, text);
         potionInput = FullDetail(presenter).Sections.Single().EmbeddedEditor!;
         check(potionInput.Numbers.Count == 0 && potionInput.Selections.Select(field => field.Value)
@@ -297,23 +302,29 @@ internal static partial class UiSurfaceChecks
         check(presenter.ApplyChoice(observed.Position.NodeId, confirm.Id) && session.Plans.Single().Event?.Potions is { } ordered &&
             ordered.EmptySlots == null && ordered.OrderedSlots.SequenceEqual(new ModelKey?[] { secondBottle, firstBottle }),
             "local potion confirmation preserves bottle population order and supplies no slot-capacity fact");
+        var futureCards = observed.Rewards.First(reward => reward.IsKnown && reward.Kind == PredictorRewardKind.Card);
         var localBottleOption = new PredictorEventOptionKnowledge("POTION:LOCAL:0",
             new("POTION:LOCAL:0", CardType: EffectCardType.Attack, LocalPotionOrdinal: 0, LocalPotionKey: secondBottle), true, [])
-        { ResultPreview = new(PredictorEventNeededInput.None, [], [], [], [], []) };
-        SetEvent(future, [localBottleOption], potionRequirement: PredictorEventPotionRequirement.OrderedSlots, inventory: bottleInventory);
+        { ResultPreview = new(PredictorEventNeededInput.Rewards, [], [], [], [futureCards], []) };
+        session = new();
+        SetEvent(future, [localBottleOption], potionRequirement: PredictorEventPotionRequirement.None, inventory: bottleInventory);
         presenter = new(session, names, text);
-        var bottleHeading = FullDetail(presenter).Sections.Single(section => section.HeaderChoice != null).HeaderChoice!;
+        var futureDetail = FullDetail(presenter);
+        var bottleHeading = futureDetail.Sections.Single(section => section.HeaderChoice != null).HeaderChoice!;
+        check(futureDetail.Sections.Any(section => section.Objects.Any(value => value.Kind == GameContentKind.Card)) &&
+            !futureDetail.Sections.SelectMany(section => section.Choices).Any(choice => choice.Object?.Kind == GameContentKind.Card),
+            "Future card candidates are visible read-only in the detailed branch view");
         check(bottleHeading.Label.Contains(names.Resolve(secondBottle, GameContentKind.Potion), StringComparison.Ordinal) &&
             bottleHeading.Label.Contains(text.Get("predictor.runtime.option.ATTACK"), StringComparison.Ordinal) &&
             presenter.ApplyChoice(observed.Position.NodeId, bottleHeading.Id) && session.Plans.Single().Event is { } futurePlan &&
-            futurePlan.Potions!.OrderedSlots.SequenceEqual(new ModelKey?[] { secondBottle, firstBottle }) &&
+            futurePlan.Potions == null &&
             futurePlan.Actions.Single().ExpectedOption is { PotionId: null, LocalPotionOrdinal: 0, LocalPotionKey: { } chosenBottle } && chosenBottle == secondBottle,
-            "Future's generated option names its hypothetical bottle and retains the local list without fabricating a persistent potion ID");
+            "Future names the captured bottle and selecting its branch authors only the normal option");
 
         // A route-local candidate list contains possible earlier receipts,
         // never the global generation pool or this event's own future output.
         session = new();
-        SetEvent(future, [], potionRequirement: PredictorEventPotionRequirement.OrderedSlots, inventory: bottleInventory, potionUnresolved: true);
+        SetEvent(orderedEvent, [], potionRequirement: PredictorEventPotionRequirement.OrderedSlots, inventory: bottleInventory, potionUnresolved: true);
         var targetNode = session.Nodes[(0, point)] with { Position = observed.Position with { Floor = 8 } };
         var previousBottle = new ModelKey("POTION", "FIRE_POTION");
         var branchBottle = new ModelKey("POTION", "ENERGY_POTION");
@@ -351,8 +362,8 @@ internal static partial class UiSurfaceChecks
             "an ordered local potion list cannot add bottles beyond known incoming capacity");
 
         session = new();
-        SetEvent(future, [], potionRequirement: PredictorEventPotionRequirement.OrderedSlots, inventory: bottleInventory, potionUnresolved: true);
-        session.SetPlan(0, point, new(observed.Position.NodeId) { Event = new(future)
+        SetEvent(orderedEvent, [], potionRequirement: PredictorEventPotionRequirement.OrderedSlots, inventory: bottleInventory, potionUnresolved: true);
+        session.SetPlan(0, point, new(observed.Position.NodeId) { Event = new(orderedEvent)
         { Potions = new() { OrderedSlots = [firstBottle, null, poolOnlyBottle] } } });
         presenter = new(session, names, text);
         potionInput = presenter.Detail((0, point))!.Sections.Single(section => section.EmbeddedEditor != null).EmbeddedEditor!;

@@ -74,6 +74,8 @@ internal static partial class RelicFamily
                     return new(output, metrics.CanonicalAbi1ReadyMs, metrics.CommandMs + metrics.SubmitMs + metrics.SyncMs,
                         metrics.ReadbackMs, metrics.ReadbackBytes);
                 }, resource => resource.Dispose(), reference.Reference, profile, resource => (resource.DeviceName, resource.SetupMs), 256),
+            SupportsStandaloneLargeWindow = true,
+            LargeWindowRole = GpuLargeWindowRole.Dense | GpuLargeWindowRole.Compact,
             BindPrivate = (device, input, output) => RelicFamilyGpuExecutor.Create(device, identity, plan, input, output, shopFirstTail).BindPrivateSerial()
         };
         prepared = new(plan, body);

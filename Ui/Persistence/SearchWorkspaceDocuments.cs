@@ -32,10 +32,12 @@ internal sealed class UserPreferencesDocument
     public float PanelHeight { get; set; }
     public string SearchMode { get; set; } = "Auto";
     public int? SearchWorkerBudget { get; set; }
+    public int GpuRootBatchSize { get; set; }
     public int QueryHistoryLimit { get; set; } = 30;
     public bool ShowOfficialPresets { get; set; } = true;
     public bool ShowDeadSeedResearch { get; set; }
     // Opt-in, including preferences saved before the in-run entry was introduced.
+    public bool PersistentSearch { get; set; }
     public bool ShowInRunPredictionEntry { get; set; }
     public bool CrystalSphereAvoidCurse { get; set; } = true;
     public bool CrystalSphereIncludeDriftwood { get; set; } = true;

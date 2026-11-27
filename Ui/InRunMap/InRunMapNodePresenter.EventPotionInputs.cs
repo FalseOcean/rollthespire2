@@ -89,6 +89,11 @@ internal sealed partial class InRunMapNodePresenter
 
     private void EventPotionInputs(Context c, EditorParts parts, PredictorEventNodeKnowledge node)
     {
+        if (node.Event?.Entry == "THE_FUTURE_OF_POTIONS")
+        {
+            parts.Sections.Add(new("", M("event_potions.current_future"), [], []));
+            return;
+        }
         if (node.Event?.Entry == "ENDLESS_CONVEYOR") { ConveyorInputs(c, parts, node); return; }
         if (node.PotionInputRequirement == PredictorEventPotionRequirement.None) return;
         // The requirement may come from a possible occurrence, before an event
@@ -145,6 +150,27 @@ internal sealed partial class InRunMapNodePresenter
             }), M("event_potions.empty_count"), Math.Min(draft.EmptySlots, capacity ?? int.MaxValue), 0, capacity ?? int.MaxValue));
         else
         {
+            int required = key.Entry switch
+            {
+                "STONE_OF_ALL_TIME" or "RANWID_THE_ELDER" => 1, _ => 0
+            };
+            if (!authored && required > 0 && capacity >= required)
+            {
+                var plans = _session.Plans.ToDictionary(plan => plan.NodeId, StringComparer.Ordinal);
+                var drops = PredictorEventPotionInput.RecentCombatDrops(_session.Nodes.Values.Where(prior =>
+                    prior.Position.Floor < c.Node.Position.Floor), id => plans.GetValueOrDefault(id), required);
+                if (drops.Length == required)
+                {
+                    var bottles = drops.Select(drop => (ModelKey?)drop.Potion).ToImmutableArray();
+                    var names = string.Join(", ", drops.Select(drop => _names.Resolve(drop.Potion, GameContentKind.Potion)));
+                    local.Sections.Add(new("", "", [], [Choice(c, _text.Format("predictor.map.event_potions.assume_drops", names), context =>
+                    {
+                        var plan = EventPlanApplies(context, node) ? context.Plan.Event! : new PredictorPlannedEvent(key);
+                        _eventPotionDrafts.Remove(draftKey);
+                        return Set(context, context.Plan with { Event = plan with { Potions = new() { OrderedSlots = bottles } } });
+                    })]));
+                }
+            }
             var obtainable = EventIncomingPotionCandidates(c, inventory).ToHashSet();
             var pool = obtainable
                 .Concat(draft.Bottles.OfType<ModelKey>()).Distinct().OrderBy(potion => _names.Resolve(potion, GameContentKind.Potion), StringComparer.Ordinal).ToArray();
@@ -216,8 +242,7 @@ internal sealed partial class InRunMapNodePresenter
             if (slot.IsKnown && slot.Value is { } potion) yield return potion.Key;
         // These are possible prior receipts, not one simultaneously owned
         // inventory. The local explicit list remains the player's hypothesis.
-        foreach (var prior in _session.Nodes.Where(pair => pair.Key.ActIndex == context.Location.ActIndex &&
-            pair.Value.Position.Floor < context.Node.Position.Floor).Select(pair => pair.Value))
+        foreach (var prior in _session.Nodes.Values.Where(node => node.Position.Floor < context.Node.Position.Floor))
         {
             foreach (var slot in prior.PotionBoundaries.SelectMany(boundary => boundary.Before.PotionSlots.Concat(boundary.After.PotionSlots)))
                 if (slot.IsKnown && slot.Value is { } potion) yield return potion.Key;

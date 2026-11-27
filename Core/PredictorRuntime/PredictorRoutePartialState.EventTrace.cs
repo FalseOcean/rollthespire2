@@ -114,10 +114,15 @@ internal sealed partial class PredictorRun
             if ((domains & PredictorCombatDomain.PotionInventory) != 0)
             {
                 if (run._eventPotionInput is { } input)
-                    reads.Add(Value(input.OrderedSlots.IsDefault ? "input.potions.emptySlots" : "input.potions.localHypothesis",
+                {
+                    bool captured = run.UsesCapturedEventPotions(run._eventKey);
+                    reads.Add(Value(input.OrderedSlots.IsDefault ? "input.potions.emptySlots" :
+                        captured ? "input.potions.capturedSlots" : "input.potions.localHypothesis",
                         input.OrderedSlots.IsDefault ? "emptySlots=" + input.EmptySlots :
                         string.Join(" | ", run.EventPotionSlots.Select((potion, slot) => slot + ":" + (potion?.Key.Serialized ?? "empty"))),
-                        "event-local potion hypothesis; no persistent inventory identity", origin: PredictorKnowledgeOrigin.PlayerInput));
+                        captured ? "Ordered bottles at the start of this drawing" : "event-local potion hypothesis; no persistent inventory identity",
+                        origin: captured ? PredictorKnowledgeOrigin.Captured : PredictorKnowledgeOrigin.PlayerInput));
+                }
                 else Input("potions.slots", string.Join(" | ", run.Working.PotionSlots
                     .Select((potion, slot) => slot + ":" + (potion == null ? "empty" : potion.Key.Serialized + " #" + potion.Id))), PredictorCombatDomain.PotionInventory);
             }
@@ -146,7 +151,9 @@ internal sealed partial class PredictorRun
         {
             _sourceDependencies = dependencies.ToImmutableArray();
             foreach (var option in run.EventOptions)
-                _rngCauses = PredictorRouteCauseEvidence.Normalize(_rngCauses.AddRange(CausesFor(dependencies, RouteEventOptionIdentityDomains(run, option))));
+                _rngCauses = PredictorRouteCauseEvidence.Normalize(_rngCauses.AddRange(UsesEventLocalRelicTrade(run, option)
+                    ? RouteTradableRelicPoolCauses(run, dependencies)
+                    : CausesFor(dependencies, RouteEventOptionIdentityDomains(run, option))));
             RngBoundary(run, "BeginEvent: option setup completed", _groups.GetValueOrDefault("selection", []));
         }
         internal void RngBoundary(PredictorRun run, string operation, ImmutableArray<PredictorKnowledgeFactId> reads = default)
@@ -176,7 +183,7 @@ internal sealed partial class PredictorRun
             // its unresolved inputs. Keep source audit edges without repeating
             // a whole-domain dependency inference over the execution witness.
             var identityReads = observation.IdentityReadFactIds.AddRange(_groups.GetValueOrDefault("localRng", []));
-            var identity = Value("option." + option.Key + ".identity", OptionText(option),
+            var identity = Value("option." + option.Key + ".identity", OptionText(observation.Value ?? option),
                 "event actual option identity over typed inputs", observation.IdentityPendingCauses, identityReads,
                 propagate: false, proof: "IdentityPendingCauses is established by the actual event option reader.");
             var enabled = Value("option." + option.Key + ".enabled", observation.Enabled ?? option.Enabled,
@@ -199,7 +206,7 @@ internal sealed partial class PredictorRun
                 propagate: false, proof: "The semantic gate has passed using its specific inputs; broader inventory snapshots are audit context.");
             if (input is ChooseEventOption selected && run.EventOptions.FirstOrDefault(option => option.Key == selected.OptionKey) is { } actual)
             {
-                reads = reads.Add(Value("input.selectedOption", OptionText(actual), "event actual bound option payload", reads: [choice, guard]));
+                reads = reads.Add(Value("input.selectedOption", OptionText(RouteEventOptionBinding(run, actual)), "event actual bound option payload", reads: [choice, guard]));
                 if (actual.GoldCost.HasValue || actual.GoldGain.HasValue) reads = reads.AddRange(DomainReads(run, PredictorCombatDomain.Gold, dependencies));
             }
             _selection = [choice, guard]; Group("selection", choice); Group("guard", guard);
@@ -343,7 +350,7 @@ internal sealed partial class PredictorRun
             var rule = Value("eligibility.rule", result, "EventStaticEligibilityCatalog.Evaluate: Beta111 Shared static predicate", reads: [model, act, immutable]);
             _groups["eligibility"] = _groups.GetValueOrDefault("eligibility", []).Add(rule); Publish();
         }
-        private static string OptionText(PredictorEventOption option) => option.Key + "; goldCost=" + option.GoldCost + "; goldGain=" + option.GoldGain + "; card=" + option.CardTargetId + "; potion=" + option.PotionId + "; relic=" + option.RelicId + "; nominalDamage=" + option.HealthDamage + "; nominalHeal=" + option.HealthHeal;
+        private static string OptionText(PredictorEventOption option) => option.Key + "; goldCost=" + option.GoldCost + "; goldGain=" + option.GoldGain + "; card=" + option.CardTargetId + "; potion=" + option.PotionId + "; relic=" + (option.TradedRelic?.Serialized ?? option.RelicId?.ToString()) + "; offeredRelic=" + option.OfferedRelic?.Serialized + "; nominalDamage=" + option.HealthDamage + "; nominalHeal=" + option.HealthHeal;
         private static string InputText(PredictorInput input) => input switch
         {
             ChooseEventOption option => "option:" + option.OptionKey,

@@ -73,11 +73,19 @@ public static class RuntimeProfilePolicies
     public static bool SupportsMerchantColorlessModel(RuntimeProfileId profileId) =>
         profileId == RuntimeProfileId.Beta111;
 
-    // Full from-seed Predictor initialization has only this audited support
-    // scope. A newer provisional version may run other independent models.
+    // Later ordinary builds keep the adapted rules while their semantic
+    // profile remains compatible. Exact release verification is independent.
+    private static readonly Version DrawingRulesVersion = Version.Parse(RuntimeVersionCompatibility.Beta114Version);
+    internal static bool UsesInheritedDrawingRules(RuntimeVersionResolution resolution) =>
+        resolution.IsUsable && !resolution.IsKnownIncompatible && resolution.ProfileId == RuntimeProfileId.Beta111 &&
+        resolution.SemanticProfileId == RngSemanticProfileId.Modern113 &&
+        Version.TryParse(resolution.GameVersionIdentity.ExactVersion, out var detected) && detected > DrawingRulesVersion;
+
     public static bool SupportsPredictorSeedInitialization(RuntimeVersionResolution resolution) =>
-        resolution.IsUsable && resolution.ProfileId == RuntimeProfileId.Beta111 &&
-        RuntimeVersionCompatibility.UsesAccepted111Rules(resolution.GameVersionIdentity.ExactVersion);
+        resolution.IsUsable && !resolution.IsKnownIncompatible && resolution.ProfileId == RuntimeProfileId.Beta111 &&
+        (RuntimeVersionCompatibility.UsesAccepted111Rules(resolution.GameVersionIdentity.ExactVersion) ||
+         resolution.GameVersionIdentity.ExactVersion == RuntimeVersionCompatibility.Beta114Version ||
+         UsesInheritedDrawingRules(resolution));
 
     public const string Stable107AuthorityId = "runtime-authority:stable107:accepted";
     public const string Beta109HistoricalAuthorityId = "runtime-authority:beta109:historical-donor-only";

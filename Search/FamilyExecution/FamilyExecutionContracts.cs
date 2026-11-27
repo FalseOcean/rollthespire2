@@ -152,10 +152,13 @@ internal static class LinearFamilyPipeline
             FamilyCandidateSet next;
             try
             {
-                next = familyIndex == 0 && preparedFirst is not null
+                next = familyIndex > 0 && executionContext.BoundPublicGpuTail
+                    ? await GpuRootWindow.FilterPublicTailAsync(family, executionContext, current, cancellationToken).ConfigureAwait(false)
+                    : familyIndex == 0 && preparedFirst is not null
                     ? await preparedFirst.InvokeAsync(family, current, cancellationToken).ConfigureAwait(false)
                     : await family.FilterAsync(executionContext, current, cancellationToken).ConfigureAwait(false);
             }
+            catch (GpuRootWindowBindingRefused) { throw; }
             catch (Exception error) when (!cancellationToken.IsCancellationRequested && FamilyCpuMatchException.IsRecoverable(error))
             {
                 // Execute/Parallel.For has joined every partition before throwing.

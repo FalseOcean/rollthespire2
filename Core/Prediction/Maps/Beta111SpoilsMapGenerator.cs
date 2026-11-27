@@ -72,12 +72,12 @@ internal static partial class Beta111StandardMapGenerator
 
         static MapPredictionPoint ToPrediction(MapNode node) => new(new(node.Col, node.Row),
             node.PointType, node.CanBeModified,
-            node.Children.Select(c => new MapPosition(c.Col, c.Row)).OrderBy(p => p.Column)
-                .ThenBy(p => p.Row).ToArray());
+            node.Children.Select(c => new MapPosition(c.Col, c.Row)).ToArray());
     }
 
     internal static MapPrediction GenerateBigGameStandardMap(string seed, ModelKey act, int actIndex,
-        int ascension, bool secondBoss, MapPointTypeCounts counts, CancellationToken token = default, bool multiplayer = false)
+        int ascension, bool secondBoss, MapPointTypeCounts counts, CancellationToken token = default, bool multiplayer = false,
+        RngSemanticProfileId semantics = RngSemanticProfileId.Modern110)
     {
         var profile = Beta111Profile.Instance;
         if (!ProfileSeedRules.TryCanonicalizePredictionSeed(profile, seed, out string canonical, out string issue))
@@ -89,9 +89,9 @@ internal static partial class Beta111StandardMapGenerator
             _ => throw new ArgumentException("Invalid Act", nameof(act))
         };
         var context = new ActContext(kind, actIndex, HasSwarmingElites: ascension >= 1,
-            HasSecondBoss: secondBoss, IsMultiplayer: multiplayer);
+            HasSecondBoss: secondBoss, IsMultiplayer: multiplayer, RngSemantics: semantics);
         var rng = new ReferenceRng(profile.DeriveNamedStreamSeed(profile.ComputeRootSeed(canonical),
-            $"act_{actIndex + 1}_map"), token, MapReplayMode.PackedSegmentDedup);
+            $"act_{actIndex + 1}_map"), token, MapReplayMode.PackedSegmentDedup, semantics);
         int mapLength = GetNumberOfRooms(kind, multiplayer) + 1;
         var grid = new MapNode?[7, mapLength];
         MapNode start = new(3, 0);
@@ -110,8 +110,7 @@ internal static partial class Beta111StandardMapGenerator
         if (second != null) all.Add(second);
         return new(canonical, act, actIndex, 7, all.Select(n => new MapPredictionPoint(
             new(n.Col, n.Row), n.PointType, n.CanBeModified,
-            n.Children.Select(c => new MapPosition(c.Col, c.Row)).OrderBy(p => p.Column)
-                .ThenBy(p => p.Row).ToArray())).ToArray(), rng.Counter);
+            n.Children.Select(c => new MapPosition(c.Col, c.Row)).ToArray())).ToArray(), rng.Counter);
     }
 
     private static (int Col, int Row) SpoilsNextCoord(MapNode?[,] grid, MapNode current,

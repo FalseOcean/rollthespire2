@@ -324,6 +324,7 @@ internal static class TransformationScopeChecks
         var probabilityContext = context with { Authority = authority.WithWorldAuthority(capturedWorld) };
         CheckScopedProbability(probabilityContext, jointCondition, check);
         CheckBonesOrderProbabilities(probabilityContext, jointCondition, check);
+        CheckMixedFamilyBodies(probabilityContext, jointCondition, check);
 
         var star = jointCondition with
         {
@@ -630,6 +631,114 @@ internal static class TransformationScopeChecks
                 Math.Abs(total / parents.TotalProbability.Value - expected) < 1e-12,
                 $"Bones selected only on N advances the shared stream while T counts just {draws} {source} draws");
         }
+    }
+
+    private static void CheckMixedFamilyBodies(SearchContext context, TransformationAggregateCondition joint, Action<bool, string> check)
+    {
+        const string grove = "E.MORPHIC_GROVE";
+        var pool = joint.EventScenario!.Targets[0].OrderedSourceCandidates!;
+        var common = pool.Single(card => card.Rarity == "Common").CardKey;
+        var rare = pool.Single(card => card.Rarity == "Rare").CardKey;
+        string[] both = [grove, Pandora];
+        var effects = context.Authority.EffectAuthority!;
+        var authority = context.Authority.WithEffectAuthority(effects with
+        {
+            SharedRelicPoolSource = effects.SharedRelicPoolSource!.Select(r => r with { SourceAssembly = "sts2", SourceModId = null }).ToArray(),
+            CharacterRelicPoolSource = []
+        });
+        SearchModel Model(TransformationAggregateCondition condition)
+        {
+            var query = SearchQuery.Empty with
+            {
+                OpeningRoute = new(condition.UsesNeow ? condition.RequiredOpeningKey : BaseGameModelKeys.Relics.LargeCapsule),
+                AncientBranches = [new(2, new("EVENT", "DARV"), [new("RELIC", "PANDORAS_BOX")], [])],
+                TransformationAggregate = condition
+            };
+            var compiled = SearchCompiler.Compile(query, context with { Authority = authority });
+            return new(compiled, CompiledSearchEvaluationProjector.Project(compiled).Evaluation, CombatRewardRoutePolicyContract.None,
+                compiled.SemanticFingerprint);
+        }
+        void Compare(string name, TransformationAggregateCondition source, TransformationResultRequirement[] requirements,
+            Func<ulong, int, int, bool> accepts, bool singleTarget = false)
+        {
+            var model = Model(source with { ResultRequirements = requirements });
+            Func<ulong, bool> reference;
+            if (singleTarget)
+            {
+                var count = ScopedTransformationCountPlan.TryCreate(model) ??
+                    throw new InvalidOperationException(name + " did not bind the same-card kernel");
+                reference = count.Matches;
+            }
+            else
+            {
+                var jointPlan = ScopedTransformationGeneralPlan.TryCreate(model, out var reason) ??
+                    throw new InvalidOperationException(name + " did not bind the general kernel: " + reason);
+                reference = jointPlan.Matches;
+            }
+            check(TransformationAggregateFamily.TryCreate(model, new(1, false, MapLossyOptions.Default), out var body) &&
+                body is { UsesGpu: true } && (singleTarget || body.PhysicalRevision.Contains("ScopedJoint", StringComparison.Ordinal)),
+                name + " selects its scoped GPU body through the public family");
+            int hits = 0;
+            for (ulong ordinal = 0; ordinal < 256; ordinal++)
+            {
+                ulong root = Beta111Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(ordinal));
+                var e = Beta109WorldRng.CreateEventLocal(root, 0, true, "MORPHIC_GROVE");
+                int groveRares = e.NextInt(2, "first basic") + e.NextInt(2, "second basic");
+                var a = new Xoshiro256StarStar(Beta111Profile.Instance.DeriveNamedStreamSeed(root, "transformations"));
+                bool expected = accepts(root, groveRares, a.NextInt(2));
+                check(reference(root) == expected, $"{name} disagrees with its own draws at ordinal {ordinal}");
+                if (expected) hits++;
+            }
+            check(hits is > 0 and < 256, name + " exercises both outcomes");
+        }
+        Compare("rare target plus rare remainder", joint, [new(both, Predicate.ContainsMultisetAndRemainingRare, 0, [rare, rare])],
+            (_, e, a) => e + a == 3, singleTarget: true);
+        Compare("nonrare target cannot spill into the rare remainder", joint,
+            [new(both, Predicate.ContainsMultisetAndRemainingRare, 0, [common, common])],
+            (_, e, a) => e + a == 1, singleTarget: true);
+        Compare("different named cards and overlapping rarity rows", joint,
+            [new(both, Predicate.ContainsMultisetAndRareCount, 2, [common, rare]), new([grove], Predicate.ContainsMultiset, 0, [common])],
+            (_, e, a) => e == 1 && a == 1);
+        Compare("Pandora cannot supply a missing Grove rare", joint,
+            [new([grove], Predicate.RareCountAtLeast, 2, []), new(both, Predicate.ContainsMultisetAndRemainingRare, 0, [common, rare])],
+            (_, e, a) => e == 2 && a == 0);
+        foreach (var scope in new[] { new[] { grove }, new[] { Pandora }, both })
+        {
+            bool usesGrove = scope.Contains(grove), usesPandora = scope.Contains(Pandora);
+            Compare("a rare from " + string.Join("+", scope) + " alongside a Grove common", joint,
+                [new(scope, Predicate.RareCountAtLeast, 1, []), new([grove], Predicate.ContainsMultiset, 0, [common])],
+                (_, e, a) => (usesGrove ? e : 0) + (usesPandora ? a : 0) >= 1 && e < 2);
+        }
+        Compare("New Leaf and Pandora consume consecutive personal draws while Grove uses its own pair",
+            joint with { Opening = TransformationOpening.NewLeaf },
+            [new(["N.NewLeaf", grove], Predicate.ContainsMultiset, 0, [rare, rare]),
+                new([Pandora], Predicate.ContainsMultiset, 0, [common])],
+            (root, e, _) =>
+            {
+                var personal = new Xoshiro256StarStar(Beta111Profile.Instance.DeriveNamedStreamSeed(root, "transformations"));
+                return personal.NextInt(2) + e >= 2 && personal.NextInt(2) == 0;
+            });
+        var events = joint with { AromaOfChaos = true, WhisperingHollow = true, Symbiote = true, TrialNondescript = true };
+        Compare("three selected events and an uncounted Trial case", events,
+            [new(["E.AROMA_OF_CHAOS", "E.WHISPERING_HOLLOW"], Predicate.ContainsMultiset, 0, [common, rare]),
+                new(["E.SYMBIOTE"], Predicate.RareCountAtLeast, 1, [])],
+            (root, _, _) =>
+            {
+                var trial = Beta109WorldRng.CreateEventLocal(root, 0, false, "TRIAL");
+                var aroma = Beta109WorldRng.CreateEventLocal(root, 0, false, "AROMA_OF_CHAOS");
+                var hollow = Beta109WorldRng.CreateEventLocal(root, 0, false, "WHISPERING_HOLLOW");
+                var symbiote = Beta109WorldRng.CreateEventLocal(root, 0, false, "SYMBIOTE");
+                _ = hollow.NextInt(19, "gold");
+                return trial.NextInt(3, "case") == 2 && aroma.NextInt(2, "card") + hollow.NextInt(2, "card") == 1 &&
+                    symbiote.NextInt(2, "card") == 1;
+            });
+        var missing = new MorphicGroveScenario(joint.EventScenario.Authority, joint.EventScenario.Premises,
+            [joint.EventScenario.Targets[0], joint.EventScenario.Targets[1] with { OrderedSourceCandidates = null }]);
+        var unclosed = Model(joint with { EventScenario = missing, ResultRequirements =
+            [new([grove], Predicate.ContainsMultiset, 0, [common, rare]), new([Pandora], Predicate.RareCountAtLeast, 1, [])] });
+        check(ScopedTransformationGeneralPlan.TryCreate(unclosed, out _) is null &&
+            TransformationAggregateFamily.TryCreate(unclosed, new(1, false, MapLossyOptions.Default), out var fallback) &&
+            fallback is { UsesGpu: false }, "a missing selected Grove pool keeps general T on the CPU");
     }
 
     private static void CheckScopedEventStreams(TransformationAggregateCondition joint, ModelKey target,

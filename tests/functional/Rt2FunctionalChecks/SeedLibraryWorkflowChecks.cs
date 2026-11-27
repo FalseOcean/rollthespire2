@@ -1,5 +1,8 @@
 using RolltheSpire2.Ui.Workspace;
 using System.Text.Json;
+using Godot;
+using Environment = System.Environment;
+using FileAccess = System.IO.FileAccess;
 using System.Text.Json.Nodes;
 using System.Diagnostics;
 using RolltheSpire2.Bootstrap;
@@ -29,15 +32,15 @@ namespace RolltheSpire2.Tests.FastSearch;
 // Runs under the existing native host; fixed Predictor contexts, no Search scan.
 internal static class SeedLibraryWorkflowChecks
 {
-    internal static int Run()
+    internal static int Run(bool archivedHistory = false)
     {
-        var runtime = NativeWorkbenchCheckEnvironment.Initialize("NativeSeedLibraryWorkflow");
+        var runtime = NativeWorkbenchCheckEnvironment.Initialize("NativeSeedLibraryWorkflow", archivedHistory ? "0.114.0" : "0.111.0");
         string directory = Path.Combine(Path.GetTempPath(), "RolltheSpire2-seed-workflow", Guid.NewGuid().ToString("N"));
-        Run(runtime, directory, PresetWorkbenchChecks.BuildDraft(runtime, 1), PresetWorkbenchChecks.BuildDraft(runtime, 4));
+        Run(runtime, directory, PresetWorkbenchChecks.BuildDraft(runtime, 1), PresetWorkbenchChecks.BuildDraft(runtime, 4), archivedHistory);
         return 0;
     }
 
-    private static void Run(ModRuntimeSnapshot runtime, string directory, WorkbenchSearchDraft solo, WorkbenchSearchDraft party)
+    private static void Run(ModRuntimeSnapshot runtime, string directory, WorkbenchSearchDraft solo, WorkbenchSearchDraft party, bool archivedHistory)
     {
         int checks = 0;
         void Check(bool condition, string message)
@@ -164,11 +167,94 @@ internal static class SeedLibraryWorkflowChecks
             ? p with { Character = BaseGameModelKeys.Characters.Necrobinder } : p).ToArray() }, candidate with { Facts = partyDocument }); }
         catch (InvalidOperationException) { rosterRejected = true; }
         Check(rosterRejected, "Same-count mismatched roster cannot borrow result witness");
-        bool staleRejected = false;
-        try { controller.OpenSeedLibraryEntry(entry with { Context = entry.Context! with { GameVersion = "future" } }); }
-        catch (InvalidOperationException) { staleRejected = true; }
-        Check(staleRejected && controller.CaptureSeedLibraryContext().Mode == WorldGameMode.Singleplayer,
-            "Stale library version rejects before switching predictor mode");
+        string previousVersion = archivedHistory ? "0.111.0" : "0.110.2";
+        var archived = entry with { Context = entry.Context! with { GameVersion = previousVersion } };
+        controller.OpenSeedLibraryEntry(archived);
+        var predicted = controller.CaptureSeedLibraryContext();
+        Check(predicted.GameVersion == runtime.Detection.NormalizedVersion && archived.Context.GameVersion == previousVersion &&
+            predicted.Players.Select(p => p.Character).SequenceEqual(archived.Context.Players.Select(p => p.Character)) &&
+            predicted.SelectedSlot == archived.Context.SelectedSlot, "Archived party favorite predicts with current rules and original roster");
+        var oldResult = new PersistedSearchResult { Seed = soloEntry.Seed, Context = soloContext with { GameVersion = previousVersion },
+            ValidationDisposition = SearchDisposition.Match, QueryFingerprint = "archived" };
+        controller.OpenSavedSearchResult(oldResult);
+        var currentContext = controller.CaptureSeedLibraryContext();
+        Check(page.LastFacts?.CanonicalSeed == oldResult.Seed && currentContext.GameVersion == runtime.Detection.NormalizedVersion &&
+            controller.CaptureResultOrigin(currentContext).Provenance?.AppliesToCurrentContext == false &&
+            oldResult.Context.GameVersion == previousVersion && oldResult.ValidationDisposition == SearchDisposition.Match,
+            "Stored search result opens without transferring its historical confirmation");
+        if (archivedHistory && Environment.GetEnvironmentVariable("RT2_ARCHIVED_LIBRARY_SAMPLE") is { Length: > 0 } sample)
+        {
+            var copies = new SeedLibraryStore(sample, []).GetAll();
+            foreach (var favorite in copies)
+            {
+                controller.OpenSeedLibraryEntry(favorite);
+                Check(page.LastFacts?.CanonicalSeed == favorite.Seed, "Archived sample did not predict its saved seed");
+            }
+            Console.WriteLine($"ARCHIVED_LIBRARY_SAMPLE reopened={copies.Count}");
+            var historicalStore = new SearchWorkspace(sample, false);
+            var ids = File.ReadAllLines(Path.Combine(sample, "history-samples.txt"));
+            var historicalFrame = new RolltheSpire2.Ui.Pages.Search.QueryWorkbenchFrame(runtime, persistence);
+            try
+            {
+                foreach (var id in ids)
+                {
+                    var record = historicalStore.Workspace.QueryHistory.Single(h => h.Id == id);
+                    var evaluated = historicalFrame.RecheckHistory(record, "sample", CancellationToken.None).GetAwaiter().GetResult();
+                    Check(evaluated.Count == record.Results.Select(r => r.Seed).Distinct().Count(), "Real historical rows missing");
+                    Console.WriteLine($"ARCHIVED_HISTORY version={record.Context?.GameVersion};seats={record.Context?.Players.Count};" +
+                        string.Join(";", evaluated.Values.GroupBy(r => r.ValidationDisposition).Select(g => $"{g.Key}={g.Count()}")));
+                }
+            }
+            finally { historicalFrame.Free(); }
+        }
+        var checkStore = new SearchWorkspace(Path.Combine(directory, "history-recheck"), false);
+        var recheckFrame = new RolltheSpire2.Ui.Pages.Search.QueryWorkbenchFrame(runtime, checkStore);
+        var library = new SeedLibraryCanvas(new SeedLibraryStore(directory, []), checkStore, "zh");
+        ((SceneTree)Engine.GetMainLoop()).CurrentScene.AddChild(library);
+        try
+        {
+            var oldHistory = new QueryHistoryEntry { Id = "old-search", Draft = solo with { AncientEditor = null,
+                Query = SearchQuery.Empty with { OpeningRoute = new(BaseGameModelKeys.Relics.NeowsBones) } } };
+            for (ulong ordinal = 0; ordinal < 64; ordinal++)
+                oldHistory.Results.Add(new() { Seed = Beta110SeedCodec.FormatOrdinal(ordinal), Context = ordinal == 0 ? null : oldResult.Context,
+                    ValidationDisposition = SearchDisposition.Match });
+            oldHistory.QueryKey = QueryHistoryIdentity.Key(oldHistory.Draft);
+            oldHistory.RunCount = 1; oldHistory.Context = oldResult.Context;
+            checkStore.Workspace.QueryHistory.Add(oldHistory);
+            Task<Dictionary<string, PersistedSearchResult>>? pending = null;
+            library.RecheckHistory = (record, title, cancel) => pending = recheckFrame.RecheckHistory(record, title, cancel);
+            library.ShowSection(SeedLibraryCanvas.LibrarySection.History);
+            void Present()
+            {
+                var type = library.GetType();
+                for (int i = 0; i < 4000 && HarmonyLib.AccessTools.Field(type, "_presentation").GetValue(library) != null; i++)
+                    HarmonyLib.AccessTools.Method(type, "TickPresentation").Invoke(library, null);
+            }
+            Present();
+            var checkButton = library.FindChild("RecheckHistory", owned: false) as Button;
+            Check(checkButton is { Disabled: false }, "Saved search has an enabled one-click recheck");
+            var cursor = JsonSerializer.Serialize(checkStore.Cursor);
+            checkButton!.EmitSignal(Button.SignalName.Pressed);
+            var observations = pending!.GetAwaiter().GetResult();
+            HarmonyLib.AccessTools.Method(library.GetType(), "PollRecheck").Invoke(library, null);
+            Present();
+            Check(library.FindChild("HistoryResultRow" + oldHistory.Results[0].Seed, owned: false) is HBoxContainer row &&
+                row.GetChildren().OfType<Label>().Any(label => label.Text.Contains("当前")), "History rows show the current verdict");
+            Check(observations.Count == oldHistory.Results.Count &&
+                observations.Values.Any(r => r.ValidationDisposition == SearchDisposition.Match) &&
+                observations.Values.Any(r => r.ValidationDisposition == SearchDisposition.NoMatch) &&
+                observations.Values.All(r => r.Context?.GameVersion == runtime.Detection.NormalizedVersion) &&
+                oldHistory.Results[0].Context is null && oldHistory.Results.Skip(1).All(r => r.Context?.GameVersion == previousVersion) &&
+                oldHistory.Results.All(r => r.ValidationDisposition == SearchDisposition.Match) && cursor == JsonSerializer.Serialize(checkStore.Cursor) &&
+                !checkStore.Runtime.Receiving, "Checked the saved seeds only, retaining original receipts and producing fresh matches and misses");
+        }
+        finally { library.Free(); recheckFrame.Free(); }
+        if (archivedHistory)
+        {
+            page.Free(); tooltip.Free();
+            Console.WriteLine($"ARCHIVED_HISTORY_WORKFLOW checks={checks};failures=0");
+            return;
+        }
         CheckSearchOriginRoundtrips(page, controller, runtime, solo, Path.Combine(directory, "search-origin"), Check);
         CheckManualPendingQuota(runtime, solo, Path.Combine(directory, "manual-pending-quota"), Check);
         CheckPredictorPartyConfiguration(page, controller, persistence, Path.Combine(directory, "predictor"), runtime, party, Check);

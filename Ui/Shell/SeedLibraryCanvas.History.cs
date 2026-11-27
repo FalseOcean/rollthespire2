@@ -30,6 +30,7 @@ internal sealed partial class SeedLibraryCanvas
     public override void _Process(double delta)
     {
         if (_retired || !IsVisibleInTree() || _note?.IsOpen == true || _confirmation?.IsOpen == true || _collectionEditor?.IsOpen == true) return;
+        PollRecheck();
         TickPresentation();
         if (_historyStore is null) return;
         _historyRefreshAge += delta;
@@ -64,6 +65,8 @@ internal sealed partial class SeedLibraryCanvas
         row.AddChild(_scope);
         _clearScope = AddAction(row, "", () => { _queryFilter = null; _sourceHistoryId = ""; _selectedHistory = ""; RefreshEntries(); });
         _clearScope.Name = "ClearHistoryFilter";
+        _importShare = AddAction(row, "", () => PreviewSharedPreset(DisplayServer.ClipboardGet()));
+        _importShare.Name = "ImportSharedPreset";
         _newCardCollection = AddAction(row, "", () => EditCardCollection(null), true);
         _newCardCollection.Name = "NewCardCollection";
         _returnFromCollections = AddAction(row, "", () => { _collectionReturnToSearch = false; CardCollectionReturnRequested?.Invoke(); });
@@ -84,6 +87,8 @@ internal sealed partial class SeedLibraryCanvas
         _tabs[LibrarySection.Presets].Text = T("预设搜索", "Search presets");
         _tabs[LibrarySection.History].Text = T("历史搜索", "Search history");
         _tabs[LibrarySection.CardCollections].Text = T("牌集", "Card collections");
+        _importShare.Text = T("从剪贴板导入", "Import from clipboard");
+        _importShare.Visible = _section == LibrarySection.Presets;
         _newCardCollection!.Text = T("新建牌集", "New collection");
         _newCardCollection.Visible = _section == LibrarySection.CardCollections && _cardCollections is not null;
         _returnFromCollections!.Text = T("返回筛种", "Back to Search");
@@ -154,6 +159,7 @@ internal sealed partial class SeedLibraryCanvas
         conditions.Name = "HistoryConditions"; _palette.SetActive(conditions, !_historyResults);
         var results = AddAction(actions, T($"结果（{selected?.Results.Count ?? 0}）", $"Results ({selected?.Results.Count ?? 0})"), () => { if (!_historyResults) { _historyResults = true; SelectDetail(); } });
         results.Name = "HistoryResults"; _palette.SetActive(results, _historyResults);
+        if (selected is { Results.Count: > 0 } && RecheckHistory != null) AddRecheck(actions, selected, canUse);
         if (selected is not null)
         {
             var coverage = Text(HistoryCoverageText(selected), 17, true);
@@ -178,18 +184,20 @@ internal sealed partial class SeedLibraryCanvas
         var results = query.Results.ToArray();
         for (int index = results.Length - 1; index >= 0; index--)
         {
-            var result = results[index];
+            var archived = results[index];
+            var current = query.Id == _recheckId ? _rechecked?.GetValueOrDefault(archived.Seed) : null;
+            var result = current ?? archived;
             var row = new HBoxContainer { Name = "HistoryResultRow" + result.Seed }; row.AddThemeConstantOverride("separation", 10); _detail.AddChild(row);
             var status = SearchResultValidationDisplay.StatusKey(result);
-            var seed = Text(result.Seed + (result.IsUnverified ? " · " +
+            var seed = Text(result.Seed + (current != null ? " · " + CurrentCheckStatus(current) : result.IsUnverified ? " · " +
                 RolltheSpire2.Presentation.Localization.JsonUiTextProvider.CreateUi13(_language).Get(status) : ""), 19);
             seed.SizeFlagsHorizontal = SizeFlags.ExpandFill; row.AddChild(seed);
             AddAction(row, T("复制", "Copy"), () => DisplayServer.ClipboardSet(result.Seed));
-            var predict = AddAction(row, T("进行预测", "Predict"), () => ResultOpenRequested?.Invoke(result)); predict.Disabled = result.Context is null;
+            var predict = AddAction(row, T("按当前规则预测", "Predict with current rules"), () => ResultOpenRequested?.Invoke(result)); predict.Disabled = result.Context is null;
             var favorite = AddAction(row, T("收藏", "Favorite"), () =>
             {
-                var origin = _historyStore!.ResultAssociation(result.Seed, query);
-                OpenSave(result.Seed, result.Context!, queryKey: query.QueryKey, association: origin,
+                var origin = current is null ? _historyStore!.ResultAssociation(result.Seed, query) : null;
+                OpenSave(result.Seed, result.Context!, queryKey: current is null ? query.QueryKey : null, association: origin,
                     resultProvenance: SeedLibraryResultProvenance.From(result, origin));
             });
             favorite.Disabled = result.Context is null;

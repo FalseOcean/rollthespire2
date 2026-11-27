@@ -33,7 +33,7 @@ internal sealed partial class PredictorRun
         int maximumNodes = 8, CancellationToken token = default,
         PredictorRoutePreviewScope scope = PredictorRoutePreviewScope.CombatAndRest,
         PredictorRoutePreviewPolicy policy = PredictorRoutePreviewPolicy.AuthoredChoices,
-        bool allowSelectedPrefixes = false, bool isolateNodeFailures = false)
+        bool allowSelectedPrefixes = false, bool isolateNodeFailures = false, ImmutableArray<ModelKey?> currentPotionSlots = default)
     {
         RequireRouteSimulation();
         if (!Enum.IsDefined(scope)) throw new ArgumentOutOfRangeException(nameof(scope));
@@ -45,14 +45,14 @@ internal sealed partial class PredictorRun
             plans.Select(p => p.NodeId).Distinct(StringComparer.Ordinal).Count() != plans.Length ||
             maximumNodes is < 1 or > 64)
             throw new ArgumentException("PredictorRoutePlansInvalid");
-        var scratch = CreateRoutePreview(plans, policy, allowSelectedPrefixes);
+        var scratch = CreateRoutePreview(plans, policy, allowSelectedPrefixes, currentPotionSlots);
         scratch.RestoreRoutes(Routes, allowSelectedPrefixes);
         if (Phase != PredictorPhase.Complete)
         {
             var draft = CaptureNodeDraft() ?? throw new InvalidOperationException("PredictorRouteDraftMissing");
             scratch.RestoreNodeDraft(draft, token);
         }
-        var dependencies = (Context.Live?.PendingCauses ?? []).Select(source => PredictorRouteCauseEvidence.Bind(source))
+        var dependencies = (scratch.Context.Live?.PendingCauses ?? []).Select(source => PredictorRouteCauseEvidence.Bind(source))
             .Select(cause => new RouteDependency(cause,
             MayChangeExistingCards: (cause.AffectedDomains & PredictorCombatDomain.Deck) != 0,
             AnyExistingCard: (cause.AffectedDomains & PredictorCombatDomain.Deck) != 0)).ToList();
@@ -77,7 +77,7 @@ internal sealed partial class PredictorRun
                 if (scratch.Phase == PredictorPhase.Complete)
                 {
                     if (scratch.Working.Outcome != null) break;
-                    if (!CanProjectNextRouteNode(scratch, dependencies, includeAllNodes))
+                    if (!CanProjectNextRouteNode(scratch, dependencies, includeAllNodes, token, out var redrawMap))
                     {
                         var blocked = PredictorRouteCauseEvidence.Normalize(CausesFor(dependencies, PredictorCombatDomain.Continuation));
                         // Exhausting a selected prefix or ending Act 3 is an
@@ -86,7 +86,7 @@ internal sealed partial class PredictorRun
                         if (!blocked.IsEmpty)
                         {
                             var target = RouteTerminalTarget(scratch);
-                            terminal = new(target, scratch.Working.Position, blocked);
+                            terminal = new(target, scratch.Working.Position, blocked) { RedrawMap = redrawMap };
                             partial.RecordBoundary(target.NodeId, PredictorRouteFactPhase.Before, entering,
                                 nodes.Count == 0 && Context.Live != null ? PredictorKnowledgeOrigin.Captured : PredictorKnowledgeOrigin.Derived);
                             partial.Facts.RecordResult("route.entry.entered", target.NodeId, false,
@@ -99,7 +99,10 @@ internal sealed partial class PredictorRun
                     }
                     scratch._preview.RequiresEventChoice = includeAllNodes;
                     if (includeAllNodes) ConfigureRouteShopProjection(scratch, dependencies, entryCauses, knownInstanceIds);
+                    int previousAct = scratch.Working.Position.Act;
                     scratch.AdvanceRoute(token);
+                    if (scratch.Working.Position.Act > previousAct)
+                        RetirePreviousActMapDependencies(dependencies);
                 }
                 var position = scratch.Working.Position;
                 faultPosition = position;
@@ -340,6 +343,8 @@ internal sealed partial class PredictorRun
                     CausesFor(dependencies, PredictorCombatDomain.Deck),
                     dependencies.Select(d => d.Cause).Concat(local).Distinct().ToImmutableArray())
                 { Advanced = advanced, AppliedRestActions = appliedRestActions, RestHeal = heal, RestOfferPendingCauses = restOfferPending,
+                    UnmodeledRelics = scratch.Context.DrawingUnmodeledRelics?.OrderBy(k => k.Serialized, StringComparer.Ordinal).ToImmutableArray() ?? [],
+                    DowsingPremise = scratch._preview.DowsingPremise,
                     OptionalObtainInputs = scratch._preview.Obtains.OptionalInputs.Where(input => input.Node == position.NodeId).Select(input => input.Input).ToImmutableArray(),
                     ObtainHealthEffects = scratch._preview.Obtains.HealthEffects.Where(value => value.Node == position.NodeId).Select(value => value.Effect).ToImmutableArray(),
                     PaelsToothStorage = scratch._preview.PaelsToothStorage.Values.Where(value => value.Knowledge.SourceNodeId == position.NodeId)
@@ -435,12 +440,13 @@ internal sealed partial class PredictorRun
     private static ImmutableArray<PredictorCombatPendingCause> CausesFor(List<RouteDependency> values, PredictorCombatDomain domain)
         => values.Where(d => (d.Cause.AffectedDomains & domain) != 0).Select(d => d.Cause).Distinct().ToImmutableArray();
 
-    private static bool CanProjectNextRouteNode(PredictorRun run, List<RouteDependency> dependencies, bool includeShopsAndAncients)
+    private static bool CanProjectNextRouteNode(PredictorRun run, List<RouteDependency> dependencies,
+        bool includeShopsAndAncients, CancellationToken token, out PredictorActMap? redrawMap)
     {
+        redrawMap = null;
         if (dependencies.Any(d => (d.Cause.AffectedDomains & PredictorCombatDomain.Continuation) != 0)) return false;
-        // Stay in the already generated act. Fresh-map hooks read cards such as
-        // Spoils Map; this first slice does not infer a replacement map from an
-        // incomplete deck or invent a route through a different map.
+        // The combat/rest slice uses only the existing act. The full projection
+        // can enter a selected later route after checking its fresh-map inputs.
         var map = run.Working.Maps.LastOrDefault();
         if (map == null || map.Visited.IsEmpty) return true;
         var point = map.Map.Points.Single(p => p.Position == map.Visited[^1]);
@@ -451,7 +457,7 @@ internal sealed partial class PredictorRun
             return false;
         }
         if (point.Children.Count == 0)
-            return CanProjectNextAct(run, dependencies);
+            return CanProjectNextAct(run, dependencies, token, out redrawMap);
         var route = run.Routes.SingleOrDefault(r => r.Act == map.Act);
         int next = route?.Points.IndexOf(map.Visited[^1]) + 1 ?? -1;
         if (route != null && next >= route.Points.Length && run._preview.Settings.AcceptsPrefixes) return false;
@@ -459,6 +465,14 @@ internal sealed partial class PredictorRun
             requireBoss: !run._preview.Settings.AcceptsPrefixes))
         {
             if (!includeShopsAndAncients) return true;
+            // A previously generated layout only changes in this act through a
+            // Golden Compass receipt. A witness with uncertain geometry cannot
+            // supply coordinates for the player's replacement path.
+            if (RouteRelicMembershipCauses(run, dependencies, "GOLDEN_COMPASS").IsEmpty &&
+                RouteRelicStateCauses(run, dependencies, "GOLDEN_COMPASS").IsEmpty &&
+                !(run.Context.Live?.PendingCauses.Any(c => (c.AffectedDomains & PredictorCombatDomain.Map) != 0) ?? false) &&
+                BindRouteRedraw(run, map, out redrawMap))
+                return CanProjectNextRouteNode(run, dependencies, includeShopsAndAncients, token, out redrawMap);
             AddDependency(dependencies, new(RouteCause("RoutePlanNeedsUpdate", run.Working.Position.NodeId,
                 PredictorCombatDomain.Continuation)));
             return false;
@@ -473,6 +487,23 @@ internal sealed partial class PredictorRun
             bool lantern = map.Act == 3 && RouteCardMayVary(run, dependencies, "LANTERN_KEY");
             bool dowsing = RouteCardMayVary(run, dependencies, "DOWSING") ||
                 !RouteCardStateCauses(run, dependencies, "DOWSING").IsEmpty;
+            if (dowsing && !lantern && run.Context.UsesNonCombatGeneration &&
+                run._preview.Settings.Policy == PredictorRoutePreviewPolicy.LiveMapDefaults)
+            {
+                var sources = dependencies.Where(d => RouteCardMayVary(run, [d], "DOWSING") ||
+                    !RouteCardStateCauses(run, [d], "DOWSING").IsEmpty);
+                if (sources.All(d => d.Cause.ReasonKind == PredictorPendingReasonKind.UserChoice))
+                {
+                    // The entry identity can diverge on the fourth ? room. From
+                    // a fresh seed, even a removed/copied Dowsing cannot have
+                    // accumulated more visits than the entire route has made.
+                    if (run.Context.Live != null || run.RoomHistory.Count(v => v.PointType ==
+                        RolltheSpire2.Core.Prediction.Maps.MapPointType.Unknown) >= 3)
+                        run._preview.DowsingPremise = new(nextNode, run.Working.Deck.Select(run.Working.Card)
+                            .Where(c => c.Key.Entry == "DOWSING").Select(c => c.RoomsEntered).ToImmutableArray());
+                    dowsing = false;
+                }
+            }
             if (lantern || dowsing)
             {
                 AddDependency(dependencies, new(RouteCause(lantern ? "UnknownRoomLanternKeyPending" : "UnknownRoomDowsingPending",
@@ -535,19 +566,26 @@ internal sealed partial class PredictorRun
              d.AnyExistingCard && present)));
     }
 
-    private static bool CanProjectNextAct(PredictorRun run, List<RouteDependency> dependencies)
+    private static bool CanProjectNextAct(PredictorRun run, List<RouteDependency> dependencies, CancellationToken token,
+        out PredictorActMap? redrawMap)
     {
+        redrawMap = null;
         int act = run.Working.Maps[^1].Act + 1;
         if (act > 3) return false;
         string node = $"map:{act}:entry";
-        bool possibleSpoils = dependencies.Any(d => (d.Cause.AffectedDomains & PredictorCombatDomain.Deck) != 0 &&
-            (d.PossibleCards.IsDefaultOrEmpty || d.PossibleCards.Any(c => c.Key.Entry == "SPOILS_MAP")));
-        if (possibleSpoils || !CausesFor(dependencies, PredictorCombatDomain.Map | PredictorCombatDomain.Relics).IsEmpty)
+        // Spoils Map targets Act 2 even when received in Act 1. Golden Compass
+        // and Fur Coat record their acquisition act, so a prior act's missing
+        // relic receipt or counter cannot alter the new map.
+        var spoils = act != 2 ? [] : PredictorRouteCauseEvidence.Normalize(dependencies.Where(d =>
+            (d.DeckFacts & PredictorDeckUncertainFact.Membership) != 0 &&
+            RouteCardMayVary(run, [d], "SPOILS_MAP")).Select(d => d.Cause)
+            .Concat(RouteCardStateCauses(run, dependencies, "SPOILS_MAP")));
+        if (!spoils.IsEmpty)
         {
-            AddDependency(dependencies, new(RouteCause("ActMapPending", node, PredictorCombatDomain.Map | PredictorCombatDomain.Continuation,
-                CausesFor(dependencies, PredictorCombatDomain.Map | PredictorCombatDomain.Relics).AddRange(dependencies.Where(d =>
-                    (d.Cause.AffectedDomains & PredictorCombatDomain.Deck) != 0 &&
-                    (d.PossibleCards.IsDefaultOrEmpty || d.PossibleCards.Any(c => c.Key.Entry == "SPOILS_MAP"))).Select(d => d.Cause)))));
+            AddDependency(dependencies, new(PredictorRouteCauseEvidence.CreateExplicit("ActMapPending", node,
+                PredictorCombatDomain.Map | PredictorCombatDomain.Continuation, PredictorPendingReasonKind.DerivedDependency,
+                "Act 2 map generation reads whether a Spoils Map is in the deck for that act.",
+                ["deck.SPOILS_MAP.membership", "deck.SPOILS_MAP.spoilsActIndex"], spoils)));
             return false;
         }
         if (run.Context.HasRunModifier("CURSED_RUN") && !CausesFor(dependencies, PredictorCombatDomain.NicheRng).IsEmpty)
@@ -557,12 +595,43 @@ internal sealed partial class PredictorRun
             return false;
         }
         var route = run.Routes.FirstOrDefault(r => r.Act == act);
-        if (route == null || !run.IsLegalRoute(run.RouteMap(act), route.Points, [], requireBoss: !run._preview.Settings.AcceptsPrefixes))
+        var map = run.RouteMap(act, token);
+        if (route == null || !run.IsLegalRoute(map, route.Points, [], requireBoss: !run._preview.Settings.AcceptsPrefixes))
         {
+            if (BindRouteRedraw(run, new(act, map, []), out redrawMap)) return true;
             AddDependency(dependencies, new(RouteCause("NextActRouteRequired", node, PredictorCombatDomain.Continuation)));
             return false;
         }
         return true;
+    }
+
+    private static bool BindRouteRedraw(PredictorRun run, PredictorActMap map, out PredictorActMap? redrawMap)
+    {
+        var path = run._preview.Settings.Plans.FirstOrDefault(p => p.NodeId == run.Working.Position.NodeId)?.RedrawnRoute;
+        if (path?.Act == map.Act && run.IsLegalRoute(map.Map, path.Points, map.Visited,
+                requireBoss: !run._preview.Settings.AcceptsPrefixes))
+        {
+            run.Routes = run.Routes.RemoveAll(r => r.Act == map.Act).Add(path);
+            redrawMap = null;
+            return true;
+        }
+        redrawMap = map with { Map = map.Map with { Points = map.Map.Points.Select(point =>
+            point with { Children = point.Children.ToImmutableArray() }).ToImmutableArray() } };
+        return false;
+    }
+
+    private static void RetirePreviousActMapDependencies(List<RouteDependency> dependencies)
+    {
+        // New map generation and the unknown-room odds reset establish fresh
+        // values. Keep all other domains, including the UnknownMapPoint RNG.
+        for (int i = dependencies.Count - 1; i >= 0; i--)
+        {
+            var dependency = dependencies[i];
+            if ((dependency.Cause.AffectedDomains & PredictorCombatDomain.Map) == 0) continue;
+            var remaining = dependency.Cause.AffectedDomains & ~PredictorCombatDomain.Map;
+            if (remaining == PredictorCombatDomain.None) dependencies.RemoveAt(i);
+            else dependencies[i] = dependency with { Cause = dependency.Cause with { AffectedDomains = remaining } };
+        }
     }
 
     private static ImmutableArray<PredictorCombatRewardKnowledge> ObserveRouteRewards(PredictorRun run,
@@ -753,11 +822,15 @@ internal sealed partial class PredictorRun
             }
             else
             {
-                if (reward.Kind == PredictorRewardKind.Potion && !CausesFor(dependencies, PredictorCombatDomain.PotionInventory).IsEmpty)
+                if (reward.Kind == PredictorRewardKind.Potion)
                 {
-                    local.Add(RewardChoiceCause(run, reward, "PlannedPotionReceiptPending", PredictorCombatDomain.Continuation, dependencies,
-                        CausesFor(dependencies, PredictorCombatDomain.PotionInventory)));
-                    return false;
+                    var sozu = RouteRelicMembershipCauses(run, dependencies, "SOZU");
+                    bool deniedRegardlessOfSlots = sozu.IsEmpty && PredictorSettlementEffects.Has(run.Working, "SOZU");
+                    if (!deniedRegardlessOfSlots && sozu.AddRange(CausesFor(dependencies, PredictorCombatDomain.PotionInventory)) is { IsEmpty: false } pending)
+                    {
+                        local.Add(RewardChoiceCause(run, reward, "PlannedPotionReceiptPending", PredictorCombatDomain.Continuation, dependencies, pending));
+                        return false;
+                    }
                 }
                 if (reward.Kind == PredictorRewardKind.Relic &&
                     !ObtainCauses(run, reward.Key, dependencies).IsEmpty)
@@ -782,7 +855,10 @@ internal sealed partial class PredictorRun
                         run.Submit(run.Request!, new EnterCardSelection(reward.Id), token);
                 }
                 int childDepth = run._obtainFrames.Length;
-                if (run.Submit(run.Request!, new TakeReward(reward.Id, reward.Kind == PredictorRewardKind.Card ? cardId : null), token) != PredictorInputResult.Accepted)
+                var result = run.Submit(run.Request!, new TakeReward(reward.Id, reward.Kind == PredictorRewardKind.Card ? cardId : null), token);
+                // The native potion reward closes on NotAllowed (Sozu). The
+                // denied procurement neither opens a child nor adds a bottle.
+                if (result != PredictorInputResult.Accepted && !(reward.Kind == PredictorRewardKind.Potion && result == PredictorInputResult.NotAllowed))
                 {
                     local.Add(RewardChoiceCause(run, reward, "PlannedRewardPending", PredictorCombatDomain.Continuation, dependencies));
                     return false;
@@ -918,8 +994,9 @@ internal sealed partial class PredictorRun
         string code, PredictorCombatDomain domains, List<RouteDependency> dependencies,
         ImmutableArray<PredictorCombatPendingCause> additionalParents = default)
     {
-        int index = run.Rewards.IndexOf(reward);
+        int index = run.Rewards.FindIndex(current => current.Id == reward.Id);
         if (index < 0) throw new InvalidOperationException("PredictorCauseRewardOccurrenceMissing");
+        reward = run.Rewards[index];
         int occurrence = run.Rewards.Take(index).Count(prior => prior.Kind == reward.Kind &&
             prior.Origin == reward.Origin && prior.Key == reward.Key);
         var choice = PredictorRouteCauseEvidence.RewardChoice(run.Working.Position.NodeId, reward, occurrence);
@@ -1102,10 +1179,6 @@ internal sealed partial class PredictorRun
         "ALCHEMICAL_COFFER" => PredictorCombatDomain.CombatPotionRng,
         "PHIAL_HOLSTER" => PredictorCombatDomain.CombatPotionRng | PredictorCombatDomain.PotionInventory,
         "NEOWS_SACRIFICE" => PredictorCombatDomain.PotionInventory,
-        // Starter replacement invokes another obtain. This bounded projection
-        // does not infer the selected starter's nested effects from a witness.
-        "TOUCH_OF_OROBAS" => PredictorCombatDomain.Deck | PredictorCombatDomain.NicheRng |
-            PredictorCombatDomain.RewardsRng | PredictorCombatDomain.PotionInventory | PredictorCombatDomain.CombatPotionRng,
         "LARGE_CAPSULE" => PredictorCombatDomain.Deck | PredictorCombatDomain.NicheRng |
             PredictorCombatDomain.RewardsRng | PredictorCombatDomain.PotionInventory | PredictorCombatDomain.CombatPotionRng,
         _ => PredictorCombatDomain.None
@@ -1117,6 +1190,9 @@ internal sealed partial class PredictorRun
         if (run._preview.Partial?.CanProjectUpgrade(key) == true) return PredictorCombatDomain.None;
         var reads = RefineOpenRewardObtainReads(run, key, ObtainReadDomains(key));
         if (run._preview.Partial != null) reads = run._preview.Partial.RefineObtainReads(key, reads, entryOnly: true);
+        // Claws always opens its manually confirmed 0–6 picker, including for
+        // an empty deck. Only the player's selected transformations read cards.
+        if (key.Entry == "CLAWS") return reads & ~PredictorCombatDomain.Deck;
         // Mirror's entry opens a picker when at least two non-Quest cards are
         // guaranteed. Full payload belongs to the subsequently chosen source,
         // not every other card in the deck.

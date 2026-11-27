@@ -14,7 +14,7 @@ internal sealed partial class MerchantShopColorlessGpuExecutor
         var windows = new List<FamilyCandidateSet>();
         metrics = default;
         int total = 0;
-        int capacity = input.IsDense ? SurvivorCapacity : Math.Min(CompactInputCapacity, SurvivorCapacity);
+        int capacity = input.IsDense ? OutputCapacity : Math.Min(CompactInputCapacity, OutputCapacity);
         for (int offset = 0; offset < input.Count;)
         {
             token.ThrowIfCancellationRequested();
@@ -63,6 +63,29 @@ internal sealed partial class MerchantShopColorlessGpuExecutor
             CanonicalAbi1ReadyMs = canonical.Elapsed.TotalMilliseconds
         };
         return combined;
+    }
+
+    private FamilyCandidateSet ExecutePrivateInputWindows(SearchBatch batch, int inputCount, CancellationToken token,
+        out MerchantShopColorlessGpuBatchMetrics metrics)
+    {
+        var timer = Stopwatch.StartNew();
+        var input = FamilyCandidateSet.Dense(batch);
+        var ordinals = new List<ulong>();
+        metrics = default;
+        for (int offset = 0; offset < inputCount; offset += OutputCapacity)
+        {
+            token.ThrowIfCancellationRequested();
+            int count = Math.Min(OutputCapacity, inputCount - offset);
+            var slice = ExecuteCore(input, count, token, out var current, offset)!;
+            ordinals.AddRange(slice.ExportAbi1().Span);
+            metrics = Sum(metrics, current);
+        }
+        // Earlier GPU stages may append in arbitrary order across slices.
+        token.ThrowIfCancellationRequested();
+        ordinals.Sort();
+        var result = FamilyCandidateSet.FromSortedAbi1(batch, ordinals.ToArray());
+        metrics = metrics with { CanonicalAbi1ReadyMs = timer.Elapsed.TotalMilliseconds };
+        return result;
     }
 
     private static MerchantShopColorlessGpuBatchMetrics Sum(MerchantShopColorlessGpuBatchMetrics a,

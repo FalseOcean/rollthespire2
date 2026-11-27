@@ -49,7 +49,10 @@
     <Compile Include="SimpleProbabilityPrinciplesChecks.cs" />
     <Compile Include="EtaCostClosureChecks.cs" />
     <Compile Include="SmallCandidateExactChecks.cs" />
+    <Compile Include="SmallCandidateExactChecks.AdaptiveSession.cs" />
     <Compile Include="SmallCandidateExactChecks.BatchGrouping.cs" />
+    <Compile Include="SmallCandidateExactChecks.PublicGpuTail.cs" />
+    <Compile Include="SmallCandidateExactChecks.PartyPublicTail.cs" />
     <Compile Include="PredictorOperationSceneChecks.cs" />
     <Compile Include="PredictorOperationCrystalChecks.cs" />
     <Compile Include="PredictorOperationTreasurePartyChecks.cs" />
@@ -74,9 +77,12 @@
     <Compile Include="CombinationRegressionChecks.Party.cs" />
     <Compile Include="PersistenceChecks.cs" />
     <Compile Include="DeveloperNotesArchiveChecks.cs" />
+    <Compile Include="PresetShareChecks.cs" />
     <Compile Include="PresetWorkbenchChecks.cs" />
     <Compile Include="PartySearchContextChecks.cs" />
     <Compile Include="NativeWorkbenchCheckEnvironment.cs" />
+    <Compile Include="PersistentSearchUiChecks.cs" />
+    <Compile Include="ResultMapLayoutChecks.cs" />
     <Compile Include="SaveStatusVersionChecks.cs" />
     <Compile Include="SeedLibraryWorkflowChecks.cs" />
     <Compile Include="SeedLibraryPersistenceChecks.cs" />

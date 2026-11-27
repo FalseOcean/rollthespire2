@@ -4,6 +4,17 @@
   "Blocks": [
     {
       "Type": "Heading",
+      "ReleaseVersion": "1.4.12",
+      "Text": "RT2 1.4.12"
+    },
+    {
+      "Type": "BulletList",
+      "Items": [
+        "Improved seed search performance and brought common controls together in Search settings on the right side of the search page."
+      ]
+    },
+    {
+      "Type": "Heading",
       "ReleaseVersion": "1.4.11",
       "Text": "RT2 1.4.11 · Updated for beta 0.114.0"
     },

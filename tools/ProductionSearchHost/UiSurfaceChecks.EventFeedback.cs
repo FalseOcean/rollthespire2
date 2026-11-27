@@ -166,8 +166,8 @@ internal static partial class UiSurfaceChecks
             "Bridge retains every future reroll in order, excluding only the public current proposal");
         var displayedBridgeCards = future.Branches.SelectMany(branch => NeowOperationOverlay.DisplaySections(future, branch))
             .SelectMany(section => section.CardGroups).SelectMany(group => group.Cards).ToArray();
-        Check(displayedBridgeCards.SequenceEqual(proposals),
-            "Bridge final display grouping preserves the complete future sequence beyond fifteen cards");
+        Check(displayedBridgeCards.SequenceEqual(proposals.Take(8)),
+            "Bridge hover shows the first eight proposals from the complete future sequence");
         Check(signature == JsonSerializer.Serialize(punch), "event feedback leaves captured source state and RNG unchanged");
         File.WriteAllText(Path.Combine(output, "operation-event-feedback-result.json"), JsonSerializer.Serialize(new
             { passed = true, checks, nativeCapturedBasis = true, detachedEventFixtures = true,

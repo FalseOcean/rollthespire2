@@ -46,8 +46,9 @@ internal static class QueryHistoryIdentity
             else if (draws.Count > 0 && draws.All(row => row is { DrawOrdinal: > 0, PoolSize: > 0 }))
                 query = query with { FishingRodDrawRequirements = FishingRodDrawResearch.NormalizeRequirements(draws) };
         }
-        return Hash(new { IntentVersion = 2, clean.Character, clean.Ascension, clean.Mode, Query = query, clean.AncientPremises,
+        string key = Hash(new { IntentVersion = 2, clean.Character, clean.Ascension, clean.Mode, Query = query, clean.AncientPremises,
             Players = clean.Players.Select(p => new { p.Slot, p.Character, UnlockPolicy = p.UnlockSource }).ToArray() });
+        return clean.UseFullUnlocks ? Hash(new { FullUnlockQuery = key }) : key;
     }
 
     internal static string EnvironmentKey(WorkbenchSearchDraft draft, SearchEnvironmentSignature signature)

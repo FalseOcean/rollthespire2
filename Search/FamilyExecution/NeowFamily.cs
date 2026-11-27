@@ -287,6 +287,9 @@ internal sealed partial class NeowFamily
                 ? PrivateFactory(_gpuPlan,_gpuOptimizations,_sparseRefinement is not null) : null,
             BindPrivateShared = _gpuPlan is not null && !UsesCompatibilityGpu && _composite is null && _transformations is null
                 ? SharedPrivateFactory(_gpuPlan,_gpuOptimizations,_sparseRefinement is not null) : null,
+            SupportsStandaloneLargeWindow = _gpuPlan is not null,
+            LargeWindowRole = _gpuPlan is null ? GpuLargeWindowRole.None :
+                !UsesCompatibilityGpu && _composite is null && _transformations is null ? GpuLargeWindowRole.Dense | GpuLargeWindowRole.Compact : GpuLargeWindowRole.Dense,
             UsesSmallPrivateOutput = UsesSmallPrivateOutput,
             SupportsDenseBatchGrouping = _gpuPlan is { DirectNestedMode:0,JointTransformMetaOffset:<0 } && _composite is null && _transformations is null,
             CreateExecution = CreateRuntimeFactory(_plan,_gpuPlan,_composite,_transformations,_gpuOptimizations,

@@ -15,6 +15,8 @@ internal sealed partial class InRunMapNodeDetails
     private ScrollContainer? _rewardCardDock;
     private HBoxContainer? _rewardCardDockGroups;
     private readonly List<Control> _rewardCardGroupHosts = [];
+    private readonly Queue<NeowOperationOverlay> _pendingRewardFaces = [];
+    private ulong _cardWorkQueuedFrame;
     private Vector2 _rewardCardDockNaturalSize;
 
     internal bool HasRewardCardDock => _rewardCardGroupHosts.Count != 0;
@@ -26,6 +28,7 @@ internal sealed partial class InRunMapNodeDetails
 
     private void ClearRewardCardDock()
     {
+        while (_pendingRewardFaces.TryDequeue(out var pending)) pending.ReleaseCardDisplays();
         _rewardCardGroupHosts.Clear();
         _rewardCardDockNaturalSize = Vector2.Zero;
         if (_rewardCardDock is not null)
@@ -92,23 +95,16 @@ internal sealed partial class InRunMapNodeDetails
         }
         else
         {
-            var source = _data?.HeaderObject?.Key ?? default;
-            var preview = new OperationPreview(source, [], [], false,
-                [new([], [new(source, [], [new(ordinal, cards, 0, 1, true, false)])], [], 1, true)], [])
-            { Style = new(OperationTextMode.None, OperationCardLayout.Stack), OptionKey = "group:" + displayId };
             var stack = new NeowOperationOverlay
             {
                 Name = "MapRewardCardStack_" + ordinal, ExternallyFramed = true,
-                MapCardPresentation = true, CardScaleOverride = RewardDockCardScale
+                MapCardPresentation = true, CardScaleOverride = RewardDockCardScale, StageCardFaces = true
             };
             host.AddChild(stack);
-            stack.SetPreview(preview);
-            Vector2 size = stack.CardsDesiredSize;
-            host.CustomMinimumSize = size;
-            host.Size = size;
-            stack.SetLayout(default, new Rect2(Vector2.Zero, size));
+            stack.BuildMapRewardCards(cards);
+            ScheduleRewardFaces(stack);
         }
-        AddCardDockHost(host, host.CustomMinimumSize);
+        _rewardCardGroupHosts.Add(host);
         return host;
     }
 
@@ -127,7 +123,7 @@ internal sealed partial class InRunMapNodeDetails
         var preview = new NeowOperationOverlay
         {
             Name = "MapOutcomeCardStack_" + ordinal, ExternallyFramed = true,
-            MapCardPresentation = true, CardScaleOverride = RewardDockCardScale
+            MapCardPresentation = true, CardScaleOverride = RewardDockCardScale, StageCardFaces = true
         };
         host.AddChild(preview);
         _rewardCardDockGroups!.AddChild(host);
@@ -143,14 +139,39 @@ internal sealed partial class InRunMapNodeDetails
         // This is the same immutable outcome used by the main summary. Its
         // action verbs, links and unknown/failure notices remain there; the
         // upper view displays only its native art and authored art captions.
-        preview.SetLayout(default, new Rect2(Vector2.Zero, size));
-        AddCardDockHost(host, size);
+        ScheduleRewardFaces(preview);
+        _rewardCardGroupHosts.Add(host);
     }
 
-    private void AddCardDockHost(Control host, Vector2 size)
+    private void ScheduleRewardFaces(NeowOperationOverlay group)
     {
-        host.CustomMinimumSize = host.Size = size;
-        _rewardCardGroupHosts.Add(host);
+        if (!group.HasPendingCardFaces) return;
+        group.Hide();
+        _pendingRewardFaces.Enqueue(group);
+    }
+
+    private void AdvanceVisibleCardFaces()
+    {
+        if (Engine.GetProcessFrames() == _cardWorkQueuedFrame) return;
+        if (_optionPreview.Visible)
+        {
+            if (_optionCardPreview.HasPendingCardFaces)
+            {
+                _optionCardPreview.BuildCardFaceBatch();
+                if (!_optionCardPreview.HasPendingCardFaces) _optionCardPreview.Show();
+            }
+            return;
+        }
+        if (!_pendingRewardFaces.TryPeek(out var group)) return;
+        group.BuildCardFaceBatch();
+        if (group.HasPendingCardFaces) return;
+        _pendingRewardFaces.Dequeue();
+        group.Show();
+    }
+
+    private void SizeRewardCardDock()
+    {
+        if (_rewardCardGroupHosts.Count == 0) return;
         int totalCards = _rewardCardGroupHosts.Sum(group => group.GetMeta("map_card_count").AsInt32());
         foreach (var group in _rewardCardGroupHosts)
         {
@@ -189,7 +210,8 @@ internal sealed partial class InRunMapNodeDetails
 
     private void ShowRewardCardDock()
     {
-        if (HasRewardCardDock && HoverOpen && !_optionPreview.Visible) _rewardCardDock?.Show();
+        if (_rewardCardDock != null)
+            _rewardCardDock.Visible = HasRewardCardDock && HoverOpen && !_optionPreview.Visible && _pendingRewardFaces.Count == 0;
     }
 
     private void LayoutRewardCardDock(Rect2 area)

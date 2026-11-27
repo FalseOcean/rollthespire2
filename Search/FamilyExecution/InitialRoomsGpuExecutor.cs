@@ -26,7 +26,7 @@ internal sealed class InitialRoomsGpuExecutor : IDisposable
     internal long WorkspaceBytes { get; }
     internal InitialRoomsGpuExecutor(RenderingDevice rd, InitialRoomsPlan plan)
     {
-        _rd = rd; Capacity = InitialRoomsPlan.Capacity; var watch = Stopwatch.StartNew();
+        _rd = rd; Capacity = GpuFilterSubwindow.Capacity(InitialRoomsPlan.Capacity, resident: false); var watch = Stopwatch.StartNew();
         Rid Add(Rid r) { _owned.Add(r); return r; }
         Rid Data(uint[] data) => Add(FamilyGpuComputeUtility.CreateStorageBuffer(rd, FamilyGpuComputeUtility.ToBytesNonEmpty(data)));
         try
@@ -35,6 +35,7 @@ internal sealed class InitialRoomsGpuExecutor : IDisposable
             for (int i = 0; i < plan.Buffers.Length; i++) buffers[i + 1] = Data(plan.Buffers[i]);
 
             string source = plan.ShaderSource();
+            if (Capacity > InitialRoomsPlan.Capacity) source = GpuRootWindow.Shader2D(source);
             Rid shader = Add(FamilyGpuComputeUtility.CompileShader(rd, source, "InitialRoomsFamily"));
             _pipeline = Add(FamilyGpuComputeUtility.CreateComputePipeline(rd, shader, "InitialRooms"));
             if (!rd.ComputePipelineIsValid(_pipeline)) throw new InvalidOperationException("InitialRooms.PipelineInvalid");
@@ -94,7 +95,7 @@ internal sealed class InitialRoomsGpuExecutor : IDisposable
                     // Finish and drain this bounded group before observing cancellation.
                     _rd.ComputeListBindUniformSet(list, _uniforms[slot], 0);
                     int count = Math.Min(Capacity, inputCount - offset - slot * Capacity);
-                    _rd.ComputeListDispatch(list, (uint)((count + 63) / 64), 1, 1);
+                    GpuRootWindow.Dispatch(_rd, list, (uint)((count + 63) / 64));
                     dispatches++;
                 }
             }

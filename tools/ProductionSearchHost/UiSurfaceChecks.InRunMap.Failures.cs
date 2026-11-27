@@ -41,7 +41,7 @@ internal static partial class UiSurfaceChecks
         foreach (int planMode in new[] { 0, 1, 2 })
         {
             var candidateKey = new ModelKey("EVENT", requirement == PredictorEventPotionRequirement.EmptySlots
-                ? "ENDLESS_CONVEYOR" : "THE_FUTURE_OF_POTIONS");
+                ? "ENDLESS_CONVEYOR" : "STONE_OF_ALL_TIME");
             var candidate = new PredictorEventOccurrenceCandidate(candidateKey, candidateKey, 1, 0,
                 EventCandidateEligibilityKind.RuntimeDependent, false, false);
             var pending = PredictorRouteCauseEvidence.Bind(new("MapPotionInventoryNotProjected",

@@ -68,7 +68,8 @@ internal sealed partial class NeowOperationOverlay : Control
     internal static bool HasVisibleContent(OperationPreview preview)
     {
         if (OperationDisplayPolicy.HiddenSource(preview.Source)) return false;
-        if (!string.IsNullOrWhiteSpace(preview.Heading) || DisplayNotices(preview).Any(n => !string.IsNullOrWhiteSpace(n)) || !preview.Faults.IsDefaultOrEmpty ||
+        if (!string.IsNullOrWhiteSpace(preview.Heading) || preview.Notices.Any(IsSacrificeProgress) ||
+            DisplayNotices(preview).Any(n => !string.IsNullOrWhiteSpace(n)) || !preview.Faults.IsDefaultOrEmpty ||
             preview.Branches.Any(b => b.Faulted) || preview.PendingReasons.Any(IsUnexpandedRemainder) ||
             preview.Branches.Any(b => b.PendingReasons.Any(IsUnexpandedRemainder))) return true;
         bool text = OperationDisplayPolicy.Resolve(preview).Text != OperationTextMode.None;
@@ -144,9 +145,15 @@ internal sealed partial class NeowOperationOverlay : Control
             heading.AddThemeFontSizeOverride("font_size", 18);
             details.AddChild(heading);
         }
-        foreach (var progress in preview.Notices.Where(notice => notice.StartsWith("RewardSacrificeProgress:", StringComparison.Ordinal)))
+        foreach (var progress in preview.Notices.Where(IsSacrificeProgress))
             details.AddChild(WrappedText(NoticeText(progress)));
-        var effectDetails = new List<(ModelKey Source, VBoxContainer Content)>();
+        var effectDetails = new List<(ModelKey Source, VBoxContainer Content, string? Heading)>();
+        var primarySource = preview.Source;
+        if (!MapCardPresentation && preview.Source.Entry is ("RELIC_TRADER" or "HUNGRY_FOR_MUSHROOMS" or "THERMAE_NONUPEIPE" or "MUSEUM_OF_TORTURE") &&
+            preview.Branches.Length == 1 &&
+            preview.Branches[0].Order.IsEmpty && preview.ContainedRelics.IsEmpty && preview.CurseCandidates.IsEmpty &&
+            preview.Branches[0].Sections.Select(section => section.Source).Distinct().ToArray() is [{ Category: "RELIC" } offered])
+            primarySource = offered;
         if (rootStyle.Text != OperationTextMode.None && !preview.CurseCandidates.IsDefaultOrEmpty)
         {
             var curse = WrappedText((preview.CursesPossible ? UiText.Get("operation.possiblePrefix") : UiText.Get("operation.obtainPrefix")) +
@@ -174,41 +181,61 @@ internal sealed partial class NeowOperationOverlay : Control
             bool huntTree = !suppressBranchCards && AddHuntTree(preview, branch, branchIndex, branchName, out limited);
             hasLimitedHuntBranch |= limited;
             bool branchHasText = branch.Sections.Any(s => OperationDisplayPolicy.Resolve(preview, s).Text != OperationTextMode.None);
+            VBoxContainer? laterSacrifices = null;
+            bool purchaseWithRestock = !MapCardPresentation && preview.OptionKey == null &&
+                preview.Source.Entry != "THE_COURIER" &&
+                branch.Sections.Any(part => part.Source.Entry == "THE_COURIER" && part.Category == OperationPredictionCategory.ShopRestock);
             if (branchHasText && !branch.Order.IsDefaultOrEmpty)
                 block.AddChild(WrappedText((preview.Branches.Length > 1 ? branchName + " " : "") +
                     string.Join(" → ", branch.Order.Select(NameOf)), true));
             else if (branchHasText && preview.Branches.Length > 1) block.AddChild(WrappedText(branchName, true));
-            foreach (var section in DisplaySections(preview, branch))
+            foreach (var section in DisplaySections(preview, branch, MapCardPresentation))
             {
                 if (limited && AboveHuntDisplayLimit(section)) continue;
                 var style = OperationDisplayPolicy.Resolve(preview, section);
                 bool nestedBrew = section.Source.Entry == "ENTROPIC_BREW" &&
                     section.Label?.StartsWith("EntropicChild:", StringComparison.Ordinal) == true;
-                bool separateEffect = nestedBrew || (preview.Branches.Length == 1 && section.Source != preview.Source &&
-                    section.Source.Entry is "WHETSTONE" or "WAR_PAINT");
+                bool restock = !MapCardPresentation && section.Category == OperationPredictionCategory.ShopRestock;
+                bool laterSacrifice = !MapCardPresentation && preview.OptionKey == "SACRIFICE" &&
+                    section.Label?.StartsWith("RewardSacrificeStep:", StringComparison.Ordinal) == true;
+                bool separateEffect = nestedBrew || laterSacrifice || (preview.Branches.Length == 1 && section.Source != primarySource &&
+                    (section.Source.Entry is "WHETSTONE" or "WAR_PAINT" || restock));
                 bool mapNeedsCardNames = MapCardPresentation && (MapSummaryCardNames ||
                     section.Rows.Any(row => row.Action != OperationPreviewAction.AddCard && !row.Cards.IsEmpty) ||
                     section.Rows.Any(row => row.Cards.Any(card => !MapUsesCardFace(card))) ||
                     section.CardGroups.Any(group => group.Cards.Any(card => !MapUsesCardFace(card))));
-                bool text = separateEffect || style.Text != OperationTextMode.None || mapNeedsCardNames;
+                bool text = separateEffect || primarySource != preview.Source || purchaseWithRestock && section.Source == primarySource ||
+                    style.Text != OperationTextMode.None || mapNeedsCardNames;
                 bool compactEventCardNames = OperationDisplayPolicy.CompactEventCardNames(preview, section,
                     !suppressBranchCards, MapCardPresentation);
                 var sectionBlock = block;
                 if (section.EmptyReason == null && !section.Rows.Any(r => !r.Models.IsDefaultOrEmpty || !r.Cards.IsDefaultOrEmpty) &&
                     !section.CardGroups.Any(g => !g.Cards.IsDefaultOrEmpty)) continue;
-                if (separateEffect)
+                if (laterSacrifice && laterSacrifices != null) sectionBlock = laterSacrifices;
+                else if (separateEffect)
                 {
                     sectionBlock = Column(7);
-                    effectDetails.Add((section.Source, sectionBlock));
+                    string? heading = null;
+                    if (restock && section.Source.Entry == "WHETSTONE")
+                        heading = UiText.Format("operation.ifBoughtNext", NameOf(section.Source));
+                    if (laterSacrifice)
+                    {
+                        laterSacrifices = sectionBlock;
+                        heading = JoinCaption(NameOf(section.Source), UiText.Get("operation.ifSacrificingFurther"));
+                    }
+                    effectDetails.Add((section.Source, sectionBlock, heading));
                 }
                 bool pathReplacesOrdinal = section.Label == "RewardRerollOrdinal" && !section.CardGroups.IsDefaultOrEmpty &&
-                    section.CardGroups.All(group => !group.IconPaths.IsDefaultOrEmpty);
+                    (section.CardGroups.All(group => !group.IconPaths.IsDefaultOrEmpty) ||
+                    !MapCardPresentation && section.CardGroups.All(group => group.SequenceOrdinal.HasValue));
                 string sectionName = pathReplacesOrdinal ? "" : LocalizedLabel(section.Source, section.Label);
-                if (text && !separateEffect && section.Source != preview.Source) sectionBlock.AddChild(Identity(section.Source, NameOf(section.Source), 24));
+                if (text && !separateEffect && section.Source != primarySource) sectionBlock.AddChild(Identity(section.Source, NameOf(section.Source), 24));
                 if (text && sectionName.Length > 0 && (!compactEventCardNames || !section.Rows.IsEmpty)) sectionBlock.AddChild(WrappedText(sectionName, true));
                 if (text && section.EmptyReason != null) sectionBlock.AddChild(WrappedText(LocalizedLabel(section.Source, section.EmptyReason)));
                 string artCaption = preview.Branches.Length > 1 ? branchName : "";
-                if (section.Source != preview.Source && section.Source.Entry != "THE_HUNT") artCaption = JoinCaption(artCaption, NameOf(section.Source));
+                if (section.Source != preview.Source && section.Source.Entry != "THE_HUNT")
+                    artCaption = JoinCaption(artCaption, restock && section.Source.Entry == "WHETSTONE"
+                        ? UiText.Format("operation.ifBoughtNext", NameOf(section.Source)) : NameOf(section.Source));
                 artCaption = JoinCaption(artCaption, sectionName);
                 foreach (var original in section.Rows)
                 {
@@ -253,6 +280,17 @@ internal sealed partial class NeowOperationOverlay : Control
                             price: row.Price);
                 }
                 bool ordinalFocus = section.CardGroups.Any(group => group.Highlighted);
+                if (text && !MapCardPresentation && section.CardGroups.Length > 1)
+                {
+                    string? choice = (preview.Source.Entry, section.Source.Entry) switch
+                    {
+                        ("NEOWS_BONES", "SCROLL_BOXES") => "operation.chooseOneBundle",
+                        ("NEOWS_BONES", "KALEIDOSCOPE") or ("COLORFUL_PHILOSOPHERS", "COLORFUL_PHILOSOPHERS")
+                            when preview.OptionKey != "REROLL" => "operation.choosePerReward",
+                        _ => null
+                    };
+                    if (choice != null) sectionBlock.AddChild(WrappedText(UiText.Get(choice), true));
+                }
                 for (int groupIndex = 0; groupIndex < section.CardGroups.Length; groupIndex++)
                 {
                     var group = section.CardGroups[groupIndex];
@@ -284,14 +322,19 @@ internal sealed partial class NeowOperationOverlay : Control
                             string.Join("／", group.Cards.Select(CardName))));
                     }
                     bool rerollGroup = group.Label?.StartsWith("RewardRerollStep:", StringComparison.Ordinal) == true;
-                    // The sequence is laid out in reading order. Show its scope once
-                    // (e.g. same-recipe rewards); the card faces carry each result.
                     string cardCaption = compactEventCardNames
                         ? JoinCaption(preview.Branches.Length > 1 ? branchName : "",
                             JoinCaption(section.Label == "EventCombatRewards" ? "" : sectionName, string.IsNullOrWhiteSpace(group.Label) ? "" : groupName))
                         : rerollGroup
                         ? (groupIndex == 0 && !text ? artCaption : "")
                         : string.IsNullOrEmpty(group.Label) || potionOrderCaption || !displayPaths.IsDefaultOrEmpty ? artCaption : JoinCaption(artCaption, groupName);
+                    if (!MapCardPresentation && rerollGroup && section.CardGroups.Length > 1 && displayPaths.IsEmpty && !text)
+                    {
+                        string step = group.SequenceOrdinal == 1 || group.Label == "RewardRerollStep:1" ? UiText.Get("operation.rerollNow") :
+                            group.SequenceOrdinal is { } ordinal && (section.Label == "RewardRerollOrdinal" || !group.IconPaths.IsEmpty)
+                                ? UiText.Format("operation.rerollAtPosition", ordinal) : groupName;
+                        cardCaption = JoinCaption(cardCaption, step);
+                    }
                     if (!suppressBranchCards && !(huntTree && OperationDisplayPolicy.IsEventCombat(section))) AddCardGroup(group.Cards,
                         cardCaption, branchIndex,
                         style.Cards is OperationCardLayout.Stack or OperationCardLayout.Groups or OperationCardLayout.Branches,
@@ -327,9 +370,10 @@ internal sealed partial class NeowOperationOverlay : Control
         {
             _summary = new Control { Name = "Rt2NeowSummary", MouseFilter = MouseFilterEnum.Ignore };
             AddChild(_summary);
-            if (details.GetChildCount() > 0) AddSummaryPanel(details, preview.Source, true);
+            if (details.GetChildCount() > 0) AddSummaryPanel(details, primarySource, true,
+                primarySource != preview.Source ? NameOf(primarySource) : null);
             else details.QueueFree();
-            foreach (var effect in effectDetails) AddSummaryPanel(effect.Content, effect.Source, false);
+            foreach (var effect in effectDetails) AddSummaryPanel(effect.Content, effect.Source, false, effect.Heading);
             _summaryContent = _summaryPanels[0].Content;
         }
         else details.QueueFree();
@@ -340,16 +384,18 @@ internal sealed partial class NeowOperationOverlay : Control
         SetLayout(_summaryBounds.Size.X > 0 ? _summaryBounds : new(Vector2.Zero, SummaryDesiredSize), _cardsBounds);
     }
 
-    // Presentation segmentation preserves the full authored result sequence.
-    internal static ImmutableArray<OperationPreviewSection> DisplaySections(OperationPreview preview, OperationPreviewBranch branch)
+    internal static ImmutableArray<OperationPreviewSection> DisplaySections(OperationPreview preview, OperationPreviewBranch branch,
+        bool mapCardPresentation = false)
     {
         if (preview.Source.Entry == "SLIPPERY_BRIDGE")
         {
-            var cards = branch.Sections.SelectMany(section => section.Rows)
-                .Where(row => row.Action == OperationPreviewAction.RemoveCard).SelectMany(row => row.Cards).ToImmutableArray();
+            const int rowLimit = 8;
+            var proposals = branch.Sections.SelectMany(section => section.Rows)
+                .Where(row => row.Action == OperationPreviewAction.RemoveCard).SelectMany(row => row.Cards);
+            var cards = (mapCardPresentation ? proposals : proposals.Take(rowLimit)).ToImmutableArray();
             if (cards.IsEmpty) return branch.Sections;
-            bool stacked = cards.Length > 8;
-            var groups = cards.Chunk(stacked ? 5 : 8).Select((chunk, index) =>
+            bool stacked = cards.Length > rowLimit;
+            var groups = cards.Chunk(stacked ? 5 : rowLimit).Select((chunk, index) =>
                 new OperationPreviewCardGroup(index, chunk.ToImmutableArray(), 0, 0, false, false)
                 {
                     ForceSingleRow = !stacked, EarliestFirst = true,
@@ -391,11 +437,11 @@ internal sealed partial class NeowOperationOverlay : Control
             row.Action == OperationPreviewAction.TransformCard && row.ShowCards && !row.Cards.IsDefaultOrEmpty;
     }
 
-    private void AddSummaryPanel(VBoxContainer details, ModelKey source, bool primary)
+    private void AddSummaryPanel(VBoxContainer details, ModelKey source, bool primary, string? heading = null)
     {
         if (!MapCardPresentation || !primary)
         {
-            string? heading = primary ? _preview?.Heading : null;
+            heading ??= primary ? _preview?.Heading : null;
             Control title = source.IsValid ? Identity(source, heading ?? NameOf(source), 32, true)
                 : Text(UiText.Get("operation.operation.prediction"), 22, true);
             details.AddChild(title); details.MoveChild(title, 0);
@@ -460,8 +506,10 @@ internal sealed partial class NeowOperationOverlay : Control
         return Math.Max(control.CustomMinimumSize.X, widths.DefaultIfEmpty().Max());
     }
 
+    private static bool IsSacrificeProgress(string notice) => notice.StartsWith("RewardSacrificeProgress:", StringComparison.Ordinal);
+
     private static IEnumerable<string> DisplayNotices(OperationPreview preview) => preview.Notices.Where(notice =>
-        !notice.StartsWith("RewardSacrificeProgress:", StringComparison.Ordinal) &&
+        !IsSacrificeProgress(notice) &&
         notice != "BridgeAlternativeRemovalProposals" && (notice != "EventTransformSlotAlternativesRelated" ||
             preview.Branches.SelectMany(branch => branch.Sections).Any(section =>
                 OperationDisplayPolicy.Resolve(preview, section).Text != OperationTextMode.None)));
@@ -585,6 +633,8 @@ internal sealed partial class NeowOperationOverlay : Control
             return UiText.Format("operation.label.huntMinimum", huntMinimum);
         if (value == "WhetstoneAfterSkippingCardRewards") return UiText.Get("operation.label.whetstoneSkipCards");
         if (value == "WhetstoneAfterMirrorChoice") return UiText.Get("operation.label.whetstoneMirrorChoice");
+        if (value == "WhetstoneAfterEnchantChoice") return UiText.Get("operation.label.whetstoneEnchantChoice");
+        if (value == "WhetstoneEnchantChoicesPending") return UiText.Get("operation.label.chooseEnchantTargets");
         if (value == "WhetstoneNoUpgradeTargets") return UiText.Get("operation.noUpgradeTargets");
         if (value == "WhetstonePossibleNoUpgradeTargets") return UiText.Get("operation.possibleNoUpgradeTargets");
         if (value == "EventCombatNoDamage") return UiText.Get("operation.no.damage.taken");

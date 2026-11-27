@@ -82,7 +82,9 @@ internal sealed partial class WorkspaceShell : Control
         InitializeIssues();
         if (_liveRun is not null)
         {
-            foreach (var navigation in new[] { _search, _seeds, _status })
+            _search.Visible = _persistence.Preferences.PersistentSearch;
+            _search.Pressed += () => SelectTask(Workspace.Search);
+            foreach (var navigation in new[] { _seeds, _status })
                 navigation.Hide();
             if (_crystalScene is not null)
             {
@@ -162,9 +164,9 @@ internal sealed partial class WorkspaceShell : Control
     private void NavigateSearch(string page)
     {
         _references?.CloseModal();
-        if (page == "settings:features")
+        if (page == "settings:search")
         {
-            _settingsCategory = 0;
+            _settingsCategory = 2;
             OpenSettings();
         }
         else if (page == "encyclopedia" || page.StartsWith("encyclopedia:", StringComparison.Ordinal))
@@ -175,7 +177,7 @@ internal sealed partial class WorkspaceShell : Control
     private void SelectTask(Workspace workspace, string? encyclopediaTopic = null,
         string? predictorSeed = null)
     {
-        if(_liveRun!=null && workspace==Workspace.Search) workspace=Workspace.Analysis;
+        if (_liveRun is not null && workspace == Workspace.Search && !_search.Visible) workspace = Workspace.Analysis;
         if (DeferWorkspacePage(workspace, () => SelectTask(workspace, encyclopediaTopic, predictorSeed))) return;
         if (_workspace == Workspace.Analysis && workspace != _workspace) _predictor?.RecordViewedAnalysis();
         _notesPage?.SetPresentationActive(workspace == Workspace.Notes);
@@ -196,6 +198,8 @@ internal sealed partial class WorkspaceShell : Control
         if(_crystalScene!=null) _crystalScene.Visible=workspace==Workspace.CurrentPrediction;
         _references?.CloseModal();
         _workspace = workspace;
+        if (_liveRun is not null && workspace == Workspace.Search) RefreshRunSearch();
+        if (_runSearchPage is not null) _runSearchPage.Visible = workspace == Workspace.Search;
         if (_references is not null) _references.Visible = workspace == Workspace.Search;
         if (workspace == Workspace.Encyclopedia)
         {
@@ -314,6 +318,7 @@ internal sealed partial class WorkspaceShell : Control
         {
             _localePoll = 0.25; RefreshLanguage();
             if (_workspace == Workspace.Settings) RefreshSettings();
+            if (_liveRun is not null && _workspace == Workspace.Search && IsVisibleInTree()) RefreshRunSearch();
             if (_liveRun is not null && _workspace == Workspace.Analysis && IsVisibleInTree())
                 _predictor?.SyncLiveRoute(_liveRun);
         }
@@ -342,12 +347,28 @@ internal sealed partial class WorkspaceShell : Control
         BeginNotesReminder();
         bool firstOpen = !_openedOnce;
         _openedOnce = true;
-        if (_liveRun == null) return;
+        if (_liveRun == null)
+        {
+            _persistence!.Runtime.SetPlayingBudget(false);
+            if (_persistence.Preferences.PersistentSearch && (_persistence.Runtime.Receiving || _persistence.Runtime.HasUnseenBackgroundResults))
+            {
+                SelectTask(Workspace.Search);
+                _references?.ShowCurrentSessionResults();
+                _persistence.Runtime.MarkBackgroundResultsViewed();
+            }
+            return;
+        }
+        _search.Visible = _persistence!.Preferences.PersistentSearch;
+        if (_search.Visible && (_persistence.Runtime.Receiving || _persistence.Runtime.HasUnseenBackgroundResults || _workspace == Workspace.Search))
+        {
+            SelectTask(Workspace.Search);
+            return;
+        }
         if (_liveRun.CurrentRoom is EventRoom room && room.CanonicalEvent.Id.Entry == "CRYSTAL_SPHERE")
         {
             if (firstOpen) SelectTask(Workspace.CurrentPrediction);
         }
-        else ShowLiveSeedPrediction(activate: firstOpen || _workspace == Workspace.Analysis);
+        else ShowLiveSeedPrediction(activate: firstOpen || _workspace == Workspace.Analysis || !_search.Visible && _workspace == Workspace.Search);
         DeferIdlePagePreparation();
     }
 
@@ -410,6 +431,7 @@ internal sealed partial class WorkspaceShell : Control
         StopPagePreparation();
         CloseIssues();
         while (_seedLibrary?.CloseModal() == true) { }
+        if (_liveRun is not null && _persistence!.Runtime.Receiving) _persistence.Runtime.Close(GetTree());
         _references?.CloseSearch(); _references?.CloseModal(); CloseSettings(); Hide(); }
     public override void _Input(InputEvent input)
     {

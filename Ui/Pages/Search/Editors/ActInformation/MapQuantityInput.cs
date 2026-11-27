@@ -22,7 +22,7 @@ internal sealed partial class MapQuantityInput : HBoxContainer
     }
     internal event Action<int>? ValueChanged;
 
-    internal MapQuantityInput(WorkspacePalette palette, int? value, bool enabled)
+    internal MapQuantityInput(WorkspacePalette palette, int? value, bool enabled, bool compact = false)
     {
         _palette = palette;
         AddThemeConstantOverride("separation", 4);
@@ -37,9 +37,15 @@ internal sealed partial class MapQuantityInput : HBoxContainer
         _input.AddThemeStyleboxOverride("normal", box);
         _input.AddThemeStyleboxOverride("read_only", box);
         _input.AddThemeStyleboxOverride("focus", palette.FocusRing());
-        float digits = _input.GetThemeFont("font").GetStringSize(int.MaxValue.ToString(CultureInfo.InvariantCulture),
+        string visibleDigits = compact ? "000" : int.MaxValue.ToString(CultureInfo.InvariantCulture);
+        float digits = _input.GetThemeFont("font").GetStringSize(visibleDigits,
             HorizontalAlignment.Left, -1, 15).X;
         _input.CustomMinimumSize = new(Mathf.Ceil(digits + 12), 38);
+        if (compact)
+        {
+            _input.AddThemeConstantOverride("minimum_character_width", 3);
+            CustomMinimumSize = new(136, 38);
+        }
         AddChild(_input);
         _plus = StepButton("Plus", "+"); AddChild(_plus);
         _enabled = enabled;

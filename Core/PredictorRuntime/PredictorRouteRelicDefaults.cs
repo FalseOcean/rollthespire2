@@ -48,28 +48,49 @@ internal sealed partial class PredictorRun
                 Working = PredictorObtainSources.AddCard(Context, Working, new ModelKey("CARD", "FOLLY"));
             return true;
         }
-        _preview.Partial!.RecordLiveDeckRandomObtain(Working, relic);
+        Working = _preview.Partial!.RecordLiveDeckRandomObtain(Working, relic);
         return true;
     }
 
     private sealed partial class RoutePartialState
     {
-        internal void RecordLiveDeckRandomObtain(PredictorState state, ModelKey relic)
+        internal PredictorState RecordLiveDeckRandomObtain(PredictorState state, ModelKey relic)
         {
             Synchronize(state);
             string node = state.Position.NodeId;
             string operation = "live-obtain:" + relic.Serialized + ":" + state.Relics[^1].Id;
-            var stream = PredictorRouteCauseEvidence.CreateExplicit("RouteRelicDeckRandomnessCutoff", node,
-                PredictorCombatDomain.NicheRng, PredictorPendingReasonKind.FlowGate,
-                "Approved current-Act path policy: " + relic.Serialized +
-                " was acquired; its deck-dependent obtain consumption is not projected. Resume from a new actual capture.",
-                ["rng.Niche.state"], occurrenceKey: operation);
-            _streamCauses[PredictorStream.Niche] = PredictorRouteCauseEvidence.Normalize(
-                _streamCauses.GetValueOrDefault(PredictorStream.Niche, []).Add(stream));
-            AddDependency(_dependencies, new(stream));
-            var unknown = Facts.RecordUnknown("rng.Niche.state", node, PredictorRouteFactPhase.After,
-                [stream], origin: PredictorKnowledgeOrigin.ApprovedDefault, operation: operation);
-            RecordStateWrite(node, "rng.Niche.state", unknown);
+            ImmutableArray<PredictorCombatPendingCause> parents;
+            if (_context.UsesNonCombatGeneration)
+            {
+                // In 0.113+ these upgrades and Beautiful Bracelet's TakeRandom
+                // each seed a local shuffle exactly once, even for an empty pool.
+                var stream = PredictorStream.NonCombatGeneration;
+                parents = StreamCauses(stream);
+                if (StreamKnown(stream))
+                {
+                    var rng = state.Streams.Single(cursor => cursor.Stream == stream).Restore();
+                    rng.NextUInt64();
+                    state = state.WithRng(stream, rng);
+                }
+                _streamOffsets[stream] += 1;
+                Facts.RecordResult("obtain.shuffle.NonCombatGeneration.consumed", node, 1,
+                    operation: operation);
+            }
+            else
+            {
+                var stream = PredictorRouteCauseEvidence.CreateExplicit("RouteRelicDeckRandomnessCutoff", node,
+                    PredictorCombatDomain.NicheRng, PredictorPendingReasonKind.FlowGate,
+                    "Approved current-Act path policy: " + relic.Serialized +
+                    " was acquired; its deck-dependent obtain consumption is not projected. Resume from a new actual capture.",
+                    ["rng.Niche.state"], occurrenceKey: operation);
+                _streamCauses[PredictorStream.Niche] = PredictorRouteCauseEvidence.Normalize(
+                    _streamCauses.GetValueOrDefault(PredictorStream.Niche, []).Add(stream));
+                AddDependency(_dependencies, new(stream));
+                var unknown = Facts.RecordUnknown("rng.Niche.state", node, PredictorRouteFactPhase.After,
+                    [stream], origin: PredictorKnowledgeOrigin.ApprovedDefault, operation: operation);
+                RecordStateWrite(node, "rng.Niche.state", unknown);
+                parents = [stream];
+            }
 
             var facts = relic.Entry == "BEAUTIFUL_BRACELET" ? PredictorDeckUncertainFact.Enchantment :
                 relic.Entry == "PANDORAS_BOX" ? PredictorDeckUncertainFact.All : PredictorDeckUncertainFact.Upgrade;
@@ -84,9 +105,9 @@ internal sealed partial class PredictorRun
             }
             var deckCause = PredictorRouteCauseEvidence.CreateExplicit("RouteRelicDeckEffectPending", node,
                 PredictorCombatDomain.Deck | (relic.Entry == "PANDORAS_BOX" ? PredictorCombatDomain.InstanceIds : 0),
-                PredictorPendingReasonKind.DerivedDependency,
+                parents.IsEmpty ? PredictorPendingReasonKind.FlowGate : PredictorPendingReasonKind.DerivedDependency,
                 "The acquired relic's random card changes are intentionally left unresolved by the path policy.",
-                ["deck." + (facts == PredictorDeckUncertainFact.Upgrade ? "upgrades" : "state")], [stream], occurrenceKey: operation);
+                ["deck." + (facts == PredictorDeckUncertainFact.Upgrade ? "upgrades" : "state")], parents, occurrenceKey: operation);
             _opaqueDeck.Add(deckCause.Identity);
             _deckOperations[(node, operation)] = deckCause;
             Deck = Deck.MarkExistingChangePending(node, deckCause.SourceEvidence, facts, cardTypes: types, sourceOperation: operation);
@@ -98,6 +119,7 @@ internal sealed partial class PredictorRun
                 ChangedCardStateEntries = state.Deck.Select(state.Card).Where(c => types.IsEmpty || types.Contains(c.Type))
                     .Select(c => c.Key.Entry).Distinct().ToImmutableArray() });
             _observed = state;
+            return state;
         }
     }
 }

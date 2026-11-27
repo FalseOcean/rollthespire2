@@ -131,6 +131,8 @@ internal sealed partial class AnalysisPage
         _wbAuxiliaryInset = WorkbenchInset("PredictorAuxiliaryInset", WorkspaceLayout.RightRailLeft, WorkspaceLayout.RightRailWidth,
             WorkspaceLayout.HeaderHeight, WorkspaceLayout.CanvasHeight - WorkspaceLayout.HeaderHeight);
         _workbenchRoot.AddChild(_wbAuxiliaryInset);
+        // Wrapped map notes can change their minimum after Godot has assigned a width.
+        _wbAuxiliaryInset.MinimumSizeChanged += () => Callable.From(FitMapRail).CallDeferred();
         _wbRight = WColumn(); _wbRight.Name = "PredictorAuxiliaryRail";
         _wbRight.AddThemeConstantOverride("separation", 12);
         _wbRight.SizeFlagsVertical = SizeFlags.ExpandFill; _wbAuxiliaryInset.AddChild(_wbRight);
@@ -167,11 +169,18 @@ internal sealed partial class AnalysisPage
         return divider;
     }
 
+    private void FitMapRail()
+    {
+        if (!IsInstanceValid(this) || !IsInsideTree() || !IsInstanceValid(_wbAuxiliaryInset)) return;
+        _wbAuxiliaryInset.Size = new(WorkspaceLayout.RightRailWidth, WorkspaceLayout.CanvasHeight - WorkspaceLayout.HeaderHeight);
+    }
+
     private void RefreshWorkbenchColumns()
     {
         bool shops = _wbPage == 3;
         _wbMainInset.Size = new(shops ? WorkspaceLayout.CanvasWidth - WorkspaceLayout.CenterLeft : WorkspaceLayout.CenterWidth,
             WorkspaceLayout.CanvasHeight - WorkspaceLayout.HeaderHeight);
+        FitMapRail();
         _wbAuxiliaryInset.Visible = _wbAuxiliaryDivider.Visible = !shops;
     }
 

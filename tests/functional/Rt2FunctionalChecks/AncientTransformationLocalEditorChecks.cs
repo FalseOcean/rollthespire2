@@ -21,6 +21,7 @@ internal static class AncientTransformationLocalEditorChecks
         var runtime = NativeWorkbenchCheckEnvironment.Initialize("AncientTransformationLocalEditor");
         runtime = runtime with { Detection = new("0.113.1", "0.113.1", "beta", "AncientTransformationLocalEditor", true, "") };
         var ancient = new AncientSearchEditor(runtime) { Size = new(1000, 780) };
+        ((SceneTree)Engine.GetMainLoop()).Root.AddChild(ancient);
         var transform = new TransformationSearchEditor((_, _) => { }) { Size = new(780, 620) };
         var text = JsonUiTextProvider.CreateUi13("zh");
         var json = SearchPresetStore.CreateJsonOptions();
@@ -78,6 +79,12 @@ internal static class AncientTransformationLocalEditorChecks
             Check(Control<MapQuantityInput>("TransformationPandoraCount").Value == 8,
                 "Automatic material quantity is displayed at Pandora's original location");
             Control<MapQuantityInput>("TransformationPandoraCount").Value = 13;
+            var restore = Control<Button>("TransformationPandoraRestoreAutomatic");
+            var input = Control<MapQuantityInput>("TransformationPandoraCount");
+            Check(TransformationTakeoverEditorChecks.ButtonsFit(input), "Both Pandora buttons stay within their group");
+            Check(restore.Visible && !restore.GetRect().Intersects(input.GetRect()) &&
+                restore.Text == text.Format("query.transform.pandora.restore_count", 8),
+                "Manual material count exposes a separate restore action with the automatic value");
             Refresh();
             Check(Export() is { PandoraCountOverride: 13, OpportunityCount: 13 }, "Original quantity supplies the query premise");
             Control<Button>("TransformationPandoraRestoreAutomatic").EmitSignal(BaseButton.SignalName.Pressed);
@@ -90,6 +97,9 @@ internal static class AncientTransformationLocalEditorChecks
             Check(Export() is { Predicate: TransformationAggregatePredicate.RareCountAtLeast, MinimumRareCount: 1 } &&
                 ancient.FindChild("AncientTransformationAddTarget_PANDORAS_BOX", true, false) is null,
                 "Takeover replaces local participation without exposing two active result editors");
+            Check(Control<Label>("AncientTransformationDraft_PANDORAS_BOX").Text.EndsWith(" ×3", StringComparison.Ordinal)
+                && !Control<Button>("TransformationPandoraRestoreAutomatic").Visible,
+                "The original three copies share one read-only summary and automatic count hides reset");
             Check(ancient.FindChild("AncientTransformationPremise", true, false) is null &&
                 transform.FindChild("TransformationAncientPremise", true, false) is Label takenOverPremise &&
                 takenOverPremise.Text == text.Get("query.transform.ancient.premise.pandora"),

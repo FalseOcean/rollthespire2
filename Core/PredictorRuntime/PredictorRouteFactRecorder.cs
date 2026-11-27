@@ -33,19 +33,23 @@ internal sealed class PredictorRouteFactRecorder
     {
         internal readonly PredictorCombatPendingCause Origin = cause;
         internal readonly List<string> Properties = [];
-        internal readonly Dictionary<string, PredictorCombatPendingCause> Parents = new(StringComparer.Ordinal);
+        internal readonly List<string> Parents = [];
+        internal readonly List<string> SourceEvidence = [];
         internal PredictorKnowledgeRootId? Root;
         internal ImmutableArray<PredictorKnowledgeFactId> RecordedParents = [];
         internal ImmutableArray<string> RecordedProperties = [];
         internal bool RecordedAsOrigin;
+        internal int RecordedEvidenceCount;
         internal ImmutableArray<PredictorKnowledgeFactId> Facts = [];
 
         internal CauseEntry Copy()
         {
             var copy = new CauseEntry(Origin) { Root = Root, RecordedParents = RecordedParents,
-                RecordedProperties = RecordedProperties, RecordedAsOrigin = RecordedAsOrigin, Facts = Facts };
+                RecordedProperties = RecordedProperties, RecordedAsOrigin = RecordedAsOrigin,
+                RecordedEvidenceCount = RecordedEvidenceCount, Facts = Facts };
             copy.Properties.AddRange(Properties);
-            foreach (var pair in Parents) copy.Parents.Add(pair.Key, pair.Value);
+            copy.Parents.AddRange(Parents);
+            copy.SourceEvidence.AddRange(SourceEvidence);
             return copy;
         }
     }
@@ -161,20 +165,21 @@ internal sealed class PredictorRouteFactRecorder
     private ImmutableArray<PredictorKnowledgeFactId> Import(ImmutableArray<PredictorCombatPendingCause> causes)
     {
         if (causes.IsDefaultOrEmpty) return [];
-        var byIdentity = new Dictionary<string, ImmutableArray<PredictorKnowledgeFactId>>(StringComparer.Ordinal);
-        foreach (var input in causes)
+        // Gather every immutable source version once before writing any facts.
+        // Distinct versions of one identity can contribute additional fields
+        // or parents, including to an ancestor shared by multiple top-level causes.
+        var bound = new Dictionary<PredictorCombatPendingCause, PredictorCombatPendingCause>(ReferenceEqualityComparer.Instance);
+        PredictorCombatPendingCause BindOnce(PredictorCombatPendingCause source)
         {
-            var cause = Bound(input);
-            byIdentity[cause.Identity] = Import(cause, new HashSet<string>(StringComparer.Ordinal));
+            if (!bound.TryGetValue(source, out var value)) bound.Add(source, value = Bound(source));
+            return value;
         }
-        return byIdentity.Values.SelectMany(ids => ids).Distinct().ToImmutableArray();
-    }
-
-    private ImmutableArray<PredictorKnowledgeFactId> Import(PredictorCombatPendingCause cause, HashSet<string> active)
-    {
-        if (!active.Add(cause.Identity)) throw new ArgumentException("PredictorRouteCauseCycle");
-        try
+        var seen = new HashSet<PredictorCombatPendingCause>(ReferenceEqualityComparer.Instance);
+        var pending = new Stack<PredictorCombatPendingCause>(causes.Reverse());
+        while (pending.TryPop(out var input))
         {
+            if (!seen.Add(input)) continue;
+            var cause = BindOnce(input);
             if (!_causes.TryGetValue(cause.Identity, out var entry))
                 _causes[cause.Identity] = entry = new(cause);
             else if (entry.Origin.NodeId != cause.NodeId || entry.Origin.ChoiceId != cause.ChoiceId ||
@@ -183,12 +188,34 @@ internal sealed class PredictorRouteFactRecorder
                 throw new ArgumentException("PredictorRouteCauseOriginConflict");
             foreach (string property in Empty(cause.RequiredPropertyKeys))
                 if (!entry.Properties.Contains(property, StringComparer.Ordinal)) entry.Properties.Add(property);
-            foreach (var rawParent in Empty(cause.Parents))
+            foreach (string evidence in cause.SourceEvidence.Split('\n'))
+                if (!entry.SourceEvidence.Contains(evidence, StringComparer.Ordinal)) entry.SourceEvidence.Add(evidence);
+            foreach (var parent in Empty(cause.Parents))
             {
-                var parent = Bound(rawParent);
-                entry.Parents[parent.Identity] = parent;
+                string identity = BindOnce(parent).Identity;
+                if (!entry.Parents.Contains(identity, StringComparer.Ordinal)) entry.Parents.Add(identity);
             }
-            var parentFacts = entry.Parents.Values.SelectMany(parent => Import(parent, active))
+            foreach (var parent in Empty(cause.Parents).Reverse()) pending.Push(parent);
+        }
+
+        // Facts are memoized only after all contributions in this import have
+        // been gathered. Each recorder/fork can learn more evidence later.
+        var recorded = new Dictionary<string, ImmutableArray<PredictorKnowledgeFactId>>(StringComparer.Ordinal);
+        var active = new HashSet<string>(StringComparer.Ordinal);
+        return causes.Select(input => BindOnce(input).Identity).Distinct(StringComparer.Ordinal)
+            .SelectMany(identity => Import(identity, active, recorded)).Distinct().ToImmutableArray();
+    }
+
+    private ImmutableArray<PredictorKnowledgeFactId> Import(string identity, HashSet<string> active,
+        Dictionary<string, ImmutableArray<PredictorKnowledgeFactId>> recorded)
+    {
+        if (recorded.TryGetValue(identity, out var known)) return known;
+        if (!active.Add(identity)) throw new ArgumentException("PredictorRouteCauseCycle");
+        try
+        {
+            var entry = _causes[identity];
+            var cause = entry.Origin;
+            var parentFacts = entry.Parents.SelectMany(parent => Import(parent, active, recorded))
                 .Distinct().ToImmutableArray();
             // A classified gap/guard remains its own origin even with parents.
             // Only explicit property dependency wrappers pass roots through.
@@ -199,19 +226,22 @@ internal sealed class PredictorRouteFactRecorder
             var properties = entry.Properties.Count == 0
                 ? ImmutableArray.Create("dependency." + cause.Code) : entry.Properties.ToImmutableArray();
             if (!entry.Facts.IsEmpty && entry.RecordedParents.SequenceEqual(parentFacts) &&
-                entry.RecordedProperties.SequenceEqual(properties) && entry.RecordedAsOrigin == isOrigin)
-                return entry.Facts;
+                entry.RecordedProperties.SequenceEqual(properties) && entry.RecordedAsOrigin == isOrigin &&
+                entry.RecordedEvidenceCount == entry.SourceEvidence.Count)
+                return recorded[identity] = entry.Facts;
             var roots = isOrigin ? ImmutableArray.Create(entry.Root!.Value) : [];
             var status = cause.ReasonKind == PredictorPendingReasonKind.MissingObservation
                 ? PredictorKnowledgeStatus.NotObserved : PredictorKnowledgeStatus.Unknown;
+            string evidence = string.Join("\n", entry.SourceEvidence);
             entry.Facts = _evidence.Trace.Record("dependency:" + cause.Code, cause.NodeId ?? "unobserved-origin", "dependency",
                 parentFacts, properties.Select(property => new PredictorKnowledgeWrite(property, status,
                     PredictorKnowledgeOrigin.Derived, UnresolvedReadFactIds: parentFacts, DirectRootIds: roots,
-                    Derivation: cause.SourceEvidence)).ToArray());
+                    Derivation: evidence)).ToArray());
             entry.RecordedParents = parentFacts; entry.RecordedProperties = properties; entry.RecordedAsOrigin = isOrigin;
-            return entry.Facts;
+            entry.RecordedEvidenceCount = entry.SourceEvidence.Count;
+            return recorded[identity] = entry.Facts;
         }
-        finally { active.Remove(cause.Identity); }
+        finally { active.Remove(identity); }
     }
 
     private PredictorKnowledgeRootId RegisterRoot(PredictorCombatPendingCause cause)

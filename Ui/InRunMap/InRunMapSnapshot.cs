@@ -3,6 +3,7 @@ using MegaCrit.Sts2.Core.Models.Cards;
 using MegaCrit.Sts2.Core.Models.Modifiers;
 using MegaCrit.Sts2.Core.Models.Relics;
 using MegaCrit.Sts2.Core.Runs;
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Prediction.Maps;
 using RolltheSpire2.Core.PredictorRuntime;
@@ -24,7 +25,7 @@ internal static class InRunMapSnapshot
                 Array.AsReadOnly(p.Children.Select(c => Position(c.coord)).ToArray()))).ToArray()), 0);
     }
 
-    internal static MapPrediction Projected(IRunState run, int actIndex)
+    internal static MapPrediction Projected(IRunState run, int actIndex, RngSemanticProfileId semantics)
     {
         var act = run.Acts[actIndex];
         bool golden = run.Players.SelectMany(p => p.Relics).OfType<GoldenCompass>()
@@ -33,7 +34,7 @@ internal static class InRunMapSnapshot
             .Any(c => c.SpoilsActIndex == actIndex);
         bool bigGame = run.Modifiers.Any(m => m is BigGameHunter);
         var map = PredictorMapProjection.Generate(run.Rng.StringSeed, Key(act.Id), actIndex,
-            run.AscensionLevel, run.Players.Count, act.HasSecondBoss, golden, spoils, bigGame, CancellationToken.None);
+            run.AscensionLevel, run.Players.Count, act.HasSecondBoss, golden, spoils, bigGame, CancellationToken.None, semantics);
         // Without Neow, the native first map starts in a Monster room.
         return actIndex == 0 && !run.ExtraFields.StartedWithNeow
             ? map with { Points = map.Points.Select(p => p.Type == MapType.Ancient ? p with { Type = MapType.Monster } : p).ToArray() }

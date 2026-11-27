@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Rng;
 using RolltheSpire2.Core.World.Beta109;
@@ -18,7 +19,8 @@ internal sealed record PredictorRelicBag(bool RefreshAllowed, ImmutableArray<Pre
     internal static PredictorRelicBag Empty(bool refresh) => new(refresh, [], [], []);
 
     internal static PredictorRelicBag Populate(IEnumerable<PredictorBagEntry> source, bool personal,
-        Xoshiro256StarStar rng)
+        Xoshiro256StarStar rng, RngSemanticProfileId semantics = RngSemanticProfileId.Modern110,
+        bool sharedRefreshAllowed = true)
     {
         var entries = source.Where(e => !personal || Beta109RelicBagInitializer.IsPlayerGrabBagRarity(e.Rarity)).ToImmutableArray();
         var donor = Beta109RelicBagInitializer.BuildBuckets(entries.Select(e => new Beta109RelicSourceEntry(e.Key, e.Rarity)),
@@ -27,10 +29,10 @@ internal sealed record PredictorRelicBag(bool RefreshAllowed, ImmutableArray<Pre
         foreach (var bucket in donor)
         {
             var keys = bucket.OrderedEntries!.Select(e => e.RelicKey).ToList();
-            rng.UnstableShuffle(keys);
+            rng.UnstableShuffle(keys, semantics);
             buckets.Add(new(bucket.BucketId[(bucket.BucketId.LastIndexOf(':') + 1)..], keys.ToImmutableArray()));
         }
-        var result = new PredictorRelicBag(!personal, entries, buckets.ToImmutable(), []);
+        var result = new PredictorRelicBag(!personal && sharedRefreshAllowed, entries, buckets.ToImmutable(), []);
         result.Validate();
         return result;
     }

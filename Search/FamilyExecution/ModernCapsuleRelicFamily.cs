@@ -93,6 +93,8 @@ internal static partial class ModernCapsuleRelicFamily
                 },
                 resource => resource.Dispose(), Reference(ordinary, plan), profile,
                 resource => (resource.DeviceName, resource.SetupMs), 256, "ModernCapsuleGpuFault.Dispose"),
+            SupportsStandaloneLargeWindow = true,
+            LargeWindowRole = GpuLargeWindowRole.Dense | GpuLargeWindowRole.Compact,
             BindPrivate = native ? (device, input, output) =>
                 RelicFamilyGpuExecutor.Create(device, identity, sequence, gpu, input, output).BindPrivateSerial() : null
         };

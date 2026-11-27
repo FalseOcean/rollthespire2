@@ -98,6 +98,7 @@ internal static partial class PredictorOperationCapture
         public int CatalogLevelReads, CatalogLevelReuses, SnapshotReuses;
         public int DirectPoolReads, ContentObservationReads;
         public int SelectionCatalogReuses, SelectionCatalogDigestReuses;
+        public int FullCaptures, ScopedEventCaptures;
     }
 
     internal static PredictorOperationSnapshot Capture(RunState run, string version, Node? root,
@@ -113,6 +114,7 @@ internal static partial class PredictorOperationCapture
     {
         RuntimeSnapshotThreadGuard.RequireMainThread();
         ArgumentNullException.ThrowIfNull(run);
+        if (timing != null) timing.FullCaptures++;
         root ??= MegaCrit.Sts2.Core.Nodes.NRun.Instance;
         var player = LocalContext.GetMe(run) ?? throw new InvalidOperationException("OperationLocalPlayerMissing");
         if (!run.Players.Contains(player)) throw new InvalidOperationException("OperationLocalPlayerMismatch");

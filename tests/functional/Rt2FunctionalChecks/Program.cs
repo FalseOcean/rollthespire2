@@ -137,9 +137,11 @@ if (args.Contains("--developer-notes-document", StringComparer.Ordinal))
 }
 if (args.Contains("--feedback-export", StringComparer.Ordinal)) return FeedbackBundleChecks.Run();
 if (args.Contains("--feedback-search", StringComparer.Ordinal)) return SearchFeedbackChecks.Run();
+if (args.Contains("--shared-presets", StringComparer.Ordinal)) return PresetShareChecks.Run();
 if (args.Contains("--preset-workbench", StringComparer.Ordinal)) return PresetWorkbenchChecks.Run();
 if (args.Contains("--party-search-context", StringComparer.Ordinal)) return PresetWorkbenchChecks.RunPartySearchContext();
 if (args.Contains("--seed-library-workflow", StringComparer.Ordinal)) return SeedLibraryWorkflowChecks.Run();
+if (args.Contains("--archived-history", StringComparer.Ordinal)) return SeedLibraryWorkflowChecks.Run(archivedHistory: true);
 if (args.Contains("--seed-library-persistence", StringComparer.Ordinal)) return SeedLibraryPersistenceChecks.Run();
 if (args.Contains("--card-collection-store", StringComparer.Ordinal)) return CardCollectionStoreChecks.Run();
 if (args.Contains("--combat-card-exclusion", StringComparer.Ordinal)) return CombatCardExclusionChecks.Run();
@@ -147,6 +149,7 @@ if (args.Contains("--card-collection-workbench", StringComparer.Ordinal)) return
 if (args.Contains("--predictability-math", StringComparer.Ordinal)) return PredictabilityMathChecks.Run();
 if (args.Contains("--workbench-contract")) return WorkbenchContractChecks.Run();
 if (args.Contains("--result-navigation")) return WorkbenchContractChecks.RunResultNavigation();
+if (args.Contains("--persistent-search-ui", StringComparer.Ordinal)) return PersistentSearchUiChecks.Run();
 if (args.Contains("--save-status-version-ui", StringComparer.Ordinal)) return SaveStatusVersionChecks.Run();
 if (args.Contains("--combat-rarity-audit")) return CombatRarityAuditChecks.Run();
 if (args.Contains("--object-picker-context")) return ObjectPickerContextChecks.Run();

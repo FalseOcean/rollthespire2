@@ -104,7 +104,7 @@ internal sealed partial class InRunMapNodeDetails : Control
     private readonly List<(Control Host, NeowOperationOverlay Preview)> _embeddedPreviews = [];
     private readonly List<PopupMenu> _hoverPopups = [];
     private readonly NeowOperationOverlay _optionPreview = new() { Name = "MapEventOptionPreview", Visible = false, ExternallyFramed = true, MapCardPresentation = true, MapSummaryOnly = true };
-    private readonly NeowOperationOverlay _optionCardPreview = new() { Name = "MapEventOptionCards", Visible = false, ExternallyFramed = true, MapCardPresentation = true };
+    private readonly NeowOperationOverlay _optionCardPreview = new() { Name = "MapEventOptionCards", Visible = false, ExternallyFramed = true, MapCardPresentation = true, StageCardFaces = true };
     private OperationPreview? _renderedOptionPreview;
     private Control? _previewAnchor;
     private string? _previewOptionKey;
@@ -200,6 +200,7 @@ internal sealed partial class InRunMapNodeDetails : Control
     }
     internal void UpdateAnchor(Rect2 nodeGlobalRect, Rect2 viewportGlobalRect)
     {
+        if (_nodeGlobal == nodeGlobalRect && _viewportGlobal == viewportGlobalRect) return;
         _nodeGlobal = nodeGlobalRect; _viewportGlobal = viewportGlobalRect;
         if (HoverOpen) LayoutHover();
         if (EditorOpen) LayoutEditor();
@@ -234,6 +235,7 @@ internal sealed partial class InRunMapNodeDetails : Control
         if (HoverOpen)
         {
             if (_data?.IsCurrent?.Invoke() == false) { CloseHover(); return; }
+            AdvanceVisibleCardFaces();
             LayoutHover();
             var mouse = GetGlobalMousePosition();
             if (_pendingPreview is { } pending)
@@ -330,9 +332,12 @@ internal sealed partial class InRunMapNodeDetails : Control
         _optionCardPreview.CardScaleOverride = RewardDockCardScale;
         _previewAnchor = anchor; _previewOptionKey = preview.OptionKey;
         if (!ReferenceEquals(_renderedOptionPreview, preview))
-        { _optionPreview.SetPreview(preview); _optionCardPreview.SetPreview(preview); _renderedOptionPreview = preview; }
+        {
+            _optionPreview.SetPreview(preview); _optionCardPreview.SetPreview(preview); _renderedOptionPreview = preview;
+            _cardWorkQueuedFrame = Engine.GetProcessFrames();
+        }
         HideRewardCardDock();
-        _optionPreview.Show(); _previewViewport.Show(); _optionCardPreview.Show();
+        _optionPreview.Show(); _previewViewport.Show(); _optionCardPreview.Visible = !_optionCardPreview.HasPendingCardFaces;
         _previewViewport.ScrollHorizontal = _previewViewport.ScrollVertical = 0;
         _previewCardsViewport.ScrollHorizontal = _previewCardsViewport.ScrollVertical = 0;
         LayoutHover();
@@ -359,7 +364,7 @@ internal sealed partial class InRunMapNodeDetails : Control
         _previewFrame.Position = Vector2.Zero; _previewFrame.Size = new(Math.Max(1, frameWidth - 5), summary.Y + 12);
         _previewShadow.Position = _previewFrame.Position + new Vector2(5, 7); _previewShadow.Size = _previewFrame.Size;
         var cards = _optionCardPreview.CardsDesiredSize;
-        _previewCardsViewport.Visible = cards.X > 0 && cards.Y > 0;
+        _previewCardsViewport.Visible = _optionCardPreview.Visible && cards.X > 0 && cards.Y > 0;
         if (_previewCardsViewport.Visible)
         {
             _previewCardsViewport.Position = cardArea.Position; _previewCardsViewport.Size = cardArea.Size;
@@ -395,6 +400,7 @@ internal sealed partial class InRunMapNodeDetails : Control
     }
     private void BuildHover(InRunMapNodeDetailData data)
     {
+        _cardWorkQueuedFrame = Engine.GetProcessFrames();
         _hoverGeneration++; long generation = _hoverGeneration;
         CloseOptionPreview();
         ClearRewardCardDock();
@@ -447,6 +453,7 @@ internal sealed partial class InRunMapNodeDetails : Control
                 BuildSections(fields, data.NodeId, premises.Sections, generation, editor: false, compactCards: true);
             }
         }
+        SizeRewardCardDock();
     }
     private static bool HasCards(InRunMapDetailSection section) => section.Objects.Any(item => item.Kind == GameContentKind.Card) ||
         section.Choices.Any(choice => choice.Object?.Kind == GameContentKind.Card);
@@ -645,16 +652,6 @@ internal sealed partial class InRunMapNodeDetails : Control
                     fontSize: button.GetThemeFontSize("font_size")).X + 20, 34);
         }
         parent.AddChild(button);
-        if (branch)
-        {
-            float width = Math.Clamp(MainPanelTheme.Regular.GetStringSize(choice.Label, fontSize: 16).X + 24, 120, 340);
-            var label = Text(choice.Label, 16); label.MouseFilter = MouseFilterEnum.Ignore;
-            button.Text = ""; button.CustomMinimumSize = new(width, Math.Max(42, Mathf.Ceil(
-                MainPanelTheme.Regular.GetStringSize(choice.Label, fontSize: 16).X / (width - 24)) * 23 + 16));
-            button.AddChild(label); label.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
-            label.OffsetLeft = label.OffsetTop = 8; label.OffsetRight = label.OffsetBottom = -8;
-            label.VerticalAlignment = VerticalAlignment.Center;
-        }
         if (!editor && branch && choice.Selected)
             button.MouseEntered += () =>
             {
@@ -683,7 +680,37 @@ internal sealed partial class InRunMapNodeDetails : Control
                 }
             };
         }
-        if (itemFlow)
+        if (branch)
+        {
+            string text = choice.Label;
+            var row = new HBoxContainer { Name = "BranchContent", MouseFilter = MouseFilterEnum.Ignore };
+            row.AddThemeConstantOverride("separation", 6);
+            if (choice.Object is { } identity)
+            {
+                string name = identity.DisplayName ?? _names.Resolve(identity.Key, identity.Kind);
+                if (identity.Kind == GameContentKind.Card && identity.UpgradeLevel > 0)
+                    name += "+" + (identity.UpgradeLevel > 1 ? identity.UpgradeLevel.ToString() : "");
+                if (name.Length != 0 && !text.Contains(name, StringComparison.Ordinal))
+                    text = string.IsNullOrEmpty(text) ? name : text + " · " + name;
+                if (_icons.Resolve(identity.Key, identity.Kind, IconVariant.Small).Texture is { } icon)
+                    row.AddChild(new TextureRect { Texture = icon, CustomMinimumSize = new(22, 22),
+                        ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+                        MouseFilter = MouseFilterEnum.Ignore });
+            }
+            var label = Text(text, 16);
+            label.MouseFilter = MouseFilterEnum.Ignore;
+            label.VerticalAlignment = VerticalAlignment.Center;
+            float iconWidth = row.GetChildCount() == 0 ? 0 : 28;
+            float width = Math.Clamp(MainPanelTheme.Regular.GetStringSize(text, fontSize: 16).X + iconWidth + 24, 120, 340);
+            label.CustomMinimumSize = new(width - iconWidth - 16, 0);
+            row.AddChild(label);
+            button.Text = ""; button.AddChild(row); row.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+            row.OffsetLeft = row.OffsetTop = 8; row.OffsetRight = row.OffsetBottom = -8;
+            void FitBranch() => button.CustomMinimumSize = new(width, Math.Max(42, row.GetCombinedMinimumSize().Y + 16));
+            row.MinimumSizeChanged += FitBranch;
+            FitBranch();
+        }
+        else if (itemFlow)
         {
             button.Text = ""; button.CustomMinimumSize = new(ShopOfferWidth, 58);
             button.SizeFlagsHorizontal = SizeFlags.ShrinkBegin;
@@ -800,7 +827,6 @@ internal sealed partial class InRunMapNodeDetails : Control
         // viewport. It must still expose a full action row, including room
         // for a horizontal scrollbar, rather than an unclickable 24px strip.
         float bodyMinimum = Math.Max(40, 36 + _hoverScroll.GetHScrollBar().GetCombinedMinimumSize().Y);
-        _hoverScroll.CustomMinimumSize = new(0, bodyMinimum);
         // The root includes the outcome viewport's previous allocated height.
         // Treating that stretched height as a content minimum creates feedback:
         // a once-expanded panel can never shrink after its result is cleared.

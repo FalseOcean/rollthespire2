@@ -33,7 +33,7 @@ internal sealed partial class QueryWorkbenchFrame : Control
     private const float RightRailLeft = WorkspaceLayout.RightRailLeft;
     private const float CenterWidth = WorkspaceLayout.CenterWidth;
     private float CharacterTop => _multiplayer ? ContextTop + 124 : ContextTop + 42;
-    private float ConditionActionsTop => CharacterTop + (_multiplayer ? 110 : 86);
+    private float ConditionActionsTop => CharacterTop + (_multiplayer || _useFullUnlocks ? 110 : 86);
     private float DomainTop => ConditionActionsTop + ConditionActionsHeight + 42;
     private const float DomainRowHeight = 40;
     private ScrollContainer? _domainScroll;

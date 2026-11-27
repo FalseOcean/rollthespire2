@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Text.Json;
+using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Unlocks;
@@ -12,7 +13,9 @@ using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.PredictorRuntime;
 using RolltheSpire2.Infrastructure.Snapshots;
+using RolltheSpire2.Presentation.Localization;
 using RolltheSpire2.Ui.InRunOperations;
+using RolltheSpire2.Ui.Settings;
 
 internal static class NeowOperationPreviewChecks
 {
@@ -83,6 +86,8 @@ internal static class NeowOperationPreviewChecks
         var simple = Snapshot(baseline, "WHETSTONE");
         RunCaptured(simple, OfferId(simple));
         var preview = RelicOperationPreview.Build(simple, OfferId(simple));
+        CheckSourcePanels(preview.Branches.Single().Sections.Single(s => s.Source.Entry == "WHETSTONE"));
+        CheckBridgeHover(simple.State.Cards);
         var native = Native(simple.State.Streams.Single(s => s.Stream == PredictorStream.Niche));
         var candidates = simple.State.Deck.Select(simple.State.Card).Where(c => c.Type == EffectCardType.Attack && c.UpgradeLevel < c.MaxUpgradeLevel)
             .Select(c => new SortCard(c)).ToList();
@@ -120,6 +125,75 @@ internal static class NeowOperationPreviewChecks
         ExistingRewardContentIsNotForecast(baseline);
         FailedContinuationKeepsIndependentResults(baseline);
         Console.WriteLine("NEOW_PREVIEW native Whetstone targets; immutable actual-offer input; Kaleidoscope two groups; Capsule automatic chain; Bones two orders/conditional targets/final curse PASS");
+    }
+
+    private static void CheckBridgeHover(ImmutableArray<PredictorCard> deck)
+    {
+        var bridge = new ModelKey("EVENT", "SLIPPERY_BRIDGE");
+        var view = new NeowOperationOverlay { StageCardFaces = true };
+        ((SceneTree)Engine.GetMainLoop()).Root.AddChild(view);
+        try
+        {
+            foreach (int count in new[] { 2, 8, 9, 16 })
+            {
+                var proposals = Enumerable.Range(0, count).Select(i => deck[i % 2]).ToImmutableArray();
+                var branch = new OperationPreviewBranch([], proposals.Select(card => new OperationPreviewSection(bridge,
+                    [new(OperationPreviewAction.RemoveCard, [], [card], false)], [])).ToImmutableArray(), [], 1, true);
+                var preview = new OperationPreview(bridge, [], [], false, [branch], []);
+                var group = NeowOperationOverlay.DisplaySections(preview, branch).Single().CardGroups.Single();
+                Check(group.Cards.SequenceEqual(proposals.Take(8)), "Bridge hover changed the order or dropped duplicates");
+                view.SetPreview(preview);
+                view.SetLayout(default, new Rect2(Vector2.Zero, view.CardsDesiredSize));
+                var host = view.GetNode<Control>("Rt2NeowCardDock").GetChildren().OfType<Control>().Single();
+                var tiles = host.GetChildren().OfType<Control>().Where(tile => tile is not Label).ToArray();
+                Check(!host.GetMeta("rt2_stacked").AsBool() && tiles.Length == Math.Min(count, 8) &&
+                    tiles.Zip(tiles.Skip(1)).All(pair => pair.First.Position.Y == pair.Second.Position.Y &&
+                        pair.First.Position.X < pair.Second.Position.X), "Bridge hover must have a single left-to-right row");
+            }
+        }
+        finally { view.Free(); }
+        Console.WriteLine("NATIVE_BRIDGE_HOVER 2/8/9/16 proposals, ordered horizontal prefix PASS");
+    }
+
+    private static void CheckSourcePanels(OperationPreviewSection upgrade)
+    {
+        var text = JsonUiTextProvider.CreateUi13(UiLanguagePreferences.LanguageCode);
+        var stone = upgrade.Source;
+        var capsule = Relic("LARGE_CAPSULE");
+        var courier = Relic("THE_COURIER");
+        var cauldron = Relic("CAULDRON");
+        var wing = Relic("PAELS_WING");
+        static string Name(ModelKey key) => ModelDb.GetById<RelicModel>(new(key.Category, key.Entry)).Title.GetFormattedText();
+        static OperationPreview Preview(ModelKey source, params OperationPreviewSection[] sections) =>
+            new(source, [], [], false, [new([], sections.ToImmutableArray(), [], 1, true)], []);
+        var view = new NeowOperationOverlay { StageCardFaces = true };
+        ((SceneTree)Engine.GetMainLoop()).Root.AddChild(view);
+        try
+        {
+            void ExpectPanels(OperationPreview prediction, params string[] expected)
+            {
+                view.SetPreview(prediction);
+                var actual = view.GetNode<Control>("Rt2NeowSummary").GetChildren().OfType<Control>()
+                    .Select(panel => panel.FindChildren("*", "Label", true, false).OfType<Label>().First().Text).ToArray();
+                Check(actual.SequenceEqual(expected), "rendered source panels: expected " + string.Join(" | ", expected) +
+                    ", got " + string.Join(" | ", actual));
+            }
+            ExpectPanels(Preview(capsule, new(capsule, [new(OperationPreviewAction.ObtainRelic, [stone], [], false)], []),
+                upgrade), Name(capsule), Name(stone));
+            var refill = new OperationPreviewSection(courier,
+                [new OperationPreviewRow(OperationPreviewAction.Restock, [stone], [], false) { Price = 145 }], [])
+                { Category = OperationPredictionCategory.ShopRestock };
+            ExpectPanels(Preview(cauldron,
+                new(cauldron, [new(OperationPreviewAction.GeneratePotion, [new("POTION", "POWER_POTION")], [], false)], []),
+                refill, upgrade with { Category = OperationPredictionCategory.ShopRestock }),
+                Name(cauldron), Name(courier), text.Format("operation.ifBoughtNext", Name(stone)));
+            ExpectPanels(Preview(new("EVENT", "RELIC_TRADER"), upgrade), Name(stone));
+            ExpectPanels(Preview(wing) with { OptionKey = "SACRIFICE", Notices = ["RewardSacrificeProgress:0"] }, Name(wing));
+            Check(view.FindChildren("*", "Label", true, false).OfType<Label>()
+                .Any(label => label.Text == text.Format("operation.sacrificeProgress", 0, 1)), "progress-only sacrifice text missing");
+        }
+        finally { view.Free(); }
+        Console.WriteLine("NATIVE_OPERATION_PANELS capsule automatic upgrade / Courier second purchase / Trader single source / sacrifice progress PASS");
     }
 
     private static void CapsuleAutomaticNewCardUpgrade(PredictorRun baseline)

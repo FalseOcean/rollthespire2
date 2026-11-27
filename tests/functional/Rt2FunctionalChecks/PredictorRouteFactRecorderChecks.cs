@@ -17,6 +17,7 @@ internal static class PredictorRouteFactRecorderChecks
     {
         SameSourceGraphAndValueMasking();
         ExpandingCauseAndFrozenFrames();
+        SharedAncestryRetainsEveryVersion();
         HypotheticalCauseExpansionStaysLocal();
         EstablishedValuesAndOrigins();
         ObservationAndFaultKinds();
@@ -125,6 +126,51 @@ internal static class PredictorRouteFactRecorderChecks
             snapshot.Fact(projected).Status == PredictorKnowledgeStatus.Unknown && snapshot.Fact(projected).DisplayValue == null &&
             branch.Fact(after) == snapshot.Fact(after) && sibling.Fact(projected) == snapshot.Fact(projected),
             "Branch observations must remain masked and resolve through the final forecast's shared fact IDs and diagnostic frame");
+    }
+
+    private static void SharedAncestryRetainsEveryVersion()
+    {
+        const int levels = 14;
+        var first = Choice("floor3", "first");
+        var second = Choice("floor4", "second");
+        var original = Wrapper(first);
+        var expanded = original with
+        {
+            Parents = [second], RequiredPropertyKeys = ["upgrade.secondCandidate"], SourceEvidence = "Second candidate evidence."
+        };
+        var left = DiamondChain(original);
+        var right = DiamondChain(expanded);
+        var normalized = PredictorRouteCauseEvidence.Normalize([left, right]).Single();
+        Check(ReferenceEquals(normalized.Parents[0].Parents.Single(), normalized.Parents[1].Parents.Single()),
+            "Merging two versions of a shared cause graph must retain shared ancestry by reference");
+        Check(PredictorRouteCauseEvidence.OriginalCauses([left, right]).Select(cause => cause.Identity).ToHashSet()
+            .SetEquals([first.Identity, second.Identity]), "Walking shared cause references must keep both original choices");
+
+        var recorder = new PredictorRouteFactRecorder();
+        var result = recorder.RecordUnknown("reward", "floor9", PredictorRouteFactPhase.Results, [left, right]);
+        var snapshot = recorder.Snapshot();
+        var explanation = snapshot.Explain(result);
+        Check(explanation.Roots.Select(root => root.RootKey).ToHashSet().SetEquals([first.Identity, second.Identity]) &&
+            explanation.Facts.Any(fact => fact.PropertyKey == "upgrade.secondCandidate" &&
+                fact.Derivation?.Contains("Second candidate evidence.", StringComparison.Ordinal) == true) &&
+            explanation.Facts.Any(fact => fact.PropertyKey == "upgrade.candidateCount") &&
+            snapshot.Facts.Length == levels * 3 + 7,
+            "One import must retain different evidence under a shared cause identity and materialize each fact once");
+
+        static PredictorCombatPendingCause DiamondChain(PredictorCombatPendingCause bottom)
+        {
+            for (int level = 0; level < levels; level++)
+            {
+                var left = Step($"{level}-left", [bottom]);
+                var right = Step($"{level}-right", [bottom]);
+                bottom = Step($"{level}-join", [left, right]);
+            }
+            return bottom;
+        }
+
+        static PredictorCombatPendingCause Step(string node, ImmutableArray<PredictorCombatPendingCause> parents) =>
+            PredictorRouteCauseEvidence.CreateExplicit("DiamondStep", node, PredictorCombatDomain.Deck,
+                PredictorPendingReasonKind.DerivedDependency, "Shared dependency", ["deck.shared"], parents);
     }
 
     private static void EstablishedValuesAndOrigins()

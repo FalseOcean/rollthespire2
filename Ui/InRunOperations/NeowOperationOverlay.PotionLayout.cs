@@ -18,10 +18,11 @@ internal sealed partial class NeowOperationOverlay
     // Only use multiple rows if no single-row plan fits around native controls.
     // A null result explicitly means no attempted plan can fit.
     internal Rect2[]? PlanPotionGroupRegions(Rect2 viewport, Rect2 anchor,
-        IReadOnlyList<Rect2> occupied, Rect2? nativeTextTip)
+        IReadOnlyList<Rect2> occupied, Rect2? nativeTextTip, out Rect2 summaryBounds)
     {
+        summaryBounds = new(viewport.Position, Vector2.Zero);
         if ((_preview?.Source.Category != "POTION" && !_rerollCardLayout && !_stacks.Any(stack => !stack.IconPaths.IsDefaultOrEmpty)) ||
-            _stacks.Count == 0 || _iconGroups.Count != 0 || _summary != null)
+            _stacks.Count == 0 || _iconGroups.Count != 0 || _summary != null && !_rerollCardLayout)
         { _potionGroupScale = 1f; return null; }
         // One bottle spreads its candidates rather than layering them. It
         // needs the same whole-row placement and uniform scale negotiation as
@@ -29,6 +30,16 @@ internal sealed partial class NeowOperationOverlay
         for (int i = 0; i < _stacks.Count; i++)
             if (!_stacks[i].Stacked && !(_stacks.Count == 1 && _stacks[i].ForceSingleRow))
             { _potionGroupScale = 1f; return null; }
+        if (_summary != null)
+        {
+            // Orrery can show both the rerolled cards and a conditional Courier
+            // restock. Reserve the latter before distributing the card groups.
+            var blockers = nativeTextTip is { } tip ? occupied.Append(tip) : occupied;
+            summaryBounds = NeowHoverPlacement.Plan(viewport, anchor, [anchor], blockers,
+                SummaryDesiredSize, Vector2.Zero, false).Summary;
+            if (!summaryBounds.HasArea()) { _potionGroupScale = 1f; return null; }
+            occupied = [.. occupied, summaryBounds];
+        }
         // CardDisplayScale includes the previously selected factor. Cache and
         // plan against the native viewport scale, preventing cumulative shrink.
         float scale = CardDisplayScale / _potionGroupScale;

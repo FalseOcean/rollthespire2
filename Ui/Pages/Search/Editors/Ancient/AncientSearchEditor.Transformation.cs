@@ -167,30 +167,32 @@ internal sealed partial class AncientSearchEditor
         if (pandora)
         {
             Text(host, _text.Get("query.transform.pandora.count"), x, y, width, 15);
-            var quantity = new MapQuantityInput(_p, Capacity() ?? 0, true)
-            { Name = "TransformationPandoraCount", Position = new(x, y + 28), Size = new(136, 38) };
+            var quantity = new MapQuantityInput(_p, Capacity(), true, compact: true)
+            { Name = "TransformationPandoraCount", Position = new(x, y + 28) };
             host.AddChild(quantity);
-            var restore = Button(host, _text.Get("query.transform.pandora.restore"), x + 146, y + 28, 166, () =>
+            quantity.ResetSize();
+            string restoreTitle = automatic.HasValue ? _text.Format("query.transform.pandora.restore_count", automatic.Value)
+                : _text.Get("query.transform.pandora.restore");
+            var restore = Button(host, restoreTitle, x, y + 28, 166, () =>
             {
                 draft.PandoraCountOverride = null;
                 RenderAfterAncientEdit();
             }, false, 38);
             restore.Name = "TransformationPandoraRestoreAutomatic";
             restore.AddThemeFontSizeOverride("font_size", 15);
-            var status = Text(host, "", x, y + 67, width, 14, true);
-            if (!automatic.HasValue)
-            {
-                status.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-                status.ClipText = false;
-                status.Size = new(width, 42);
-            }
+            var status = Text(host, _text.Get(automatic.HasValue ? "query.transform.pandora.automatic" :
+                "query.transform.pandora.automatic_unavailable"), x, y, width, 14, true);
+            status.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+            status.ClipText = false;
+            float nextX = quantity.GetRect().End.X + 12;
+            bool stacked = width - (nextX - x) < restore.Size.X || !automatic.HasValue;
+            restore.Position = stacked ? new(x, y + 72) : new(nextX, y + 28);
+            status.Position = restore.Position + new Vector2(0, 5);
+            status.Size = new(stacked ? width : width - (nextX - x), 28);
             void UpdateCountStatus()
             {
-                string amount = automatic?.ToString() ?? "—";
-                status.Text = draft.PandoraCountOverride.HasValue ? _text.Format("query.transform.pandora.manual", amount) :
-                    automatic.HasValue ? _text.Format("query.transform.pandora.automatic", amount) :
-                    _text.Get("query.transform.pandora.automatic_unavailable");
-                restore.Disabled = !draft.PandoraCountOverride.HasValue;
+                restore.Visible = draft.PandoraCountOverride.HasValue;
+                status.Visible = !restore.Visible;
             }
             UpdateCountStatus();
             quantity.ValueChanged += count =>
@@ -200,7 +202,7 @@ internal sealed partial class AncientSearchEditor
                 updateCapacity();
                 TransformationContextChanged?.Invoke();
             };
-            y += automatic.HasValue ? 99 : 113;
+            y = restore.Position.Y + Math.Max(38, status.GetMinimumSize().Y + 5) + 12;
         }
 
         if (conflicting || !managed && draft.Cards.Count > 0)
@@ -215,7 +217,18 @@ internal sealed partial class AncientSearchEditor
             y += height + 6;
         }
         if (managed && draft.Cards.Count == 0 || conflicting && draft.Cards.Count == 0) return y;
-        Text(host, _text.Get(managed ? "query.transform.ancient.retained_targets" : "query.transform.target_cards"), x, y, width, 15);
+        if (managed)
+        {
+            Text(host, _text.Get("query.transform.ancient.retained_targets"), x, y, width, 15, true);
+            string cards = string.Join(" · ", TransformationSearchEditor.DescribeCardCopies(draft.Cards, _names));
+            var summary = Text(host, cards, x, y + 28, width, 15, true);
+            summary.Name = "AncientTransformationDraft_" + source.Identity.Entry;
+            summary.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+            summary.ClipText = false;
+            summary.Size = new(width, Math.Max(28, summary.GetMinimumSize().Y));
+            return summary.Position.Y + summary.Size.Y + 8;
+        }
+        Text(host, _text.Get("query.transform.target_cards"), x, y, width, 15);
         y += 28;
         int columns = Math.Max(1, (int)((width + 8) / (WorkspaceResultTile.CompactWidth + 8)));
         Vector2 PositionFor(int index) => new(x + index % columns * (WorkspaceResultTile.CompactWidth + 8),
@@ -233,11 +246,11 @@ internal sealed partial class AncientSearchEditor
         {
             int index = slot;
             host.AddChild(new WorkspaceResultTile(_p, _icons, _names, _text, draft.Cards[slot], GameContentKind.Card,
-                managed ? null : () => Choose(index), () => { draft.Cards.RemoveAt(index); RenderAfterAncientEdit(); },
-                allowClear: !managed, compact: true) { Position = PositionFor(slot) });
+                () => Choose(index), () => { draft.Cards.RemoveAt(index); RenderAfterAncientEdit(); },
+                compact: true) { Position = PositionFor(slot) });
         }
         int displayed = draft.Cards.Count;
-        if (!managed && !conflicting && (pandora || draft.Cards.Count < Capacity()))
+        if (!conflicting && (pandora || draft.Cards.Count < Capacity()))
         {
             var add = new WorkspaceResultTile(_p, _icons, _names, _text, null, GameContentKind.Card,
                 () => Choose(draft.Cards.Count), () => { }, compact: true)

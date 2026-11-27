@@ -192,7 +192,7 @@ internal sealed partial class SeedLibraryCanvas : Control
         var actions = DetailHeading(selected.DisplayTitle, (selected.Title.Length > 0 ? selected.Seed + "\n" : "") +
             (selected.Context is { } context ? FormatContext(context) : T("上下文不可用", "Context unavailable")));
         AddAction(actions, T("复制", "Copy"), () => { DisplayServer.ClipboardSet(selected.Seed); ShowReceipt(T("已复制种子。", "Seed copied.")); }).Name = "CopyFavorite";
-        var predict = AddAction(actions, T("进行预测", "Predict"), () => OpenRequested?.Invoke(selected), true); predict.Name = "PredictFavorite"; predict.Disabled = !selected.CanOpen;
+        var predict = AddAction(actions, T("按当前规则预测", "Predict with current rules"), () => OpenRequested?.Invoke(selected), true); predict.Name = "PredictFavorite"; predict.Disabled = !selected.CanOpen;
         var management = ManagementActions();
         AddAction(management, T("编辑信息", "Edit information"), () => EditNote(selected)).Name = "EditFavorite";
         AddDeleteAction(management, () => ConfirmRemove(selected)).Name = "DeleteFavorite";

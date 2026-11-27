@@ -36,6 +36,7 @@ internal static class PredictorRouteEventChecks
         LiveRewardAlternatives(captured);
         LiveDefaultHealthScope(captured);
         LiveDefaultEligibilityGates(captured);
+        CrystalDrawingDefault(captured);
         LiveOrderedOccurrenceExclusions(captured);
         OwnerEventInputPolicy(captured);
         AutomaticOccurrenceReceipts(captured);
@@ -424,9 +425,11 @@ internal static class PredictorRouteEventChecks
             "GRAVE_OF_THE_FORGOTTEN", "HUNGRY_FOR_MUSHROOMS", "INFESTED_AUTOMATON", "JUNGLE_MAZE_ADVENTURE", "MORPHIC_GROVE", "REFLECTIONS", "SAPPHIRE_SEED",
             "SELF_HELP_BOOK", "SLIPPERY_BRIDGE", "SPIRALING_WHIRLPOOL", "SPIRIT_GRAFTER", "STONE_OF_ALL_TIME",
             "SUNKEN_TREASURY", "SYMBIOTE", "TABLET_OF_TRUTH", "THE_FUTURE_OF_POTIONS", "TINKER_TIME", "WATERLOGGED_SCRIPTORIUM", "WHISPERING_HOLLOW", "WOOD_CARVINGS", "ZEN_WEAVER"];
-        Check(PredictorRouteEventPolicy.All.Count == 57 && PredictorRouteEventPolicy.All
+        string[] modern = ["MUSEUM_OF_TORTURE", "SHRINE_OF_THE_WARLORD", "THERMAE_NONUPEIPE",
+            "WATERFALL_OF_OBVIOUS_SECRETS", "WUPPY_IN_TROUBLE"];
+        Check(modern.All(entry => PredictorRouteEventPolicy.All.TryGetValue(entry, out var policy) && policy.BranchRequired) && PredictorRouteEventPolicy.All
             .Where(p => !p.Value.BranchRequired).Select(p => p.Key).Order().SequenceEqual(optional.Order()),
-            "all 57 policies preserve the 30 optional branch families after H07 gold-source deferral; actual optional=" +
+            "modern event choices and existing optional branch families; actual optional=" +
             string.Join(',', PredictorRouteEventPolicy.All.Where(p => !p.Value.BranchRequired).Select(p => p.Key).Order()));
         Check(PredictorRouteEventPolicy.For(E("BRAIN_LEECH")).BranchRequired &&
             !PredictorRouteEventPolicy.For(E("LUMINOUS_CHOIR")).SpecificCardTargetRequired &&
@@ -1022,10 +1025,16 @@ internal static class PredictorRouteEventChecks
             { RawEvents = [E("MORPHIC_GROVE"), E("BRAIN_LEECH")] } : a).ToImmutableArray()
         });
         var plausible = Pure(unknownGold, [], policy: PredictorRoutePreviewPolicy.LiveMapDefaults).Nodes.Single().Event!;
-        Check(plausible.SelectedOccurrence == null && !plausible.Advanced && plausible.GoldBalance == null &&
+        Check(plausible.SelectedOccurrence == null && plausible.PendingOccurrence is { QueueEvent.Entry: "MORPHIC_GROVE", CanExclude: true } &&
+            !plausible.Advanced && plausible.GoldBalance == null &&
             plausible.PendingCauses.Any(cause => cause.Code == "EventGoldAppearancePending") &&
             PredictorRouteCauseEvidence.OriginalCauses(plausible.PendingCauses).Any(cause => cause.Code == "EligibilityGoldUnknown"),
             "unknown Gold stops at the actual gold-dependent event occurrence and retains its original source uncertainty");
+        var excludePending = new PredictorPlannedNode(unknownGold.Working.Position.NodeId)
+            { EventOccurrenceExclusions = [new(E("MORPHIC_GROVE"), plausible.PendingOccurrence!.Cursor)] };
+        var resolved = Pure(unknownGold, [excludePending], policy: PredictorRoutePreviewPolicy.LiveMapDefaults).Nodes.Single().Event!;
+        Check(resolved.SelectedOccurrence is { QueueEvent.Entry: "BRAIN_LEECH", IsUnconditional: true } && resolved.GoldBalance == null,
+            "rejecting the current unresolved occurrence advances the queue without supplying a Gold value");
 
         var special = Fixture(captured, "RANWID_THE_ELDER", configure: state => state with
         {
@@ -1035,6 +1044,32 @@ internal static class PredictorRouteEventChecks
         });
         Check(Pure(special, [], policy: PredictorRoutePreviewPolicy.LiveMapDefaults).Nodes.Single().Event!.Event == E("BRAIN_LEECH"),
             "live default still evaluates potion and tradable relic source gates");
+    }
+
+    private static void CrystalDrawingDefault(PredictorRun captured)
+    {
+        var run = Fixture(captured, "CRYSTAL_SPHERE", context: captured.Context with
+        {
+            Live = new(2, true, [new("CrystalEarlierDeckChange", "Earlier deck membership is unknown.", PredictorCombatDomain.Deck)])
+        });
+        var entry = Pure(run, [], policy: PredictorRoutePreviewPolicy.LiveMapDefaults).Nodes.Single();
+        foreach (var (key, reveals) in new[] { ("UNCOVER_FUTURE", 3), ("PAYMENT_PLAN", 6) })
+        {
+            var plan = LiveOption(entry, key);
+            var preview = Pure(run, [plan], policy: PredictorRoutePreviewPolicy.LiveMapDefaults);
+            var node = preview.Nodes.Single().Event!;
+            Check(node.Advanced && node.CrystalDefaultApplied && node.Crystal?.Remaining == reveals &&
+                node.Rewards.IsEmpty && node.AppliedActions == 1, "Crystal branch spends all remaining reveals without another item or authored input");
+            var receipts = preview.Knowledge!.Facts.Single(f => f.PropertyKey == "event.crystal.remainingClicks").DisplayValue!;
+            string[] point = receipts.Split(" | ")[0].Split(',');
+            plan = Add(plan, new(PredictorEventActionKind.CrystalTool) { ExpectedCrystal = node.Crystal, Tool = PredictorCrystalTool.Small });
+            var board = Pure(run, [plan], policy: PredictorRoutePreviewPolicy.LiveMapDefaults).Nodes.Single().Event!.Crystal!;
+            plan = Add(plan, new(PredictorEventActionKind.CrystalCell)
+                { ExpectedCrystal = board, X = int.Parse(point[0]), Y = int.Parse(point[1]) });
+            node = Pure(run, [plan], policy: PredictorRoutePreviewPolicy.LiveMapDefaults).Nodes.Single().Event!;
+            Check(node.Advanced && node.CrystalDefaultApplied && node.Crystal?.Remaining == reveals - 1 &&
+                node.AppliedActions == 3 && node.Rewards.IsEmpty, "An actual blank click stays editable and ignores unrelated deck changes");
+        }
     }
 
     private static void LiveOrderedOccurrenceExclusions(PredictorRun captured)
@@ -1051,9 +1086,21 @@ internal static class PredictorRouteEventChecks
 
         var enough = Ordered(150);
         var tea = Preview(enough);
-        Check(tea.Event == E("TEA_MASTER") && tea.SelectedOccurrence is { Cursor: 1, IsUnconditional: true } &&
-            tea.Occurrence!.Candidates.Select(c => c.QueueEvent).SequenceEqual([E("TEA_MASTER")]),
-            "actual Tea Master >=150 threshold closes the ordered candidates before later HP/unconditional entries");
+        Check(tea.Event == E("TEA_MASTER") && tea.SelectedOccurrence is { Cursor: 1, CanExclude: true, EligibilityAssumed: false } &&
+            tea.Occurrence!.Candidates.Select(c => c.QueueEvent).SequenceEqual([E("TEA_MASTER"), E("TRASH_HEAP"), E("BRAIN_LEECH")]),
+            "a proved Tea Master admission is the default while later candidates remain reachable through its conditional occurrence");
+        var excludeTea = new PredictorPlannedNode(enough.Working.Position.NodeId) { EventOccurrenceExclusions = [new(E("TEA_MASTER"), 1)] };
+        Check(Preview(enough, excludeTea).SelectedOccurrence is { QueueEvent.Entry: "TRASH_HEAP", Cursor: 2 } &&
+            Preview(enough, excludeTea with { EventOccurrenceExclusions = [] }).SelectedOccurrence is { QueueEvent.Entry: "TEA_MASTER", Cursor: 1 },
+            "excluding and restoring the satisfied condition recomputes its exact occurrence in queue order");
+        var assumeTrash = new ChooseEventOccurrence(E("TRASH_HEAP"), E("TRASH_HEAP"), 3, tea.Occurrence!.Cursor, 2);
+        Check(Preview(enough, excludeTea with { EventOccurrenceExclusions = [], Event = new(E("TRASH_HEAP")) { Occurrence = assumeTrash } })
+            .SelectedOccurrence?.QueueEvent == E("TRASH_HEAP"), "one authored hypothesis can still name a later candidate past the satisfied conditional");
+        var assumeTea = new ChooseEventOccurrence(E("TEA_MASTER"), E("TEA_MASTER"), 2, tea.Occurrence.Cursor, 1);
+        var conflicting = Preview(enough, excludeTea with { Event = new(E("TEA_MASTER")) { Occurrence = assumeTea } });
+        Check(conflicting.SelectedOccurrence == null && conflicting.NeededInput == PredictorEventNeededInput.Occurrence &&
+            conflicting.PendingCauses.Any(cause => cause.Code == "PlannedEventOccurrenceChanged"),
+            "a conflicting saved occurrence cannot execute an explicitly excluded candidate");
         var tooLittle = Ordered(149);
         var trash = Preview(tooLittle);
         Check(trash.Event == E("TRASH_HEAP") && trash.SelectedOccurrence is
@@ -1080,6 +1127,23 @@ internal static class PredictorRouteEventChecks
             "Bridge reads actual arrival floor >6, including the floor-six/floor-seven boundary");
         Check(Preview(Ordered(149, cursor: 3)).SelectedOccurrence is { QueueEvent.Entry: "BRAIN_LEECH", Cursor: 3 },
             "initial selection starts at the captured current cursor, not queue zero or an invented previous event");
+
+        var cycle = Fixture(captured, "TEA_MASTER", configure: state => state with
+        {
+            GoldBudget = 150,
+            Acts = state.Acts.Select(a => a.Act == 2 ? a with { RawEvents = [E("TEA_MASTER"), E("WHISPERING_HOLLOW")] } : a).ToImmutableArray()
+        });
+        var beforeCycle = Preview(cycle);
+        var inspectFallback = new PredictorPlannedNode(cycle.Working.Position.NodeId)
+        {
+            EventOccurrenceExclusions = [new(E("TEA_MASTER"), 0), new(E("WHISPERING_HOLLOW"), 1), new(E("TEA_MASTER"), 2)],
+            Event = new(E("TEA_MASTER")) { ExpectedOccurrence = new(E("TEA_MASTER"), E("TEA_MASTER"), 1, 0, 0),
+                Actions = [new(PredictorEventActionKind.Option) { ExpectedOption = beforeCycle.EntryOptions.Single(o => o.Key == "BONE_TEA").Value }] }
+        };
+        var fallback = Preview(cycle, inspectFallback);
+        Check(fallback.SelectedOccurrence is { QueueEvent.Entry: "TEA_MASTER", Cursor: 2, IsCycleFallback: true, CanExclude: false, ExcludedByPlayer: false } &&
+            fallback.Occurrence is { ExhaustionFallbackAvailable: true } && fallback.AuthoredActionsNotApplied && fallback.AppliedActions == 0,
+            "a full cycle returns the original model at the next cursor without reapplying the excluded instance's action");
 
         var authoredTea = new PredictorPlannedNode(enough.Working.Position.NodeId)
         {
@@ -1501,7 +1565,7 @@ internal static class PredictorRouteEventChecks
         var arrived = continuation.Nodes[0].Event!;
         var throwing = arrived.Options.Single(option => option.Key == "THROW_FOUL_POTION");
         Check(arrived.PotionInputRequirement == PredictorEventPotionRequirement.OrderedSlots &&
-            arrived.SelectedOccurrence is { IsUnconditional: true } && arrived.Advanced &&
+            arrived.SelectedOccurrence is { CanExclude: true, EligibilityAssumed: false } && arrived.Advanced &&
             arrived.NeededInput == PredictorEventNeededInput.None && arrived.AppliedActions == 0 &&
             continuation.Nodes.Length == 2 && arrived.GoldBalance == 0 &&
             arrived.Combat == null && throwing is { IsKnown: true, Enabled: true,
@@ -1545,7 +1609,7 @@ internal static class PredictorRouteEventChecks
         Check(JsonSerializer.Deserialize<PredictorEventPotionInput>(JsonSerializer.Serialize(new PredictorEventPotionInput(0)))
             is { EmptySlots: 0, OrderedSlots.IsDefault: true },
             "A Conveyor count-only local input round-trips without inventing an empty identity list.");
-        foreach (string entry in new[] { "THE_FUTURE_OF_POTIONS", "STONE_OF_ALL_TIME", "RANWID_THE_ELDER" })
+        foreach (string entry in new[] { "STONE_OF_ALL_TIME", "RANWID_THE_ELDER" })
         {
             PredictorState Inventory(PredictorState state, bool concrete)
             {
@@ -1580,26 +1644,47 @@ internal static class PredictorRouteEventChecks
                     option.Value!.CardType)).ToArray();
             Check(localPayloads.SequenceEqual(sourcePayloads),
                 "Local ordered identities must preserve the concrete event-local RNG selection and rarity/type payload: " + entry);
-            if (entry == "THE_FUTURE_OF_POTIONS")
-            {
-                var unavailableInput = input with { OrderedSlots = [new("POTION", "SAVED_POTION_OUTSIDE_CURRENT_CATALOG"), fruit] };
-                var unavailablePlan = plan with { Event = plan.Event! with { Potions = unavailableInput } };
-                Check(View(run, unavailablePlan).PendingCauses.Any(cause => cause.Code == "EventLocalPotionRarityUnavailable") &&
-                    View(run, unavailablePlan).PotionInput == unavailableInput,
-                    "A saved local bottle outside the current rarity catalog stays authored and reports its specific gap without substitution.");
-                Enter(concrete, Plan(concrete, entry));
-                var activeUnavailable = Plan(concrete, entry) with { Event = new(E(entry)) { Potions = unavailableInput } };
-                Check(View(concrete, activeUnavailable).PendingCauses.Any(cause => cause.Code == "EventLocalPotionRarityUnavailable"),
-                    "Active event replay must preserve a missing-rarity hypothesis without throwing during option setup.");
-                var selected = options.First(option => option.Value?.LocalPotionKey != null).Value!;
-                var chosen = plan with { Event = plan.Event! with
-                    { Actions = [new(PredictorEventActionKind.Option) { ExpectedOption = selected }] } };
-                var result = Pure(run, [chosen], policy: PredictorRoutePreviewPolicy.LiveMapDefaults).Nodes.Single();
-                Check(result.Advanced && result.Rewards.Any(reward => reward.Kind == PredictorRewardKind.Card && reward.IsKnown) &&
-                    result.Inventory!.PotionPendingCauses.Any(cause => cause.Identity == missing.Identity),
-                    "Future's local discard computes its source card reward and leaves global inventory uncertainty intact.");
-            }
         }
+        const string future = "THE_FUTURE_OF_POTIONS";
+        var held = Fixture(captured, future, configure: state => state with
+        { PotionSlots = [new(state.NextInstanceId, energy), null, new(state.NextInstanceId + 1, fruit)], NextInstanceId = state.NextInstanceId + 2 });
+        var authored = Plan(held, future);
+        var stale = authored with { Event = authored.Event! with { Potions = input with { OrderedSlots = [fruit, energy] } } };
+        var drawing = Pure(held, [stale], policy: PredictorRoutePreviewPolicy.LiveMapDefaults).Nodes.Single().Event!;
+        var rows = drawing.EntryOptions.IsEmpty ? drawing.Options : drawing.EntryOptions;
+        Check(drawing.PotionInputRequirement == PredictorEventPotionRequirement.None && drawing.PotionInput == null &&
+            rows.Select(o => o.Value?.LocalPotionKey).SequenceEqual(new ModelKey?[] { energy, fruit }),
+            "Future draws from the captured ordered slots even when an old local bottle list is present.");
+        var selectedBranch = Add(authored, new(PredictorEventActionKind.Option) { ExpectedOption = rows[1].Value });
+        Check(Pure(held, [selectedBranch], policy: PredictorRoutePreviewPolicy.LiveMapDefaults).Nodes.Single().Advanced,
+            "Selecting a captured bottle requires just the ordinary option receipt and preserves its actual slot ordinal.");
+        var sourceOptions = View(held, authored).Options;
+        foreach (var (row, source) in rows.Zip(sourceOptions))
+        {
+            var expected = Pure(held, [Add(authored, new(PredictorEventActionKind.Option) { ExpectedOption = source.Value })])
+                .Nodes.Single().Rewards.Single(reward => reward.Kind == PredictorRewardKind.Card).Value!;
+            var predicted = row.ResultPreview!.Rewards.Single(reward => reward.Kind == PredictorRewardKind.Card).Value!;
+            Check(row.Value!.CardType == source.Value!.CardType &&
+                predicted.Cards.Select(c => (c.Key,c.UpgradeLevel)).SequenceEqual(expected.Cards.Select(c => (c.Key,c.UpgradeLevel))),
+                "Each captured bottle independently shows its source card trade, with no authored arrival inventory.");
+        }
+        var one = Fixture(captured, future, followingEvents: ["BRAIN_LEECH"], configure: state => state with
+        { PotionSlots = [null, new(state.NextInstanceId, energy)], NextInstanceId = state.NextInstanceId + 1 });
+        Check(Pure(one, [], policy: PredictorRoutePreviewPolicy.LiveMapDefaults).Nodes.Single().Event!.Event == E("BRAIN_LEECH"),
+            "One captured bottle skips Future in the ordinary queue and preserves the next independent event.");
+        var empty = Fixture(captured, future, configure: state => state with { PotionSlots = [null, null] });
+        var noTrade = Pure(empty, [], 2, PredictorRoutePreviewPolicy.LiveMapDefaults);
+        Check(noTrade.Nodes.Length == 2 && noTrade.Nodes[0].Advanced && noTrade.Nodes[0].Event is { EntryOptions.IsEmpty: true } &&
+            noTrade.Nodes[0].Rewards.IsEmpty && noTrade.Nodes[1].Room == PredictorRoomKind.Monster,
+            "An exhausted queue entering Future with no bottles finishes with no trade and preserves the next room.");
+        var unknown = input with { OrderedSlots = [new("POTION", "SAVED_POTION_OUTSIDE_CURRENT_CATALOG"), fruit] };
+        var unknownPlan = authored with { Event = authored.Event! with { Potions = unknown } };
+        Check(View(held, unknownPlan).PendingCauses.Any(cause => cause.Code == "EventLocalPotionRarityUnavailable") &&
+            View(held, unknownPlan).PotionInput == unknown,
+            "Full authored replay preserves an explicitly supplied unavailable bottle.");
+        Enter(held, authored);
+        Check(View(held, unknownPlan).PendingCauses.Any(cause => cause.Code == "EventLocalPotionRarityUnavailable"),
+            "Active full authored replay preserves the missing-rarity observation.");
         var conveyor = Fixture(captured, "ENDLESS_CONVEYOR", context: context, configure: state => state with { PotionSlots = [null, null] });
         var conveyorPlan = Plan(conveyor, "ENDLESS_CONVEYOR") with
         { Event = Plan(conveyor, "ENDLESS_CONVEYOR").Event! with

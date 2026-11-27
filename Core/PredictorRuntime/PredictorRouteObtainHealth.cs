@@ -74,7 +74,7 @@ internal sealed partial class PredictorRun
             else run._preview.Partial.RecordLiveLeafyPending(run.Working, strike, defend);
         }
         else if (source.Entry == "FRAGRANT_MUSHROOM")
-            run._preview.Partial.RecordLiveDeckRandomObtain(run.Working, source);
+            run.Working = run._preview.Partial.RecordLiveDeckRandomObtain(run.Working, source);
         run.RecordRouteEventObtainHealthProjection(source, pending, transformLeafy);
         FinalizeProjectedObtainHealth(run, pending, source, transformLeafy, token);
         return true;

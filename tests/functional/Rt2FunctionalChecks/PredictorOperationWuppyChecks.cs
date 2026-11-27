@@ -124,7 +124,8 @@ internal static partial class PredictorOperationEventChecks
             bool unsupportedAcquisition = false;
             try { PredictorSettlementEffects.AddRelic(plain, new("RELIC", entry), context: context); }
             catch (NotImplementedException) { unsupportedAcquisition = true; }
-            Require(unsupportedAcquisition, entry + " held support silently authorized unimplemented acquisition/alternative obtain");
+            bool combatOnly = entry is "BATH_TOWEL" or "MIGHTY_WINGS";
+            Require(unsupportedAcquisition != combatOnly, entry + " acquisition must match its native noncombat hooks");
         }
         Console.WriteLine("OPERATION_WUPPY 5 reachable held items; Future offers/receipt + Lantern combat preparation + Repy chest + Ectoplasm/acquisition contrasts PASS");
     }

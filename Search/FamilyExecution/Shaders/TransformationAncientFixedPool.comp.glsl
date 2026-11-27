@@ -16,7 +16,41 @@ layout(set=0,binding=6,std430) readonly restrict buffer Prefix { uint v[]; } pre
 uint prefix_hash_cache_value(uint index) { return prefix_table.v[index]; }
 /*__PREFIX__*/
 
-#ifdef SCOPED_COUNT
+#ifdef SCOPED_JOINT
+bool matches(uint64_t root) {
+    uint seen[COUNTER_COUNT];
+    for (uint c = 0u; c < COUNTER_COUNT; c++) seen[c] = 0u;
+    uint missing = plan.v[2], cursor = 3u + 2u * COUNTER_COUNT;
+    for (uint stream = 0u; stream < plan.v[1]; stream++) {
+        rng_initialize(root + make_u64(plan.v[cursor], plan.v[cursor + 1u]));
+        uint blocks = plan.v[cursor + 2u], range = plan.v[cursor + 3u], required = plan.v[cursor + 4u];
+        cursor += 5u;
+        if (range != 0u) {
+            uint roll = next_int(range);
+            if (required != 0u && roll + 1u != required) return false;
+        }
+        for (uint block = 0u; block < blocks; block++) {
+            uint start = plan.v[cursor], size = plan.v[cursor + 1u], draws = plan.v[cursor + 2u];
+            cursor += 3u;
+            for (uint draw = 0u; draw < draws; draw++) {
+                uint rule = pool.v[start + next_int(size)];
+                if (rule == 0xffffffffu) return false;
+                uint end = rule + pool.v[rule];
+                for (uint action = rule + 1u; action <= end; action++) {
+                    uint id = pool.v[action];
+                    uint count = ++seen[id];
+                    if (count > plan.v[4u + 2u * id]) return false;
+                    if (count <= plan.v[3u + 2u * id]) missing--;
+                }
+#ifndef RARE_REMAINDER
+                if (missing == 0u) return true;
+#endif
+            }
+        }
+    }
+    return missing == 0u;
+}
+#elif defined(SCOPED_COUNT)
 bool matches(uint64_t root) {
     uint missing = plan.v[0], remaining = plan.v[1], cursor = 3u;
     for (uint stream = 0u; stream < plan.v[2]; stream++) {
@@ -38,13 +72,31 @@ bool matches(uint64_t root) {
             for (uint draw = 0u; draw < draws; draw++) {
                 if (missing > remaining) return false;
                 uint index = next_int(size);
+#ifdef RARE_REMAINDER
+                if (counted != 0u) {
+                    uint slot = pool.v[start + index];
+                    if (slot == 2u) return false;
+                    if (slot == 1u) {
+#ifdef LIMIT_TARGET_COPIES
+                        if (missing == 0u) return false;
+#endif
+                        if (missing != 0u) missing--;
+                    }
+                    remaining--;
+                }
+#else
                 missing -= counted * pool.v[start + index];
                 remaining -= counted;
                 if (missing == 0u) return true;
+#endif
             }
         }
     }
+#ifdef RARE_REMAINDER
+    return missing == 0u;
+#else
     return false;
+#endif
 }
 #else
 bool matches(uint64_t root) {

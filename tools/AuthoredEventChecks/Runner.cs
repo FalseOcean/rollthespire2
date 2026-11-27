@@ -12,7 +12,7 @@ public partial class Runner : Node
         Callable.From(RunChecks).CallDeferred();
     }
 
-    private void RunChecks()
+    private async void RunChecks()
     {
         int result = 1;
         try
@@ -27,7 +27,10 @@ public partial class Runner : Node
                 throw new InvalidOperationException("Native check resource pack unavailable");
             System.Environment.SetEnvironmentVariable("RT2_AUTHORED_GODOT_RUNNER", "1");
             var assembly = Assembly.Load("Rt2FunctionalChecks");
-            result = (int)assembly.EntryPoint!.Invoke(null, new object[] { new[] { check } })!;
+            if (check == "--result-map-layout")
+                result = await (System.Threading.Tasks.Task<int>)assembly.GetType("RolltheSpire2.Tests.FastSearch.ResultMapLayoutChecks", true)!
+                    .GetMethod("RunAsync")!.Invoke(null, null)!;
+            else result = (int)assembly.EntryPoint!.Invoke(null, new object[] { new[] { check } })!;
         }
         catch (Exception error) { Console.Error.WriteLine(error); }
         Console.WriteLine($"Host=AuthoredEventChecks;exitCode={result}");

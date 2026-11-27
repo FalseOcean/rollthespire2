@@ -312,14 +312,20 @@ internal sealed partial class PredictorRun
                     .UnlockedCurseCards.ToList();
                 if (availableCurses.Count < 2) throw new InvalidOperationException("PredictorCapeCursePoolDepleted");
                 var capeCardIds = ImmutableArray.CreateBuilder<long>();
-                for (int i = 0; i < 2; i++)
+                var curseStream = Context.NonCombatStream(PredictorStream.Niche);
+                if (CanProjectLiveCurses() && !_preview.Partial!.StreamKnown(curseStream))
+                    Working = _preview.Partial.RecordLiveCurseReceipts(this, obtainedId, cape: true);
+                else
                 {
-                    var draw = Working.Draw(Context.NonCombatStream(PredictorStream.Niche), 0, availableCurses.Count);
-                    Working = draw.State;
-                    var curse = availableCurses[draw.Value];
-                    availableCurses.RemoveAt(draw.Value);
-                    capeCardIds.Add(Working.NextInstanceId);
-                    Working = PredictorObtainSources.AddCard(Context, Working, curse);
+                    for (int i = 0; i < 2; i++)
+                    {
+                        var draw = Working.Draw(curseStream, 0, availableCurses.Count);
+                        Working = draw.State;
+                        var curse = availableCurses[draw.Value];
+                        availableCurses.RemoveAt(draw.Value);
+                        capeCardIds.Add(Working.NextInstanceId);
+                        Working = PredictorObtainSources.AddCard(Context, Working, curse);
+                    }
                 }
                 for (int i = 0; i < 3; i++)
                 {
@@ -697,8 +703,8 @@ internal sealed partial class PredictorRun
     {
         if (_obtainFrames.Length == 0) return;
         var frame = _obtainFrames[^1];
-        if (frame.Relic.Entry == "NEOWS_BONES") Working = CanProjectLiveBonesCurse() && !_preview.Partial!.StreamKnown(PredictorStream.Niche)
-            ? _preview.Partial.RecordLiveBonesCurse(Working, frame.SourceId)
+        if (frame.Relic.Entry == "NEOWS_BONES") Working = CanProjectLiveCurses() && !_preview.Partial!.StreamKnown(Context.NonCombatStream(PredictorStream.Niche))
+            ? _preview.Partial.RecordLiveCurseReceipts(this, frame.SourceId, cape: false)
             : PredictorObtainSources.BonesCurse(Context, Working);
         RestoreParentFrame();
         if (_obtainFrames.Length > 0 && _obtainFrames[^1].Relic.Entry == "LARGE_CAPSULE") ContinueLargeCapsule(token);

@@ -9,9 +9,10 @@ internal sealed partial class PredictorRun
     // The registration and event-stage read contracts live beside one another.
     // Concrete effects remain in PredictorEvents/shared obtain and reward code.
     // These inputs are computations, not a duplicate effects/read-write catalog.
-    private static EventAppearanceResult EvaluateEventAppearance(PredictorRun run, ModelKey key,
+    private static EventAppearanceResult EvaluateEventAppearance(PredictorRun run, PredictorEventOccurrenceCandidate candidate,
         List<RouteDependency> dependencies)
     {
+        var key = candidate.QueueEvent;
         var inputs = new EventStateInputs(run, key, dependencies, "appearance");
         bool health = LiveEventAssumesHealth(key), deck = LiveEventAssumesDeck(key);
         if (health) inputs.Read("health.admissionAssumed", true, origin: PredictorKnowledgeOrigin.ApprovedDefault,
@@ -23,6 +24,9 @@ internal sealed partial class PredictorRun
         bool? Tradable(int required) => EventStateInputs.Known(inputs.TradableAtLeast(required));
         bool? Floor(bool allowed, string predicate) => EventStateInputs.Known(inputs.Read("position.floor",
             allowed, operation: "IsAllowed: actual floor " + predicate, sourceProperties: ["position.floor"]));
+        bool? OtherAncient(string blocked) => EventStateInputs.Known(inputs.Read("act.ancient",
+            run.Working.Acts.Single(act => act.Act == run.Working.Position.Act).Ancient.Entry != blocked,
+            operation: "IsAllowed: current act's Ancient is not " + blocked));
         bool? allowed = key.Entry switch
         {
             "MORPHIC_GROVE" or "CRYSTAL_SPHERE" or "WELCOME_TO_WONGOS" => Gold(100),
@@ -39,10 +43,13 @@ internal sealed partial class PredictorRun
             "RELIC_TRADER" => Tradable(5),
             "FAKE_MERCHANT" => EventStateInputs.Or(Gold(100),
                 EventStateInputs.Known(inputs.PotionMember("FOUL_POTION"))),
-            "BYRDONIS_NEST" => !EventStateInputs.Or(EventStateInputs.Known(inputs.EventPetMember()),
+            "BYRDONIS_NEST" or "WUPPY_IN_TROUBLE" => !EventStateInputs.Or(EventStateInputs.Known(inputs.EventPetMember()),
                 EventStateInputs.Known(inputs.CardMember("BYRDONIS_EGG"))),
+            "MUSEUM_OF_TORTURE" => run.Working.Position.Act == 2,
+            "THERMAE_NONUPEIPE" => EventStateInputs.And(Gold(176), OtherAncient("NONUPEIPE")),
+            "SHRINE_OF_THE_WARLORD" => OtherAncient("TANX"),
             "LUMINOUS_CHOIR" => EventStateInputs.And(Gold(149), EventStateInputs.Known(inputs.AvailableRelic())),
-            _ => true
+            _ => candidate.IsUnconditional ? true : null
         };
         return inputs.Appearance(allowed, health, deck);
     }
@@ -51,12 +58,12 @@ internal sealed partial class PredictorRun
         List<PredictorCombatPendingCause> local)
     {
         if (!run.RequireLocalEventPotionRarities(key, local)) return false;
-        string? code = !IsModeledRouteEvent(key) ? "EventNotModeled" :
+        string? code = !IsModeledRouteEvent(run, key) ? "EventNotModeled" :
             key.Entry == "WELCOME_TO_WONGOS" && run.Context.AccountWongoPoints == null ? "EventAccountPointsRequired" : null;
         var inputs = new EventStateInputs(run, key, dependencies, "entry");
         EventStateInput<bool>? prerequisite = key.Entry switch
         {
-            "THE_FUTURE_OF_POTIONS" => inputs.PotionsAtLeast(2),
+            "THE_FUTURE_OF_POTIONS" when !run.UsesCapturedEventPotions(key) => inputs.PotionsAtLeast(2),
             "STONE_OF_ALL_TIME" => inputs.PotionsAtLeast(1),
             "SLIPPERY_BRIDGE" => inputs.DeckAtLeast(PredictorDeckProjectionScope.Removable, 1),
             _ => null
@@ -87,7 +94,7 @@ internal sealed partial class PredictorRun
         return false;
     }
 
-    private static bool IsModeledRouteEvent(ModelKey key) => key.Entry is
+    private static bool IsModeledRouteEvent(PredictorRun run, ModelKey key) => key.Entry is
         "AROMA_OF_CHAOS" or "MORPHIC_GROVE" or "WHISPERING_HOLLOW" or "TRASH_HEAP" or "SYMBIOTE" or
         "TINKER_TIME" or "COLORFUL_PHILOSOPHERS" or "TRIAL" or "THIS_OR_THAT" or "UNREST_SITE" or
         "SAPPHIRE_SEED" or "ZEN_WEAVER" or "POTION_COURIER" or "REFLECTIONS" or "WELLSPRING" or
@@ -100,7 +107,8 @@ internal sealed partial class PredictorRun
         "THE_LANTERN_KEY" or "GRAVE_OF_THE_FORGOTTEN" or "ROOM_FULL_OF_CHEESE" or "WATERLOGGED_SCRIPTORIUM" or
         "THE_LEGENDS_WERE_TRUE" or "BRAIN_LEECH" or "HUNGRY_FOR_MUSHROOMS" or "BYRDONIS_NEST" or "DOLL_ROOM" or
         "INFESTED_AUTOMATON" or "SPIRIT_GRAFTER" or "ENDLESS_CONVEYOR" or "JUNGLE_MAZE_ADVENTURE" or
-        "WELCOME_TO_WONGOS" or "WAR_HISTORIAN_REPY" or "CRYSTAL_SPHERE";
+        "WELCOME_TO_WONGOS" or "WAR_HISTORIAN_REPY" or "CRYSTAL_SPHERE" || run.Context.UsesNonCombatGeneration && key.Entry is
+        ("MUSEUM_OF_TORTURE" or "WATERFALL_OF_OBVIOUS_SECRETS" or "WUPPY_IN_TROUBLE" or "THERMAE_NONUPEIPE" or "SHRINE_OF_THE_WARLORD");
 
     private static ImmutableArray<PredictorEventOptionKnowledge> ObserveRouteEventOptions(PredictorRun run,
         List<RouteDependency> dependencies, HashSet<long> knownInstanceIds) => run.EventOptions.Select(option =>
@@ -122,12 +130,16 @@ internal sealed partial class PredictorRun
             knownInstanceIds.Contains(knownBridgeTarget))
             identityDomains &= ~PredictorCombatDomain.InstanceIds;
         var identity = CausesFor(dependencies, identityDomains);
+        if (UsesEventLocalRelicTrade(run, option))
+            identity = PredictorRouteCauseEvidence.Normalize(identity.AddRange(RouteTradableRelicPoolCauses(run, dependencies))
+                .AddRange(RouteRelicBagCauses(dependencies, shared: false)));
         if (run._eventKey?.Entry == "SLIPPERY_BRIDGE")
             identity = PredictorRouteCauseEvidence.Normalize(identity.AddRange(
                 RouteBridgeIdentityCauses(run, dependencies, knownInstanceIds)));
+        var binding = RouteEventOptionBinding(run, option);
         var identityInput = inputs.Read("options." + option.Key + ".identity",
             option.Key + "; goldCost=" + option.GoldCost + "; goldGain=" + option.GoldGain +
-            "; card=" + option.CardTargetId + "; potion=" + option.PotionId + "; localPotion=" + option.LocalPotionOrdinal + ":" + option.LocalPotionKey?.Serialized + "; relic=" + option.RelicId +
+            "; card=" + option.CardTargetId + "; potion=" + option.PotionId + "; localPotion=" + option.LocalPotionOrdinal + ":" + option.LocalPotionKey?.Serialized + "; relic=" + (binding.TradedRelic?.Serialized ?? binding.RelicId?.ToString()) +
             "; offeredRelic=" + option.OfferedRelic?.Serialized + "; cardType=" + option.CardType +
             "; damage=" + option.HealthDamage + "; heal=" + option.HealthHeal +
             "; maxHpCost=" + option.MaxHpCost + "; willKill=" + option.WillKill, identity,
@@ -176,16 +188,20 @@ internal sealed partial class PredictorRun
             availabilityCauses = availabilityCauses.AddRange(tradable.PendingCauses);
             if (tradable.IsKnown) enabled = option.Key == "DONE" ? !tradable.Value : tradable.Value;
         }
-        var availability = identity.AddRange(availabilityCauses)
-            .Distinct().ToImmutableArray();
+        var availability = identity.AddRange(availabilityCauses).Distinct().ToImmutableArray();
+        if (UsesEventLocalRelicTrade(run, option))
+        {
+            var tradable = inputs.TradableAtLeast(option.Key switch { "TOP" => 1, "MIDDLE" => 2, _ => 3 });
+            availability = tradable.PendingCauses;
+            if (tradable.IsKnown) enabled = tradable.Value;
+        }
         var enabledFact = inputs.Result("options." + option.Key + ".enabled", enabled, availability,
             "Event handler: actual option availability predicate over recorded inputs");
-        var knowledge = new PredictorEventOptionKnowledge(option.Key, identity.IsEmpty ? option with { Enabled = true } : null,
+        var knowledge = new PredictorEventOptionKnowledge(option.Key, identity.IsEmpty ? binding : null,
             availability.IsEmpty ? enabled : null, identity.AddRange(availability).Distinct().ToImmutableArray())
         {
             IdentityPendingCauses = identity, AvailabilityPendingCauses = availability,
-            LostRelic = identity.IsEmpty && option.RelicId is { } lostId
-                ? run.Working.Relics.FirstOrDefault(relic => relic.Id == lostId)?.Key : null,
+            LostRelic = identity.IsEmpty ? OptionLostRelic(run, option) : null,
             IdentityReadFactIds = identityInput.FactId is { } identityFact ? [identityFact] : [],
             AvailabilityReadFactIds = enabledFact is { } availabilityFact ? [availabilityFact] : inputs.Facts
         };
@@ -197,6 +213,9 @@ internal sealed partial class PredictorRun
     // those cursor observations.
     private static PredictorCombatDomain RouteEventOptionIdentityDomains(PredictorRun run, PredictorEventOption option)
     {
+        if (UsesEventLocalRelicTrade(run, option))
+            return run._preview.Settings.Policy == PredictorRoutePreviewPolicy.LiveMapDefaults
+                ? PredictorCombatDomain.None : PredictorCombatDomain.InstanceIds;
         var reads = run._eventKey?.Entry switch
         {
             "THE_FUTURE_OF_POTIONS" => PredictorCombatDomain.PotionInventory,
@@ -216,6 +235,26 @@ internal sealed partial class PredictorRun
             emptySlotOnly: run._eventKey?.Entry == "ENDLESS_CONVEYOR" && option.Key.StartsWith("GRAB_", StringComparison.Ordinal));
     }
 
+    private static bool UsesEventLocalRelicTrade(PredictorRun run, PredictorEventOption option) =>
+        run.Context.UsesNonCombatGeneration && run._eventKey?.Entry == "RELIC_TRADER" && option.Key is "TOP" or "MIDDLE" or "BOTTOM";
+
+    private static PredictorEventOption RouteEventOptionBinding(PredictorRun run, PredictorEventOption option)
+    {
+        if (UsesEventLocalRelicTrade(run, option) && run._preview.Settings.Policy == PredictorRoutePreviewPolicy.LiveMapDefaults &&
+            option.TradedRelic != null)
+            return option with { Enabled = true, RelicId = null };
+        return option with { Enabled = true };
+    }
+
+    private static ModelKey? OptionLostRelic(PredictorRun run, PredictorEventOption option) => option.TradedRelic ??
+        (option.RelicId is { } instance ? run.Working.Relics.FirstOrDefault(relic => relic.Id == instance)?.Key : null);
+
+    private static ImmutableArray<PredictorCombatPendingCause> RouteTradableRelicPoolCauses(PredictorRun run,
+        List<RouteDependency> dependencies) => PredictorRouteCauseEvidence.Normalize(run.Context.Catalog!.TradableRelicTypes
+            .SelectMany(relic => RouteRelicMembershipCauses(run, dependencies, relic.Entry))
+            .Concat(new[] { "LIZARD_TAIL", "WINGED_BOOTS", "WONGOS_MYSTERY_TICKET" }
+                .SelectMany(entry => RouteRelicStateCauses(run, dependencies, entry))));
+
     private static PredictorCombatDomain RouteEventOptionAvailabilityDomains(PredictorRun run, PredictorEventOption option)
     {
         var reads = (run._eventKey?.Entry, option.Key) switch
@@ -224,6 +263,7 @@ internal sealed partial class PredictorRun
             ("SELF_HELP_BOOK", _) or ("GRAVE_OF_THE_FORGOTTEN", "CONFRONT") => PredictorCombatDomain.Deck,
             ("RANWID_THE_ELDER", "POTION") or ("FAKE_MERCHANT", "THROW_FOUL_POTION") => PredictorCombatDomain.PotionInventory,
             ("RANWID_THE_ELDER", "RELIC") or ("RELIC_TRADER", "DONE") => PredictorCombatDomain.Relics,
+            ("WATERFALL_OF_OBVIOUS_SECRETS", "NEGOTIATE") => PredictorCombatDomain.Gold,
             ("ENDLESS_CONVEYOR", _) when option.Key.StartsWith("GRAB_", StringComparison.Ordinal) => PredictorCombatDomain.Gold,
             _ => PredictorCombatDomain.None
         };
@@ -237,7 +277,7 @@ internal sealed partial class PredictorRun
 
     private static bool LiveEventAssumesHealth(ModelKey key) => key.Entry is "COLOSSAL_FLOWER" or
         "DENSE_VEGETATION" or "JUNGLE_MAZE_ADVENTURE" or "ROUND_TEA_PARTY" or "TRASH_HEAP" or
-        "UNREST_SITE" or "THE_LEGENDS_WERE_TRUE";
+        "UNREST_SITE" or "THE_LEGENDS_WERE_TRUE" or "THERMAE_NONUPEIPE";
     private static bool LiveEventAssumesDeck(ModelKey key) => key.Entry is "AMALGAMATOR" or
         "FIELD_OF_MAN_SIZED_HOLES" or "GRAVE_OF_THE_FORGOTTEN" or "MORPHIC_GROVE" or
         "SLIPPERY_BRIDGE" or "SPIRALING_WHIRLPOOL" or "THE_LEGENDS_WERE_TRUE" or "WOOD_CARVINGS";
@@ -285,8 +325,6 @@ internal sealed partial class PredictorRun
             run.EventTrace()?.PickerGuard(run, candidates, requested, guaranteed, dependencies);
             if (guaranteed <= requested) reads |= PredictorCombatDomain.Deck;
         }
-        var relic = RouteEventObtainRelic(run, key, branch);
-        if (relic is { } obtain) reads |= ObtainEntryReadDomains(run, obtain, dependencies);
         if ((key, branch) is ("TRIAL", "MERCHANT_GUILTY") or ("THIS_OR_THAT", "ORNATE") or
             ("UNREST_SITE", "KILL") or ("ROUND_TEA_PARTY", "CONTINUE_FIGHT") or
             ("LUMINOUS_CHOIR", "OFFER_TRIBUTE") or ("RANWID_THE_ELDER", _))
@@ -327,7 +365,16 @@ internal sealed partial class PredictorRun
         // Post-picker products belong to the retained selection continuation;
         // do not read their creation hooks while merely entering the picker.
         if (Beta111EventOptionRules.CardProductAfterSelection(key, branch) is not null) return null;
-        var product = Beta111EventOptionRules.FixedCardProduct(key, branch);
+        var product = Beta111EventOptionRules.FixedCardProduct(key, branch) ?? ((key, branch) switch
+        {
+            ("WATERFALL_OF_OBVIOUS_SECRETS", "BE_NICE") => new ModelKey("CARD", "DINGY_DAGGER"),
+            ("WATERFALL_OF_OBVIOUS_SECRETS", "BEAT_UP") or ("THERMAE_NONUPEIPE", "DRINK_WATERS") => new ModelKey("CARD", "GUILTY"),
+            ("WUPPY_IN_TROUBLE", "HELP_IMMEDIATELY") => new ModelKey("CARD", "INJURY"),
+            ("SHRINE_OF_THE_WARLORD", "TAKE_WEAPON") => new ModelKey("CARD", "MIGHTY_WEAPON"),
+            ("SHRINE_OF_THE_WARLORD", "TAKE_SHIELD") => new ModelKey("CARD", "MIGHTY_SHIELD"),
+            ("SHRINE_OF_THE_WARLORD", "TAKE_WINGS") => new ModelKey("CARD", "CLUMSY"),
+            _ => null
+        });
         return product is null ? null : PredictorCardChanges.Definition(run.Context, product.Value).Prototype;
     }
 
@@ -380,13 +427,13 @@ internal sealed partial class PredictorRun
     // for legacy trace compatibility. Fixed-card hooks preserve local roots.
     private static ImmutableArray<PredictorCombatPendingCause> RouteEventActionReadCauses(PredictorRun run,
         PredictorEventOption option, List<RouteDependency> dependencies, HashSet<long> knownInstanceIds,
-        bool resolvingHealth = false)
+        bool resolvingHealth = false, bool includePickerTargets = true)
     {
         string key = run._eventKey!.Value.Entry, branch = option.Key;
         if (RouteEventOptionNeedsHealth(key, branch) && run._eventHealth == null && !resolvingHealth &&
             !run._preview.Event.ProjectHealthIndependently) return [];
         var reads = RouteEventActionReadDomains(run, option, dependencies, knownInstanceIds, resolvingHealth);
-        var pickerCauses = RouteEventPicker(run, key, branch) == null ? ImmutableArray<PredictorCombatPendingCause>.Empty :
+        var pickerCauses = !includePickerTargets || RouteEventPicker(run, key, branch) == null ? ImmutableArray<PredictorCombatPendingCause>.Empty :
             RouteEventPickerReadCauses(run, key, branch, dependencies, knownInstanceIds);
         if ((key, branch) == ("SLIPPERY_BRIDGE", "OVERCOME") && option.CardTargetId is { } bridgeTarget)
         {
@@ -408,6 +455,11 @@ internal sealed partial class PredictorRun
             reads &= ~PredictorCombatDomain.Deck;
             pickerCauses = pickerCauses.AddRange(RouteRepyLanternKeyReadCauses(run, dependencies, knownInstanceIds));
         }
+        if ((key, branch) == ("WATERFALL_OF_OBVIOUS_SECRETS", "BEAT_UP"))
+            pickerCauses = pickerCauses.AddRange(RouteRelicBagCauses(dependencies, shared: false));
+        var relic = RouteEventObtainRelic(run, key, branch);
+        if (relic is { } obtain)
+            pickerCauses = pickerCauses.AddRange(ObtainCauses(run, obtain, dependencies, entryOnly: true));
         var card = RouteEventFixedAddedCard(run, key, branch);
         reads = RefineEventPotionReads(run, reads,
             emptySlotOnly: key == "ENDLESS_CONVEYOR" && branch.StartsWith("GRAB_", StringComparison.Ordinal) &&
@@ -426,8 +478,7 @@ internal sealed partial class PredictorRun
             }
         }
         if (card == null) return PredictorRouteCauseEvidence.Normalize(CausesFor(dependencies, reads).AddRange(pickerCauses));
-        bool independentRelicRead = RouteEventObtainRelic(run, key, branch) != null ||
-            (key, branch) is ("TRIAL", "MERCHANT_GUILTY") or ("DENSE_VEGETATION", "REST") or
+        bool independentRelicRead = (key, branch) is ("TRIAL", "MERCHANT_GUILTY") or ("DENSE_VEGETATION", "REST") or
             ("THIS_OR_THAT", "ORNATE") or ("UNREST_SITE", "KILL") or ("ROUND_TEA_PARTY", "CONTINUE_FIGHT") or
             ("LUMINOUS_CHOIR", "OFFER_TRIBUTE") or ("RANWID_THE_ELDER", _) or ("WELCOME_TO_WONGOS", "BARGAIN_BIN") ||
             RouteEventHealthMayLose(key, branch) && (run._eventHealth != null || resolvingHealth);

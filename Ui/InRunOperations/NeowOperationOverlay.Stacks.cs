@@ -199,7 +199,7 @@ internal sealed partial class NeowOperationOverlay
         _cardsArea = new Control { Name = "Rt2NeowCardDock", MouseFilter = MouseFilterEnum.Ignore };
         AddChild(_cardsArea);
         BuildHuntTrees();
-        bool stage = StageCardFaces && _stacks.Sum(stack => stack.Cards.Length) > 1;
+        bool stage = StageCardFaces && (MapCardPresentation || _stacks.Sum(stack => stack.Cards.Length) > 1);
         for (int i = 0; i < _stacks.Count; i++)
         {
             var stack = _stacks[i];
@@ -286,9 +286,9 @@ internal sealed partial class NeowOperationOverlay
             ? float.PositiveInfinity : _cardsBounds.Size.X;
         float scale = CardDisplayScale;
         var dock = PlanDock(availableWidth, scale);
-        // Event battles can have several correlated reward rows beside the summary.
-        // Placement may grant less height than those rows need at native size.
-        if (!MapCardPresentation && _preview?.Notices.Contains("EventCombatStableContextNoExtraActions") == true)
+        _cardsArea.Scale = Vector2.One;
+        if (!MapCardPresentation && (_rerollCardLayout && _potionGroupRegions == null ||
+            _preview?.Notices.Contains("EventCombatStableContextNoExtraActions") == true))
         {
             float fit = Math.Min(1, Math.Min(_cardsBounds.Size.X / Math.Max(1, dock.Size.X),
                 _cardsBounds.Size.Y / Math.Max(1, dock.Size.Y)));

@@ -80,11 +80,15 @@ internal sealed partial class InRunMapNodePresenter
             parts.Toggles.Add(new(Field(context, (c, v) => v.Toggle is { } occurred &&
                 Set(c, c.Plan with { Combat = (c.Plan.Combat ?? new()) with { FirstPlayerTurnOccurred = occurred } })),
                 R("first_turn"), combat.FirstPlayerTurnOccurred ?? true));
+        if (requirements.StolenCards && (combat.StolenCards == null || combat.StolenCards.Cards.IsEmpty))
+            parts.Toggles.Add(new(Field(context, (c, v) => v.Toggle is { } assumed &&
+                Set(c, c.Plan with { Combat = (c.Plan.Combat ?? new()) with { StolenCards = assumed ? new([]) : null } })),
+                R("assume_no_stolen_cards"), combat.StolenCards != null));
         if (requirements.VictoryHealth)
             HealthFields(context, parts, "combat", (c, health) => Set(c,
                 c.Plan with { Combat = (c.Plan.Combat ?? new()) with { VictoryHealth = health } }), combat.VictoryHealth);
         if (detailed && (node.CombatCards.Any(c => !c.IsKnown) || node.CombatRelics.Any(r => !r.IsKnown) ||
-            requirements.StolenCards || requirements.GremlinGold || requirements.EventTimeout))
+            (requirements.StolenCards && combat.StolenCards == null) || requirements.GremlinGold || requirements.EventTimeout))
             parts.Sections.Add(new(R("extra_combat_facts"), R("combat_local_facts_pending"), [], []));
         if (context.Plan.Combat != null || parts.Numbers.Count != 0 || parts.Toggles.Count != 0 || parts.Selections.Count != 0)
             parts.Sections.Insert(0, new("", "", [],

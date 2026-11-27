@@ -17,6 +17,7 @@ internal readonly record struct CombatRewardGpuMetrics(int Input, int Output, in
 internal sealed class CombatRewardGpuExecutor : IDisposable
 {
     internal const int Capacity = 1 << 20;
+    private readonly int _windowCapacity;
     private readonly RenderingDevice _rd;
     private readonly List<Rid> _owned = new();
     private readonly Rid[] _batch, _header, _input, _output, _uniforms;
@@ -30,7 +31,6 @@ internal sealed class CombatRewardGpuExecutor : IDisposable
     private readonly bool _privateInput;
     private readonly PrivateOrdinalBuffer? _privateInputBuffer;
     private bool _disposed;
-    private readonly bool _tracePrivate = NcPhysicalExperiment.Mode.Length != 0 || PrivateOrdinalSelection.IsRequested;
     internal string Device { get; }
     internal double SetupMs { get; }
     internal CombatRewardGpuExecutor(RenderingDevice rd, CombatRewardGpuPlan plan, bool forceGeneric = false, PrivateOrdinalBuffer? privateOutput = null, PrivateOrdinalBuffer? privateInput = null)
@@ -38,6 +38,7 @@ internal sealed class CombatRewardGpuExecutor : IDisposable
         if (plan.NumericalVariant != GpuNumericalVariant.NativeFloat64 &&
             (privateInput is not null || privateOutput is not null))
             throw new InvalidOperationException("C.IntegerRne.PublicTransportOnly");
+        _windowCapacity = GpuFilterSubwindow.Capacity(Capacity, privateOutput is not null);
         _rd = rd; _routes = plan.Routes; _privateOutput = privateOutput;
         _denseCarry8 = plan.UsesDenseCarry8; _observedHot = plan.UsesObservedOpeningHotLoop;
         _privateInput=privateInput is not null; _privateInputBuffer=privateInput;
@@ -55,6 +56,8 @@ internal sealed class CombatRewardGpuExecutor : IDisposable
             Rid[] buffers=[default,Buffer(plan.Meta),Buffer(plan.ObservedBonesIds.Length > 0 ? plan.ObservedBonesIds : [0]),Buffer(plan.Pools),Buffer(plan.Ids),Buffer(plan.ObservedOpeningData.Length > 0 ? plan.ObservedOpeningData : [0]),
                 Buffer(plan.Predicates),Buffer(plan.Targets),default,default,default];
             string source=plan.ShaderSource(forceGeneric);
+            if (_windowCapacity > Capacity)
+                source = GpuRootWindow.Shader2D(source).Replace("#version 450", "#version 450\n#define RT2_C_LARGE_WINDOW", StringComparison.Ordinal);
             if (_privateInput)
             {
                 const string read="input_ordinals.values[index]";
@@ -68,9 +71,9 @@ internal sealed class CombatRewardGpuExecutor : IDisposable
             {
                 buffers[0]=_batch[slot]=Buffer(new uint[8]);
                 buffers[8]=_header[slot]=privateOutput is not null && slot>0 ? _header[0] : Buffer(Header());
-                buffers[9]=_output[slot]=privateOutput?.Buffer ?? Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, Capacity*4));
+                buffers[9]=_output[slot]=privateOutput?.Buffer ?? Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, _windowCapacity*4));
                 buffers[10]=_input[slot]=privateInput?.Buffer ?? (privateOutput is not null && slot>0
-                    ? _input[0] : Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, Capacity*4)));
+                    ? _input[0] : Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, privateOutput is null ? _windowCapacity*4 : sizeof(uint))));
                 _uniforms[slot]=Add(FamilyGpuComputeUtility.CreateUniformSet(rd, shader, buffers, "C.CombatReward"));
             }
             Device=rd.GetDeviceName(); SetupMs=watch.Elapsed.TotalMilliseconds;
@@ -94,7 +97,7 @@ internal sealed class CombatRewardGpuExecutor : IDisposable
     }
     internal FamilyCandidateSet ExecutePrivateInput(SearchBatch batch,int count,CancellationToken token,out CombatRewardGpuMetrics metrics)
     {
-        if(!_privateInput || _privateOutput is not null || count<0 || count>batch.BatchCandidateCount || count>PrivateOrdinalBuffer.Capacity)throw new InvalidDataException("C.PrivateInputCountInvalid");
+        if(!_privateInput || _privateOutput is not null || count<0 || count>batch.BatchCandidateCount || count>GpuRootWindow.Maximum)throw new InvalidDataException("C.PrivateInputCountInvalid");
         _privateInputBuffer!.CheckPopulation(batch,count);
         return ExecuteCore(FamilyCandidateSet.Dense(batch),token,out metrics,out _,count)!;
     }
@@ -130,21 +133,21 @@ internal sealed class CombatRewardGpuExecutor : IDisposable
         for(int offset=0;offset<inputCount;)
         {
             token.ThrowIfCancellationRequested();
-            int slots=Math.Min(_groupingK,(inputCount-offset-1)/Capacity+1);
+            int slots=Math.Min(_groupingK,(inputCount-offset-1)/_windowCapacity+1);
             double start=watch.Elapsed.TotalMilliseconds;
             for(int slot=0;slot<slots;slot++)
             {
                 token.ThrowIfCancellationRequested();
-                int windowOffset=offset+slot*Capacity,count=Math.Min(Capacity,inputCount-windowOffset);
+                int windowOffset=offset+slot*_windowCapacity,count=Math.Min(_windowCapacity,inputCount-windowOffset);
                 FamilyGpuComputeUtility.Update(_rd,_batch[slot],[(uint)input.Batch.BatchBase,(uint)(input.Batch.BatchBase>>32),
-                    (uint)input.Batch.BatchCandidateCount,(uint)count,dense?0u:1u,(uint)(resident?PrivateOrdinalBuffer.Capacity:Capacity),(uint)windowOffset,(uint)_routes],"C.Batch");
+                    (uint)input.Batch.BatchCandidateCount,(uint)count,dense?0u:1u,(uint)(_privateOutput?.ElementCapacity ?? _windowCapacity),(uint)windowOffset,(uint)_routes],"C.Batch");
                 if (!resident) FamilyGpuComputeUtility.Update(_rd,_header[slot],Header(),"C.Header");
                 if(!input.IsDense)
                     FamilyGpuComputeUtility.UpdateBytes(_rd,_input[slot],FamilyGpuComputeUtility.PackAbi1UInt32(input,windowOffset,count),"C.CompactInput");
             }
             upload+=watch.Elapsed.TotalMilliseconds-start;
             token.ThrowIfCancellationRequested();
-            int processed=offset+Math.Min(inputCount-offset,slots*Capacity);
+            int processed=offset+Math.Min(inputCount-offset,slots*_windowCapacity);
             int headerCount=resident ? processed==inputCount ? 1 : 0 : slots;
             var pendingHeaders=new FamilyGpuReadback.Pending[headerCount];
             var headerData=new byte[headerCount][];
@@ -160,9 +163,9 @@ internal sealed class CombatRewardGpuExecutor : IDisposable
                     // starts, drain it before reusing/disposal; at most four windows.
                     if(slot>0)_rd.ComputeListAddBarrier(list);
                     _rd.ComputeListBindUniformSet(list,_uniforms[slot],0);
-                    int count=Math.Min(Capacity,inputCount-offset-slot*Capacity);
+                    int count=Math.Min(_windowCapacity,inputCount-offset-slot*_windowCapacity);
                     int candidatesPerGroup=dense&&_denseCarry8?512:64;
-                    _rd.ComputeListDispatch(list,(uint)((count+candidatesPerGroup-1)/candidatesPerGroup),1,1);
+                    GpuRootWindow.Dispatch(_rd, list, (uint)((count+candidatesPerGroup-1)/candidatesPerGroup));
                     dispatches++;
                 }
             }
@@ -188,10 +191,10 @@ internal sealed class CombatRewardGpuExecutor : IDisposable
             for(int slot=0;slot<(resident?1:slots);slot++)
             {
                 ReadOnlySpan<uint> header=FamilyGpuComputeUtility.UInt32Span(headerData[slot]);
-                int expected=resident?inputCount:Math.Min(Capacity,inputCount-offset-slot*Capacity);
+                int expected=resident?inputCount:Math.Min(_windowCapacity,inputCount-offset-slot*_windowCapacity);
                 if(header.Length!=8||header[0]!=0x43464d52||header[1]!=1||header[5]!=0x43463031||
                     header[3]!=0||header[4]!=expected||header[2]>expected)
-                    throw new InvalidDataException($"C.GpuHeaderOrNumericFailure:batch={input.Batch.BatchBase};offset={offset+slot*Capacity};header={string.Join(',',header.ToArray())}");
+                    throw new InvalidDataException($"C.GpuHeaderOrNumericFailure:batch={input.Batch.BatchBase};offset={offset+slot*_windowCapacity};header={string.Join(',',header.ToArray())}");
                 bytes+=32;
                 if (_observedHot)
                 {
@@ -251,7 +254,7 @@ internal sealed class CombatRewardGpuExecutor : IDisposable
             SubmissionGroups=groups, ObservedConditionalKeeps=conditionalKeeps, ObservedConditionalReasons=conditionalReasons,
             ObservedCountsAvailable=observedCountsAvailable };
         ReportObservedHot(metrics);
-        if (_tracePrivate)
+        if (Bootstrap.RuntimeLog.DetailEnabled)
             Bootstrap.RuntimeLog.TryBackgroundDetail($"ncStageTiming=true;stage=C;input={inputCount};output={result.Count};dispatches={dispatches};groups={groups};uploadMs={upload};dispatchSyncMs={sync};readbackMs={read};readbackBytes={bytes};widenMs={widen};sortMs={sort};validationMs={watch.Elapsed.TotalMilliseconds-validationStart};canonicalMs={metrics.CanonicalMs}");
         return result;
     }

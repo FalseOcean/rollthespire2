@@ -45,6 +45,8 @@ internal sealed record PredictorPaelsToothStorageKnowledge(long SourceId, Predic
     string SourceNodeId, int? InitialCount, int? RemainingCount, ImmutableArray<PredictorCombatPendingCause> PendingCauses);
 internal sealed record PredictorPlannedNode(string NodeId)
 {
+    // A replacement path selected at this departure after the map changed.
+    public PredictorRoute? RedrawnRoute { get; init; }
     // Optional drawing-only card-target intent. It is used only when this
     // exact source is actually acquired in this node, never as a receipt.
     public ImmutableArray<PredictorPlannedOptionalObtain> ObtainInputs { get; init; } = [];
@@ -54,6 +56,7 @@ internal sealed record PredictorPlannedNode(string NodeId)
     public ImmutableArray<PredictorPlannedRewardChoice> RewardChoices { get; init; } = [];
     public bool LeaveRewards { get; init; }
     public ImmutableArray<PredictorPlannedPotionAction> PotionActions { get; init; } = [];
+    public bool AssumePriorPotionDropsSkippedAtShop { get; init; }
     public PredictorPlannedShop? Shop { get; init; }
     public PredictorPlannedAncient? Ancient { get; init; }
     public PredictorPlannedEvent? Event { get; init; }
@@ -86,6 +89,7 @@ internal sealed record PredictorRouteRelicKnowledge(PredictorRelic Value,
 // The exact known inventory subset is useful for authoring a smith target.
 // It is not a complete deck when DeckPendingCauses is nonempty. Reward values
 // retain the display-only, non-actionable contract of combat previews.
+internal sealed record PredictorDowsingPremise(string NodeId, ImmutableArray<int> RoomsEntered);
 internal sealed record PredictorRouteNodeKnowledge(PredictorPosition Position,
     PredictorRoomKind Room, ModelKey? Model, PredictorPhase Phase,
     ImmutableArray<PredictorCombatRewardKnowledge> Rewards,
@@ -95,6 +99,8 @@ internal sealed record PredictorRouteNodeKnowledge(PredictorPosition Position,
     ImmutableArray<PredictorCombatPendingCause> PendingCauses)
 {
     // These improve already projected card effects; they never block the node.
+    public ImmutableArray<ModelKey> UnmodeledRelics { get; init; } = [];
+    public PredictorDowsingPremise? DowsingPremise { get; init; }
     public ImmutableArray<PredictorOptionalObtainInput> OptionalObtainInputs { get; init; } = [];
     public ImmutableArray<PredictorObtainHealthEffect> ObtainHealthEffects { get; init; } = [];
     public ImmutableArray<PredictorPaelsToothStorageKnowledge> PaelsToothStorage { get; init; } = [];
@@ -131,6 +137,7 @@ internal sealed record PredictorRouteTerminalBoundary(PredictorPosition TargetPo
     PredictorPosition DeparturePosition, ImmutableArray<PredictorCombatPendingCause> PendingCauses)
 {
     public PredictorNodeDiagnostics? Diagnostics { get; init; }
+    public PredictorActMap? RedrawMap { get; init; }
 }
 
 internal sealed record PredictorRouteContinuation(ImmutableArray<PredictorRouteNodeKnowledge> Nodes,

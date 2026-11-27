@@ -27,9 +27,10 @@ internal sealed record WorkbenchProbabilityPreview(
     internal bool VariantRestrictsActs { get; init; }
     internal bool VariantRestrictsEvents { get; init; }
     internal int VariantUnknownPrefix { get; init; }
+    internal bool? TransformUsesGpu { get; init; }
 
     internal static WorkbenchProbabilityPreview Compute(CompiledSearch compiled, int target, int workers, bool cpuOnly,
-        IReadOnlyList<string>? manualFamilyOrder = null, MapLossyOptions? mapLossy = null)
+        IReadOnlyList<string>? manualFamilyOrder = null, MapLossyOptions? mapLossy = null, int gpuRootBatchSize = 0)
     {
         var input = SearchSelectivityInput.From(compiled);
         var joint = JointSelectivityEstimator.EstimateQuery(input);
@@ -45,14 +46,19 @@ internal sealed record WorkbenchProbabilityPreview(
         string orderIssue = "";
         bool orderResolved = false;
         bool variantRestrictsActs = false, variantRestrictsEvents = false;
+        bool? transformUsesGpu = null;
         int variantUnknownPrefix = 0;
         try
         {
             var execution = SearchPreparationCompiler.Compile(compiled,
-                new("000000000000", long.MaxValue, target, workers, ManualFamilyOrder: manualFamilyOrder, MapLossy: mapLossy));
+                new("000000000000", long.MaxValue, target, workers, ManualFamilyOrder: manualFamilyOrder, MapLossy: mapLossy,
+                    GpuRootBatchSize: gpuRootBatchSize));
             if (execution.Success && execution.Plan is { } request)
             {
                 var selected = FamilyExecutionCoordinator.Plan(request, cpuOnly ? false : null);
+                var transform = compiled.Context.Party is null ? selected.ExecutionOrderUnits.FirstOrDefault(unit =>
+                    unit.FamilyId == TransformationAggregateFamily.Id) : null;
+                transformUsesGpu = transform?.UsesGpu;
                 order = selected.ExecutionOrderUnits.Select(FamilyExecutionCoordinator.FamilyOrderKey).ToArray();
                 denseFirst = selected.ExecutionOrderUnits.Where(FamilyExecutionCoordinator.IsDenseOnlyFamilyOrderUnit)
                     .Select(FamilyExecutionCoordinator.FamilyOrderKey).ToArray();
@@ -92,6 +98,12 @@ internal sealed record WorkbenchProbabilityPreview(
                 var geometry = new FamilyPhysicalQuoteRequest(false, false, 1 << 20);
                 foreach (var family in FamilyExecutionCoordinator.CreateRegisteredFamilies(request))
                 {
+                    if (family.FamilyId == TransformationAggregateFamily.Id && transform is not null)
+                    {
+                        var ns = FamilyPhysicalQuote.Computation(transform, geometry, calibration)?.NanosecondsPerInput;
+                        costs[family.FamilyId] = transform.UsesGpu ? (null, ns) : (ns, null);
+                        continue;
+                    }
                     var cpu = QuoteConfiguredCpu(family, workers, calibration);
                     var gpu = !cpuOnly && family.ConditionPerformance.UsesGpu
                         ? FamilyPhysicalQuote.Computation(family, geometry, calibration) : null;
@@ -142,7 +154,7 @@ internal sealed record WorkbenchProbabilityPreview(
             AutomaticFamilyOrder = automaticOrder, FamilyOrder = order,
             DenseFirstOrderUnits = denseFirst.ToHashSet(StringComparer.Ordinal), OrderIssue = orderIssue,
             VariantRestrictsActs = variantRestrictsActs, VariantRestrictsEvents = variantRestrictsEvents,
-            VariantUnknownPrefix = variantUnknownPrefix
+            VariantUnknownPrefix = variantUnknownPrefix, TransformUsesGpu = transformUsesGpu
         };
     }
 
@@ -165,14 +177,14 @@ internal sealed record WorkbenchProbabilityPreview(
 internal sealed class WorkbenchProbabilityPreviewQueue
 {
     internal sealed record Request(string Key, CompiledSearch Compiled, int Target, int Workers, bool CpuOnly,
-        IReadOnlyList<string>? ManualFamilyOrder = null, MapLossyOptions? MapLossy = null);
+        IReadOnlyList<string>? ManualFamilyOrder = null, MapLossyOptions? MapLossy = null, int GpuRootBatchSize = 0);
     internal sealed record Completion(Request Request, WorkbenchProbabilityPreview? Preview, Exception? Error, double Milliseconds);
     private readonly Func<Request, WorkbenchProbabilityPreview> _compute;
     private Request? _latest;
     private Task<Completion>? _running;
 
     internal WorkbenchProbabilityPreviewQueue(Func<Request, WorkbenchProbabilityPreview>? compute = null) =>
-        _compute = compute ?? (r => WorkbenchProbabilityPreview.Compute(r.Compiled, r.Target, r.Workers, r.CpuOnly, r.ManualFamilyOrder, r.MapLossy));
+        _compute = compute ?? (r => WorkbenchProbabilityPreview.Compute(r.Compiled, r.Target, r.Workers, r.CpuOnly, r.ManualFamilyOrder, r.MapLossy, r.GpuRootBatchSize));
 
     internal void Submit(Request request)
     {

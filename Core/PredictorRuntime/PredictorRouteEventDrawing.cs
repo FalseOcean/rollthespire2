@@ -25,7 +25,7 @@ internal sealed partial class PredictorRun
         _eventCardCandidates = [];
         _preview.Event.ProjectHealthIndependently = false;
         _preview.Event.PendingHealthCommands = [];
-        _preview.Event.UnknownHealingAmount = false;
+        _preview.Event.UnknownNonlethalHealthAmount = false;
         ResetEventChoiceState(bathsDamage: 3, resetAssignedGold: true);
         Working = Working with { Position = position };
         _inputs = [];

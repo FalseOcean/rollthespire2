@@ -35,6 +35,10 @@ internal sealed class NeowDensePairRightFailure : Exception
 // header validation and canonicalization follow the accepted R executor donor.
 internal sealed partial class NeowFamilyGpuExecutor : IDisposable
 {
+    private readonly int _rootCapacity, _outputCapacity;
+    private int CheckpointScale => Math.Max(1, _rootCapacity / Capacity);
+    private int CurseCapacity => NeowFamilyGpuPlan.CurseCapacity * CheckpointScale;
+    private int PairCapacity => NeowFamilyGpuPlan.PairCapacity * CheckpointScale;
     internal const int Capacity = FamilyPhysicalExecutionDefaults.DefaultCandidateBatchSize;
     internal const string SmallOutputRevision = ".PrivateSmallHeader8.20261026.v1";
     internal const string DensePairRevision = ".DensePairK2.SharedScratchAndModules.20261027.v2";
@@ -80,7 +84,7 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
     private readonly NeowStaticDrawGateCompiler.Gate? _directFirstDrawGate;
     private readonly bool _densePrefixTable;
     private bool HasSpecializedDense => _optimizations.LeafyLocalPrefix || _densePrefixTable;
-    private int PairScratchBytes => _terminalPair ? sizeof(uint) : NeowFamilyGpuPlan.PairCapacity * (_rootOnlyPair ? 12 : 48);
+    private int PairScratchBytes => _terminalPair ? sizeof(uint) : PairCapacity * (_rootOnlyPair ? 12 : 48);
     private readonly NeowFamilyGpuExecutor? _sharedDenseScratch;
     private readonly long _ordinalWorkspaceBytes;
     private Rid _readbackBank;
@@ -92,9 +96,9 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
     internal string Device { get; }
     internal const long WorkspaceBytes = (long)Capacity * sizeof(uint) * 2;
     internal long ResidentBytes => _ordinalWorkspaceBytes + (_readbackBank.IsValid ? PublicPrefixCapacity * 4L + Header().Length * 4L : 0) +
-        (_prefixHashTable.IsValid ? NeowPrefixHashCache.MaximumTableWords * 4L : 0) +
+        (_prefixHashTable.IsValid ? NeowPrefixHashCache.TableWordsFor(_rootCapacity) * 4L : 0) +
         (_stagedBuffers is null || _sharedDenseScratch is not null ? 0 :
-        (long)NeowFamilyGpuPlan.CurseCapacity * 12 + PairScratchBytes);
+        (long)CurseCapacity * 12 + PairScratchBytes);
     internal bool SupportsDensePair => !_privateInput && _composite is null && _modernLocalCapsule is null && _bonesKMode == 0 &&
         _capsulePhysicalMode == 0 && _plan.DirectNestedMode == 0 && _plan.JointTransformMetaOffset < 0;
     internal static string ShaderSource(int stage = 3, bool capsuleComposite = false, bool leafyPreGate = false,
@@ -153,7 +157,7 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
             .Replace("__RT2_UP_FRONT_LOW__", ((uint)hash).ToString("x8"), StringComparison.Ordinal)
             .Replace("__RT2_UP_FRONT_HIGH__", ((uint)(hash >> 32)).ToString("x8"), StringComparison.Ordinal);
     }
-    internal NeowFamilyGpuExecutor(RenderingDevice rd, NeowFamilyGpuPlan plan, uint tag, NeowCapsuleComposite? composite = null, PrivateOrdinalBuffer? privateInput = null, PrivateOrdinalBuffer? privateOutput = null, int capsulePhysicalMode = 0, int bonesKMode = 0, uint[]? bonesKMetadata = null, NeowFamilyGpuPlan[]? partyPlans = null, NeowFamilyGpuExecutor? sharedDenseScratch = null, NeowGpuOptimizations? optimizations = null, BonesHiddenUpgradeContinuation? bonesHiddenUpgrades = null, ModernNeowCapsuleComposite? modernLocalCapsule = null)
+    internal NeowFamilyGpuExecutor(RenderingDevice rd, NeowFamilyGpuPlan plan, uint tag, NeowCapsuleComposite? composite = null, PrivateOrdinalBuffer? privateInput = null, PrivateOrdinalBuffer? privateOutput = null, int capsulePhysicalMode = 0, int bonesKMode = 0, uint[]? bonesKMetadata = null, NeowFamilyGpuPlan[]? partyPlans = null, NeowFamilyGpuExecutor? sharedDenseScratch = null, NeowGpuOptimizations? optimizations = null, BonesHiddenUpgradeContinuation? bonesHiddenUpgrades = null, ModernNeowCapsuleComposite? modernLocalCapsule = null, bool publicCompact = false)
     {
         if (plan.NumericalVariant != NeowGpuNumericalVariant.NativeFloat64 &&
             (plan.JointTransformMetaOffset >= 0 && (!plan.UsesChildShuffle || plan.IsMultiplayer || plan.DirectNestedMode != 0) || composite is not null ||
@@ -200,6 +204,12 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
         _densePrefixTable = _directFirstDrawGate is not null ||
             ordinaryPair && plan.DensePrefixRequested && plan.CanShareTrackedPositive ||
             !_privateInput && plan.UsePartyDensePrefix;
+        int largestPort = Math.Max(privateInput?.ElementCapacity ?? 0, privateOutput?.ElementCapacity ?? 0);
+        _rootCapacity = largestPort == 0 ? GpuRootStorageBudget.Current?.RootCapacity ?? Capacity : largestPort;
+        _outputCapacity = privateOutput?.ElementCapacity ?? _rootCapacity;
+        // BonesK mode 1 stores its route in bits 24..31 of the ordinal.
+        if (_rootCapacity > Capacity && bonesKMode == 1)
+            throw new InvalidOperationException("N.BonesKRouteMaskNeeds24BitOrdinal");
         _stageOrder = _terminalPair ? [0, 1] : CurseFirstEnabled ? [0, 4, 1, 2] : [0, 1, 2];
         if (_privateInput && ReferenceEquals(privateInput, privateOutput)) throw new ArgumentException("N.PrivateBuffersAlias");
         if (sharedDenseScratch is not null)
@@ -209,18 +219,21 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
                 !SamePlanRole(sharedDenseScratch)) throw new ArgumentException("N.SharedDenseScratchRoleMismatch");
         }
         _sharedDenseScratch = sharedDenseScratch;
-        int inputBytes = _privateOutput && !_privateInput ? sizeof(uint) : Capacity * sizeof(uint);
-        _ordinalWorkspaceBytes = (privateInput is null ? inputBytes : 0L) + (privateOutput is null ? Capacity * sizeof(uint) : 0L);
+        // The public same-route capsule runs a compact parity sample and then
+        // the dense scan on this same executor. It needs both public bindings.
+        int inputBytes = (_privateOutput || _rootCapacity > Capacity && !publicCompact && modernLocalCapsule is null) && !_privateInput
+            ? sizeof(uint) : _rootCapacity * sizeof(uint);
+        _ordinalWorkspaceBytes = (privateInput is null ? inputBytes : 0L) + (privateOutput is null ? _rootCapacity * sizeof(uint) : 0L);
         var timer = Stopwatch.StartNew();
         Rid Buffer(uint[] values, string name) => Add(FamilyGpuComputeUtility.CreateStorageBuffer(rd, FamilyGpuComputeUtility.ToBytesNonEmpty(values), name));
         try
         {
-            int batchWords = 8 + (_densePrefixTable ? NeowPrefixHashCache.MaximumTableWords : 0);
+            int batchWords = 8 + (_densePrefixTable ? NeowPrefixHashCache.TableWordsFor(_rootCapacity) : 0);
             _meta = Buffer(new uint[batchWords], "N.Batch"); _header = Buffer(Header(), "N.Header");
             // A private-output/no-private-input executor admits Dense only, so
             // every shader chooses generated ordinals and never reads this binding.
             _input = privateInput?.Buffer ?? Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, inputBytes, "N.Input"));
-            _output = privateOutput?.Buffer ?? Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, Capacity * sizeof(uint), "N.Output"));
+            _output = privateOutput?.Buffer ?? Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, _rootCapacity * sizeof(uint), "N.Output"));
             _buffers = [_meta, Buffer(plan.Meta, "N.Plan"), Buffer(plan.PoolMeta, "N.Pools"), Buffer(plan.Cards, "N.Cards"), Buffer(plan.Strike, "N.Strike"),
                 Buffer(plan.Defend, "N.Defend"), _header, _output, Buffer(plan.Bones, "N.Bones"), Buffer(plan.Conditions, "N.Conditions"), _input];
             if (bonesKMode == 2 || composite is not null)
@@ -230,9 +243,11 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
             Device = rd.GetDeviceName();
             // Private bindings have a fixed role. Build only that role while the
             // chain's shader-reuse scope is active. Public input is known at Execute.
-            if (_privateInput || _privateOutput)
-                EnsureModules(plan.UsesStagedDense && !_privateInput,
-                    !_privateInput && HasSpecializedDense);
+            if (_rootCapacity > Capacity && !_privateOutput)
+                _readbackBank = Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, Header().Length * sizeof(uint) + PublicPrefixCapacity * sizeof(uint), "N.PublicReadbackBank"));
+            if (_privateInput || _privateOutput || _rootCapacity > Capacity)
+                EnsureModules(_plan.UsesStagedDense && !_privateInput && !publicCompact,
+                    !publicCompact && !_privateInput && HasSpecializedDense);
             SetupMs = timer.Elapsed.TotalMilliseconds;
         }
         catch (Exception ex)
@@ -326,6 +341,8 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
             if (!source.Contains(ordinalRead, StringComparison.Ordinal)) throw new InvalidOperationException("N.PrivateInputSeamChanged");
             source = source.Replace(ordinalRead, ordinalRead + "\nif(ordinal>=batch.values[2u]) { atomicExchange(header.values[3u],1u); continue; }", StringComparison.Ordinal);
         }
+        if (_rootCapacity > Capacity)
+            source = GpuRootWindow.Shader2D(source);
         return source;
     }
 
@@ -353,11 +370,11 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
                         _sharedDenseScratch._stagedBuffers[_buffers.Length + 1]];
                 }
                 else _stagedBuffers = [.._buffers,
-                        Add(FamilyGpuComputeUtility.AllocateStorageBuffer(_rd, NeowFamilyGpuPlan.CurseCapacity * 12, "N.CurseSurvivors")),
+                        Add(FamilyGpuComputeUtility.AllocateStorageBuffer(_rd, CurseCapacity * 12, "N.CurseSurvivors")),
                         Add(FamilyGpuComputeUtility.AllocateStorageBuffer(_rd, PairScratchBytes, "N.PairSurvivors"))];
                 if (checkpointMetadata) _stagedBuffers = [.._stagedBuffers, _projectionMetadata];
                 if (_optimizations.GpuPrefix)
-                    _prefixHashTable = Add(FamilyGpuComputeUtility.AllocateStorageBuffer(_rd, NeowPrefixHashCache.MaximumTableWords * 4, "N.PrefixHash"));
+                    _prefixHashTable = Add(FamilyGpuComputeUtility.AllocateStorageBuffer(_rd, NeowPrefixHashCache.TableWordsFor(_rootCapacity) * 4, "N.PrefixHash"));
                 foreach (int stage in _stageOrder)
                 {
                     Rid[] stageBuffers = stage == 0 && _optimizations.GpuPrefix ? [.._stagedBuffers, _prefixHashTable] : _stagedBuffers;
@@ -448,7 +465,7 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
     }
     internal int ExecutePrivateStage(SearchBatch batch, int count, CancellationToken token, out NeowFamilyGpuMetrics metrics)
     {
-        if (!_privateOutput || (!_privateInput && count != batch.BatchCandidateCount) || count < 0 || count > batch.BatchCandidateCount || batch.BatchCandidateCount > Capacity)
+        if (!_privateOutput || (!_privateInput && count != batch.BatchCandidateCount) || count < 0 || count > batch.BatchCandidateCount || batch.BatchCandidateCount > (_privateInput ? GpuRootWindow.Maximum : _rootCapacity))
             throw new InvalidDataException("N.PrivateStageBounds");
         ExecuteCore(FamilyCandidateSet.Dense(batch), count, token, out metrics);
         return metrics.Survivors;
@@ -474,12 +491,13 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
     private Prepared Prepare(FamilyCandidateSet input, int inputCount, CancellationToken token)
     {
         AssertOwner(); token.ThrowIfCancellationRequested();
-        if (inputCount < 0 || inputCount > Capacity || inputCount > input.Batch.BatchCandidateCount)
+        if (inputCount < 0 || inputCount > _rootCapacity || inputCount > input.Batch.BatchCandidateCount)
             throw new InvalidOperationException("NFamilyGpuCapacityExceeded");
         if (_initializationFaulted) throw new InvalidOperationException("NFamilyGpuInitializationFaulted");
         _sharedDenseScratch?.AssertOwner();
         if (_sharedDenseScratch?._initializationFaulted == true) throw new InvalidOperationException("N.SharedDenseScratchFaulted");
-        bool dense = input.IsDense && !_privateInput, staged = dense && _plan.UsesStagedDense;
+        bool dense = input.IsDense && !_privateInput;
+        bool staged = dense && _plan.UsesStagedDense;
         bool specializedDense = dense && HasSpecializedDense;
         // Complete all lazy allocation/compilation before any list is recorded.
         if (inputCount > 0) EnsureModules(staged, specializedDense);
@@ -500,16 +518,16 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
         if(inputCount>0)
         {
             uint[] metadata = [(uint)input.Batch.BatchBase, (uint)(input.Batch.BatchBase >> 32),
-                (uint)input.Batch.BatchCandidateCount, (uint)inputCount, dense ? 0u : 1u, Capacity,
-                NeowFamilyGpuPlan.CurseCapacity, NeowFamilyGpuPlan.PairCapacity];
+                (uint)input.Batch.BatchCandidateCount, (uint)inputCount, dense ? 0u : 1u, (uint)_outputCapacity,
+                (uint)CurseCapacity, (uint)PairCapacity];
             // Every 34^4 consecutive suffixes share the first eight seed characters.
             // Send the affected prefix hashes with this slot's batch in the same upload.
             if (dense && _densePrefixTable)
-                metadata = [.. metadata, .. NeowPrefixHashCache.BuildTable(input.Batch.BatchBase, inputCount)];
+                metadata = [.. metadata, .. NeowPrefixHashCache.BuildTable(input.Batch.BatchBase, inputCount, _rootCapacity)];
             FamilyGpuComputeUtility.Update(_rd, _meta, metadata, "NFamilyBatch");
             FamilyGpuComputeUtility.Update(_rd, _header, prepared.InitialHeader, "NFamilyHeader");
             if (staged && _optimizations.GpuPrefix)
-                FamilyGpuComputeUtility.Update(_rd, _prefixHashTable, NeowPrefixHashCache.BuildTable(input.Batch.BatchBase, inputCount), "N.PrefixHash");
+                FamilyGpuComputeUtility.Update(_rd, _prefixHashTable, NeowPrefixHashCache.BuildTable(input.Batch.BatchBase, inputCount, _rootCapacity), "N.PrefixHash");
             if (staged && CurseFirstEnabled)
                 FamilyGpuComputeUtility.Update(_rd, _output, [0u], "N.FinalCurseCounter");
             if (!input.IsDense && !_privateInput) FamilyGpuComputeUtility.UpdateBytes(_rd, _input,
@@ -529,15 +547,18 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
                 if(stage>0)_rd.ComputeListAddBarrier(list);
                 _rd.ComputeListBindComputePipeline(list,_stages[stage].Pipeline);
                 _rd.ComputeListBindUniformSet(list,_stages[stage].Uniforms,0);
-                _rd.ComputeListDispatch(list,stage==0 ? prepared.Groups :
-                    (uint)((_stageOrder[stage] == 2 ? NeowFamilyGpuPlan.PairCapacity : NeowFamilyGpuPlan.CurseCapacity)/512),1,1);
+                uint groups = stage == 0 ? prepared.Groups :
+                    (uint)((_stageOrder[stage] == 2 ? PairCapacity : CurseCapacity) / 512);
+                if (_rootCapacity > Capacity) GpuRootWindow.Dispatch(_rd, list, groups);
+                else _rd.ComputeListDispatch(list, groups, 1, 1);
             }
         }
         else
         {
             _rd.ComputeListBindComputePipeline(list,prepared.SpecializedDense ? _densePipeline : _pipeline);
             _rd.ComputeListBindUniformSet(list,prepared.SpecializedDense ? _denseUniforms : _uniforms,0);
-            _rd.ComputeListDispatch(list,prepared.Groups,1,1);
+            if (_rootCapacity > Capacity) GpuRootWindow.Dispatch(_rd, list, prepared.Groups);
+            else _rd.ComputeListDispatch(list,prepared.Groups,1,1);
         }
     }
 
@@ -694,7 +715,7 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
             FamilyGpuComputeUtility.UInt32Span(prepared.Readback).Slice(0,prepared.InitialHeader.Length);
         if (header.Length != (_smallOutput ? 20 : _bonesKMode != 0 ? 16 : _bonesArcane ? 12 : 8) || header[0] != 0x4e464d52 || header[1] != 1 || header[5] != _tag ||
             header[3] != 0 || header[4] != inputCount || header[2] > header[4] ||
-            (staged && (header[6] > NeowFamilyGpuPlan.CurseCapacity || header[7] > NeowFamilyGpuPlan.PairCapacity || header[7] > header[6] ||
+            (staged && (header[6] > CurseCapacity || header[7] > PairCapacity || header[7] > header[6] ||
                 _terminalPair && header[7] != header[2])))
             throw new InvalidDataException($"NFamilyGpuHeaderInvalid:batch={input.Batch.BatchBase};count={inputCount}");
         if (_bonesKMode != 0) {

@@ -22,13 +22,18 @@ internal sealed partial class FamilyPrivateGpuChain : IDisposable
     internal double SetupMs { get; private set; }
     internal long ReadbackBytes { get; private set; }
     internal double DispatchMs { get; private set; }
+    internal int RootCapacity { get; }
+    private readonly GpuRootStorageBudget? _budget;
 
     internal FamilyPrivateGpuChain(RenderingDevice rd, FilterBodyDescription[] families,
-        IPrivateGpuScratchLease? denseScratchDonor = null)
+        IPrivateGpuScratchLease? denseScratchDonor = null, int rootCapacity = PrivateOrdinalBuffer.Capacity)
     {
         if (families.Length < 2 || families.Any(f => !f.CanBindPrivateSerial))
             throw new ArgumentException("FamilyParty.PrivateChainNotAdmitted", nameof(families));
         _rd = rd; _families = families; _denseScratchDonor = denseScratchDonor; Device = rd.GetDeviceName();
+        RootCapacity = rootCapacity;
+        if (rootCapacity > PrivateOrdinalBuffer.Capacity)
+            _budget = new GpuRootStorageBudget(rootCapacity);
         _modules = new(rd);
         _buffers = new PrivateOrdinalBuffer?[Math.Min(2, families.Length - 1)];
         _executors = new FamilyPrivateGpuExecution?[families.Length];
@@ -40,8 +45,9 @@ internal sealed partial class FamilyPrivateGpuChain : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         CheckOwner();
         token.ThrowIfCancellationRequested();
-        if (input.Batch.BatchCandidateCount > PrivateOrdinalBuffer.Capacity)
+        if (input.Batch.BatchCandidateCount > RootCapacity)
             throw new InvalidDataException("FamilyParty.PrivateInputOutsideCapacity");
+        using var budget = _budget?.Enter();
         if (preparedPrefix is not null && (!input.IsDense || !CanGroupDensePrefix))
             throw new InvalidOperationException("FamilyParty.PreparedPrefixRoleMismatch");
         int count = input.Count;
@@ -63,7 +69,12 @@ internal sealed partial class FamilyPrivateGpuChain : IDisposable
                     _families.Skip(i).Select(f => f.FamilyId).ToArray(), count);
                 return handoff;
             }
-            var executor = EnsureExecutor(i, i == 0 && !input.IsDense);
+            FamilyPrivateGpuExecution executor;
+            try { executor = EnsureExecutor(i, i == 0 && !input.IsDense); }
+            catch (Exception failure) when (GpuRootStorageBudget.Current is not null && GpuRootWindow.IsStorageRefusal(failure))
+            {
+                throw new GpuRootWindowBindingRefused(_families[i].FamilyId, failure);
+            }
             if (i == 0 && !input.IsDense)
             {
                 _incoming!.CheckPopulation(input.Batch, count);
@@ -89,10 +100,10 @@ internal sealed partial class FamilyPrivateGpuChain : IDisposable
         try
         {
             PrivateOrdinalBuffer? incoming = index == 0
-                ? compactFirst ? (_incoming ??= new(_rd)) : null
+                ? compactFirst ? (_incoming ??= new(_rd, RootCapacity)) : null
                 : _buffers[(index - 1) % 2] ?? throw new InvalidDataException("FamilyParty.PrivateInputBufferMissing");
             PrivateOrdinalBuffer? outgoing = index == _families.Length - 1 ? null :
-                (_buffers[index % 2] ??= new(_rd));
+                (_buffers[index % 2] ??= new(_rd, RootCapacity));
             using var reuse = _modules.Activate();
             var executor = index == 0 && !compactFirst && _denseScratchDonor is not null
                 ? (_families[index].BindPrivateShared ?? throw new InvalidOperationException("FamilyParty.SharedScratchBindingUnavailable"))(_rd, incoming, outgoing, _denseScratchDonor)

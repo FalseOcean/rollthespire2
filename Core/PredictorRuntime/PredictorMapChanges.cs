@@ -25,7 +25,7 @@ internal sealed partial class PredictorRun
             source.Bosses.Length > 1,
             Working.Relics.Any(r => !r.Melted && r.Key.Entry == "GOLDEN_COMPASS" && r.GoldenPathAct == act - 1),
             Working.Deck.Any(id => Working.Card(id).Key.Entry == "SPOILS_MAP" && Working.Card(id).SpoilsActIndex == act - 1),
-            Context.HasRunModifier("BIG_GAME_HUNTER"), token);
+            Context.HasRunModifier("BIG_GAME_HUNTER"), token, Context.VersionResolution.SemanticProfileId);
     }
 
     internal void ApplyFurCoatObtained(long relicId)

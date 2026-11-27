@@ -66,6 +66,18 @@ internal sealed partial class InRunMapNodePresenter
             RewardSections(context, node.Rewards, RewardWriter(context)).ToList();
         var influences = CombatRewardInfluences(node);
         if (influences.Length != 0) sections.Insert(0, new(M("key_relics"), "", influences, []));
+        var assumptions = new List<string>();
+        if (_session.Snapshot?.Context is { } liveContext &&
+            RolltheSpire2.Compatibility.RuntimeProfilePolicies.UsesInheritedDrawingRules(liveContext.VersionResolution))
+            assumptions.Add(_text.Format("predictor.map.inherited_rules", liveContext.GameVersion,
+                RolltheSpire2.Compatibility.RuntimeVersionCompatibility.Beta114Version));
+        assumptions.AddRange(node.UnmodeledRelics.Select(relic =>
+            _text.Format("predictor.map.unmodeled_relic", _names.Resolve(relic, GameContentKind.Relic))));
+        if (assumptions.Count != 0) sections.Add(new(M("unmodeled_relics"), string.Join("\n", assumptions), [], []));
+        if (node.DowsingPremise is { } quest)
+            sections.Add(new(_names.Resolve(new("CARD", "DOWSING"), GameContentKind.Card),
+                quest.RoomsEntered.IsEmpty ? M("dowsing_absent") :
+                    _text.Format("predictor.map.dowsing_count", string.Join(", ", quest.RoomsEntered)), [], []));
         if (_session.TerminalBoundaries.TryGetValue(location, out var terminal))
             sections.Add(new(D("entry_blocked"), D("entry_not_entered") + "\n" +
                 string.Join("\n", PendingLines(terminal.PendingCauses)), [], []));
@@ -376,6 +388,8 @@ internal sealed partial class InRunMapNodePresenter
             var knowledge = rewards[r];
             Func<Context, PredictorPlannedRewardChoice, bool>? writeReward = knowledge.CompletedEdit is { } completed
                 ? (c, choice) => Set(c, PredictorRun.ApplyCompletedRewardChoice(c.Plan, completed, choice)) : write;
+            if (context.Node.Event?.Event?.Entry == "THE_FUTURE_OF_POTIONS")
+                writeReward = null;
             if (RewardOffer(knowledge) is not { } reward)
             {
                 if (!knowledge.CardOptions.IsEmpty)
@@ -405,6 +419,7 @@ internal sealed partial class InRunMapNodePresenter
             if (old?.SacrificeRelicId != null)
                 text += " · " + R("alternative.SACRIFICE") + (knowledge.SacrificeCount is { } count
                     ? " · " + _text.Format("predictor.runtime.alternative.sacrifice_count", count) : "");
+            else if (reward.PotionReceiptDenied) text = R("pickup_pending.PotionNotAllowed");
             else if (knowledge.DefaultSkipped) text += " · " + R("default_skip");
             else if (reward.Status == PredictorRewardStatus.Taken && reward.Kind is PredictorRewardKind.Card or PredictorRewardKind.SpecialCard)
                 text += " · " + M("planned_choice");

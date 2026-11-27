@@ -74,6 +74,7 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
     internal uint LastLateHeavy { get; private set; }
     private PrivateOrdinalBuffer? _privateInput, _privateOutput;
     internal const string SmallHeaderRevision = ".QueuedPrivateSmallHeader8.20261120.v1";
+    private int _populationCapacity = Capacity, _outputCapacity = OutputCapacity;
     private bool _smallHeader;
     private bool _bonesKBoundary;
     internal GpuNumericalVariant NumericalVariant { get; }
@@ -179,12 +180,17 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
                 inputIdentity + "|" +
                 (modernCapsule?.Revision(false) ?? fullPlan?.ActualAlgorithmRevision ?? FamilyPhysicalImplementationRevisions.Relic) +
                 (shopFirstTail ? ShopFirstTailRevision : "") + (smallHeader ? SmallHeaderRevision : ""));
+            int portCapacity = Math.Max(privateInput?.ElementCapacity ?? 0, privateOutput?.ElementCapacity ?? 0);
+            if (privateInput is null && privateOutput is null) portCapacity = GpuRootStorageBudget.Current?.RootCapacity ?? 0;
+            int populationCapacity = Math.Max(Capacity, portCapacity);
+            int outputCapacity = privateOutput?.ElementCapacity ?? populationCapacity;
             uint[] planMeta = PackPlanMeta(plan);
+            planMeta[5] = (uint)outputCapacity;
             uint[] bucketMeta = PackBuckets(plan.Pool);
             uint[] predicates = PackPredicates(plan.Predicates);
             uint[] shopPredicates = PackShopPredicates(plan.ShopPredicates, out uint[] shopTargets);
             long inputBytes = InputWorkspaceBytes;
-            long outputBytes = OutputWorkspaceBytes;
+            long outputBytes = (long)outputCapacity * sizeof(uint);
             long workspaceBytes = checked(inputBytes + outputBytes);
             if (inputBytes > int.MaxValue || outputBytes > int.MaxValue || workspaceBytes > MaximumWorkspaceBytes)
                 throw new InvalidOperationException(
@@ -226,6 +232,7 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
                 ShaderSource(fullPlan is not null, fullPlan?.UsesBonesKBoundary == true, bonesKRouteMask,
                 fullPlan?.GenericReplay == true, plan.LocalStateCapacity, numerical,
                 fullPlan?.UsesOpeningPrefix == true, plan.Pool.UsesChildShuffle, shopFirstTail);
+            if (populationCapacity > Capacity) source = GpuRootWindow.Shader2D(source);
             if (smallHeader)
                 source = source.Replace("#version 450", $"#version 450\n#define RT2_R_SMALL_HEADER_CAPACITY {SmallCandidateExactPolicy.MaximumCandidates}u\n#define RT2_R_SMALL_HEADER_OFFSET {HeaderUIntCount}u", StringComparison.Ordinal);
             if (fullPlan?.GenericReplay == true)
@@ -254,6 +261,7 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
                 rd.GetDeviceName()?.Trim() ?? "unknown", workspaceBytes,
                 numerical);
             result._privateInput = privateInput; result._privateOutput = privateOutput;
+            result._populationCapacity = populationCapacity; result._outputCapacity = outputCapacity;
             result._smallHeader = smallHeader;
             result._bonesKBoundary = fullPlan?.UsesBonesKBoundary == true;
             result._owned.AddRange(owned);
@@ -361,7 +369,7 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
             metrics = new RelicFamilyGpuBatchMetrics();
             return FamilyCandidateSet.FromSortedAbi1(input.Batch, []);
         }
-        if (inputCount > Capacity) throw new InvalidOperationException("RFamilyGpuInputExceedsCapacity");
+        if (inputCount > _populationCapacity) throw new InvalidOperationException("RFamilyGpuInputExceedsCapacity");
         if (!input.IsDense && inputCount > CompactInputCapacity)
             throw new InvalidOperationException("RFamilyCompactInputExceedsTransferCapacity");
 
@@ -370,7 +378,7 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
         Span<uint> meta = FamilyGpuComputeUtility.UInt32Span(_metadataBytes);
         meta[0] = unchecked((uint)input.Batch.BatchBase); meta[1] = unchecked((uint)(input.Batch.BatchBase >> 32));
         meta[2] = checked((uint)input.Batch.BatchCandidateCount); meta[3] = checked((uint)inputCount);
-        meta[4] = input.IsDense && _privateInput is null ? 0u : 1u; meta[5] = OutputCapacity;
+        meta[4] = input.IsDense && _privateInput is null ? 0u : 1u; meta[5] = (uint)_outputCapacity;
         FamilyGpuComputeUtility.UpdateBytes(_rd, _batchMeta, _metadataBytes, "RFamilyBatchMeta");
         _headerResetBytes ??= FamilyGpuComputeUtility.ToBytes(CreateHeader(_planTag, _bonesKBoundary, _smallHeader));
         FamilyGpuComputeUtility.UpdateBytes(_rd, _outputHeader, _headerResetBytes, "RFamilyOutputHeader");
@@ -406,7 +414,8 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
         {
             _rd.ComputeListBindComputePipeline(list, _pipeline);
             _rd.ComputeListBindUniformSet(list, _uniformSet, 0);
-            _rd.ComputeListDispatch(list, groups, 1u, 1u);
+            if (_populationCapacity > Capacity) GpuRootWindow.Dispatch(_rd, list, groups);
+            else _rd.ComputeListDispatch(list, groups, 1u, 1u);
         }
         finally { _rd.ComputeListEnd(); }
         uint headerBytes = checked((uint)ActiveHeaderUIntCount * sizeof(uint));
@@ -480,7 +489,7 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
             throw new InvalidDataException("RFamilyOpeningPrefixBagCapacityExceeded");
         if (overflow is >= 256 and < 286)
             throw new InvalidDataException("RFamilyOpeningPrefixContinuationUnavailable:Source" + (overflow - 256));
-        if (overflow != 0 || survivors < 0 || survivors > processed || processed != inputCount || survivors > OutputCapacity)
+        if (overflow != 0 || survivors < 0 || survivors > processed || processed != inputCount || survivors > _outputCapacity)
             throw new InvalidDataException(
                 $"RFamilyGpuHeaderInvalid:survivors={survivors};processed={processed};input={inputCount};overflow={overflow}");
         return processed;

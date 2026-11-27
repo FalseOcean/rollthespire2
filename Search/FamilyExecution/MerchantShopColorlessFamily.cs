@@ -78,6 +78,8 @@ internal static partial class MerchantShopColorlessFamily
                     return new(output, metrics.CanonicalAbi1ReadyMs, metrics.CommandMs + metrics.SubmitMs + metrics.SyncMs,
                         metrics.ReadbackMs, metrics.ReadbackBytes);
                 }, resource => resource.Dispose(), inputs.Reference, profile, resource => (resource.DeviceName, resource.SetupMs), 4096),
+            LargeWindowRole = GpuLargeWindowRole.Dense | GpuLargeWindowRole.Compact,
+            SupportsStandaloneLargeWindow = true,
             BindPrivate = (device, input, output) => {
                 var path = input is null && output is null ? decision.Path : MerchantShopColorlessCompactionPath.AtomicAppendHostSort;
                 var resource = MerchantShopColorlessGpuExecutor.Create(device, gpuPlan, path, input, output);

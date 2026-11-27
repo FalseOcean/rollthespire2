@@ -23,11 +23,11 @@ internal sealed partial class QueryWorkbenchFrame
         var section = new VBoxContainer { Name = "SearchExecutionOrder", SizeFlagsHorizontal = SizeFlags.ExpandFill };
         section.AddThemeConstantOverride("separation", 5); sidebar.AddChild(section);
         var heading = new HBoxContainer(); heading.AddThemeConstantOverride("separation", 8); section.AddChild(heading);
-        var title = _p.Label(_text.Get("workflow.execution_order"), 16, heading: true);
+        var title = _p.Label(_text.Get("workflow.execution_order"), 15, true);
         title.SizeFlagsHorizontal = SizeFlags.ExpandFill; heading.AddChild(title);
-        _executionOrderMode = ContextOptions(0, 0, 112); _executionOrderMode.Reparent(heading, false);
+        _executionOrderMode = ContextOptions(0, 0, 132); _executionOrderMode.Reparent(heading, false);
         _executionOrderMode.Name = "ExecutionOrderMode";
-        _executionOrderMode.CustomMinimumSize = new(112, 32);
+        _executionOrderMode.CustomMinimumSize = new(132, 36);
         _executionOrderMode.AddItem(OrderText("auto")); _executionOrderMode.AddItem(OrderText("manual"));
         _executionOrderMode.ItemSelected += index =>
         {

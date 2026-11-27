@@ -988,6 +988,14 @@ internal static class PersistenceChecks
             var store = Workspace(directory);
             Check(store.Preferences.WorkbenchFlags.Count == 0, "Explicit null flags recover to empty preferences");
             Check(store.Preferences.SearchWorkerBudget == 64, "Persisted worker budget obeys factory bounds");
+            Check(store.Preferences.GpuRootBatchSize == 0, "Older preferences keep automatic GPU batches");
+            foreach (int size in new[] { 1 << 24, 1 << 25, 1 << 26, 1 << 27, 0 })
+            {
+                store.SetGpuRootBatchSize(size);
+                store = Workspace(directory);
+                Check(store.Preferences.GpuRootBatchSize == size, "GPU batch selection survives reopening: " + size);
+            }
+
             foreach (int processors in new[] { 1, 2, 32, 128, 130, 256 })
             {
                 int workers = SearchWorkspace.ResolveSearchWorkers(null, processors);
@@ -1090,6 +1098,29 @@ internal static class PersistenceChecks
             Check(reloaded.Workspace.Results.Count == 1 && reloaded.Workspace.Results[0].IsUnverified,
                 "Late candidate persists exactly once with provenance after UI loss");
             Check(reloaded.CurrentNextCursorOrdinal == 17, "Final safe cursor survives UI loss");
+        });
+
+        foreach (bool persistent in new[] { false, true })
+        Case("closed-panel-search-" + persistent, directory =>
+        {
+            var store = SearchWorkspace.Open(directory);
+            Check(!store.Preferences.PersistentSearch, "Persistent search is opt-in");
+            store.SetPersistentSearch(persistent);
+            Check(SearchWorkspace.ReadFeaturePreferences(directory).PersistentSearch == persistent, "Saved mode survives reload");
+            store.BindPreparedResultWorkspace(store.PrepareResultWorkspace("close", Workbench()));
+            var session = new ControlledCleanupSession(PersistableCandidate("000000000011"),
+                new("close", "snapshot", 17, [], [11UL]), Task.CompletedTask);
+            store.Runtime.InstallStartedSession(session, "close");
+            store.Runtime.Close(null);
+            var reopened = SearchWorkspace.Open(directory).Runtime;
+            Check(ReferenceEquals(reopened, store.Runtime) && reopened.Receiving && session.Cancelled == !persistent,
+                "A reopened panel observes the same owner and close respects the chosen mode");
+            reopened.Tick();
+            Check(!reopened.Receiving && reopened.SessionResults.Single().Seed == "000000000011" &&
+                reopened.HasUnseenBackgroundResults == persistent && store.CurrentNextCursorOrdinal == 17,
+                "Unattended completion retains the final candidate and safe cursor");
+            reopened.MarkBackgroundResultsViewed();
+            Check(!reopened.HasUnseenBackgroundResults, "Finished background search opens automatically only until viewed");
         });
 
         Case("shared-owner-frozen-receiver-and-cleanup", directory =>

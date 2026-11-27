@@ -6,6 +6,7 @@ using RolltheSpire2.Core.Prediction.Maps;
 using RolltheSpire2.Core.PredictorRuntime;
 using RolltheSpire2.Presentation.ContentNames;
 using RolltheSpire2.Infrastructure.ContentNames;
+using RolltheSpire2.Infrastructure.Snapshots;
 using RolltheSpire2.Ui.Components;
 using RolltheSpire2.Ui.Icons;
 using RolltheSpire2.Ui.Theme;
@@ -36,6 +37,8 @@ internal sealed partial class InRunMapPredictionPanel
     private readonly Dictionary<MapPosition, InRunMapNodeDetailData> _nodeDetails = [];
     private readonly HashSet<MapPosition> _nodeInformationFailures = [];
     private bool _predictionQueued, _lastDepartureBoundary;
+    private LiveRoomProgress _lastRoomProgress;
+    private int _lastCompletedRestChoices;
     private string? _predictionFault;
     private bool _diagnosticsOnly;
     private string? _hoverCandidate;

@@ -9,6 +9,50 @@ namespace RolltheSpire2.Ui.Shell;
 
 internal sealed partial class SeedLibraryCanvas
 {
+    private Button _importShare = null!;
+    private SearchPresetDefinition? _sharePreview;
+
+    internal void PreviewSharedPreset(string code)
+    {
+        try
+        {
+            var preview = SearchPresetShare.Decode(code, _language);
+            _sharePreview = preview;
+            _selectedPreset = preview.Id;
+            ClearFilter(); HideReceipt(); RefreshEntries();
+        }
+        catch (Exception error)
+        {
+            ShowIssue(T("无法读取分享码，请复制完整的 RT2 预设分享码。", "Copy a complete RT2 preset share code and try again.") + "\n" + error.Message);
+        }
+    }
+
+    private void CopySharedPreset(SearchPresetDefinition preset)
+    {
+        try
+        {
+            DisplayServer.ClipboardSet(SearchPresetShare.Encode(preset));
+            ShowReceipt(T("已复制分享码，分享副本按全解锁搜索。", "Share code copied with full unlocks."));
+        }
+        catch (Exception error) { ShowIssue(T("复制分享码失败。", "Could not copy share code.") + "\n" + error.Message); }
+    }
+
+    private void SaveSharedPreset(SearchPresetDefinition preview)
+    {
+        try
+        {
+            var presets = _historyStore!.Presets;
+            string title = preview.Title;
+            for (int copy = 2; presets.TryGetUserByName(title, out _); copy++)
+                title = $"{preview.Title} ({copy})";
+            var saved = presets.SaveUserPresetFromExisting(title, preview.Description, preview.VisualIcons, preview);
+            _sharePreview = null; _selectedPreset = saved.Id;
+            ClearFilter(); RefreshEntries();
+            ShowReceipt(T("已保存到我的预设。", "Saved to My presets."));
+        }
+        catch (Exception error) { ShowIssue(error.Message); }
+    }
+
     private string _selectedPreset = "";
     private SearchPresetDefinition[] _visiblePresets = [];
     private readonly IGameIconResolver _presetIcons = new ReflectionGameIconResolver("seed-library-presets");
@@ -23,7 +67,8 @@ internal sealed partial class SeedLibraryCanvas
             ? string.Join(" / ", workbench.Players.Select(p => $"P{p.Slot + 1} {_names.Resolve(p.Character, GameContentKind.Character)}"))
             : _names.Resolve(preset.CharacterKey, GameContentKind.Character);
         string mode = preset.IsMultiplayer ? T($"{preset.Workbench!.Players.Count} 人", $"{preset.Workbench!.Players.Count} players") : T("单人", "Solo");
-        return $"{mode} · A{preset.Ascension} · {roster}";
+        string context = $"{mode} · A{preset.Ascension} · {roster}";
+        return preset.Workbench?.UseFullUnlocks == true ? context + T(" · 全解锁", " · Full unlocks") : context;
     }
 
     private bool CanUse(SearchPresetDefinition preset, out string issue)
@@ -48,9 +93,15 @@ internal sealed partial class SeedLibraryCanvas
         }
         var primary = DetailHeading(selected.TitleFor(_language), PresetContext(selected), selected.VisualIcons);
         bool canUse = CanUse(selected, out string issue);
-        AddAction(primary, T("查看历史结果", "View search history"), () => PresetHistoryRequested?.Invoke(selected)).Name = "ViewPresetHistory";
+        bool preview = ReferenceEquals(selected, _sharePreview);
+        if (preview)
+            AddAction(primary, T("保存到我的预设", "Save to My presets"), () => SaveSharedPreset(selected)).Name = "SaveSharedPreset";
+        else
+            AddAction(primary, T("查看历史结果", "View search history"), () => PresetHistoryRequested?.Invoke(selected)).Name = "ViewPresetHistory";
         var use = AddAction(primary, T("使用这组预设", "Use this preset"), () => PresetUseRequested?.Invoke(selected), true);
         use.Name = "UseLibraryPreset"; RequireIdle(use, !canUse);
+        if (!preview && selected.QueryResolved)
+            AddAction(primary, T("复制分享码", "Copy share code"), () => CopySharedPreset(selected)).Name = "CopySharedPreset";
         if (selected.Source == SearchPresetSource.User)
         {
             var management = ManagementActions();

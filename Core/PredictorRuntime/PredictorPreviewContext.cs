@@ -13,6 +13,7 @@ internal sealed partial class PredictorRun
     private sealed record RoutePreviewSettings(PredictorRoutePreviewPolicy Policy, bool AcceptsPrefixes,
         ImmutableArray<PredictorPlannedNode> Plans, ImmutableDictionary<string, PredictorPlannedEvent> PotionPlans)
     {
+        internal PredictorEventPotionInput? CapturedPotions { get; init; }
         internal static readonly RoutePreviewSettings Default = new(PredictorRoutePreviewPolicy.AuthoredChoices,
             false, [], ImmutableDictionary<string, PredictorPlannedEvent>.Empty);
     }
@@ -32,6 +33,7 @@ internal sealed partial class PredictorRun
         internal Func<int, bool>? ShopAutomaticPurchaseAllowed;
         internal List<PredictorCombatPendingCause>? ShopEntryCauses;
         internal bool RestDefaultInProgress;
+        internal PredictorDowsingPremise? DowsingPremise;
         internal ImmutableDictionary<long, LivePaelsToothStorage> PaelsToothStorage = ImmutableDictionary<long, LivePaelsToothStorage>.Empty;
         internal ImmutableArray<PredictorCombatPendingCause> PaelsToothCombatCauses = [];
     }
@@ -40,7 +42,7 @@ internal sealed partial class PredictorRun
     {
         internal bool ProjectHealthIndependently;
         internal ImmutableArray<PredictorEventHealthDelta> PendingHealthCommands = [];
-        internal bool UnknownHealingAmount;
+        internal bool UnknownNonlethalHealthAmount;
         internal int? AssignedGold;
         internal ImmutableArray<RouteEventOptionOutcome> OptionOutcomes = [];
         internal readonly List<RouteEventObtainHealthProjection> ObtainHealthProjections = [];
@@ -59,7 +61,7 @@ internal sealed partial class PredictorRun
 
         internal void EnterEvent()
         {
-            ProjectHealthIndependently = false; PendingHealthCommands = []; UnknownHealingAmount = false;
+            ProjectHealthIndependently = false; PendingHealthCommands = []; UnknownNonlethalHealthAmount = false;
         }
     }
 
@@ -87,12 +89,24 @@ internal sealed partial class PredictorRun
         _preview.Partial = new(Context, Working, dependencies, new PredictorRouteFactRecorder());
 
     private PredictorRun CreateRoutePreview(ImmutableArray<PredictorPlannedNode> plans,
-        PredictorRoutePreviewPolicy policy, bool prefixes)
+        PredictorRoutePreviewPolicy policy, bool prefixes, ImmutableArray<ModelKey?> currentPotionSlots)
     {
-        var copy = new PredictorRun(Context, _checkpoints, Revision)
+        var context = Context;
+        if (policy == PredictorRoutePreviewPolicy.LiveMapDefaults)
+        {
+            var relics = (context.Live?.PendingCauses ?? []).Select(c => c.UnmodeledRelic).OfType<ModelKey>().ToHashSet();
+            context = context with { DrawingUnmodeledRelics = relics, Live = context.Live is { } live
+                ? live with { PendingCauses = live.PendingCauses.Where(c => c.UnmodeledRelic == null).ToImmutableArray() } : null };
+        }
+        var copy = new PredictorRun(context, _checkpoints, Revision)
         { CombatDefaults = CombatDefaults, AutomaticRewardPickup = AutomaticRewardPickup };
         copy._preview.Settings = new(policy, prefixes, plans, plans.Where(plan => plan.Event?.Potions != null)
-            .ToImmutableDictionary(plan => plan.NodeId, plan => plan.Event!));
+            .ToImmutableDictionary(plan => plan.NodeId, plan => plan.Event!))
+        {
+            CapturedPotions = policy == PredictorRoutePreviewPolicy.LiveMapDefaults
+                ? new() { OrderedSlots = currentPotionSlots.IsDefault ? Working.PotionSlots.Select(slot => slot?.Key).ToImmutableArray() : currentPotionSlots }
+                : null
+        };
         return copy;
     }
 

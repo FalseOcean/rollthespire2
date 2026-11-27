@@ -21,6 +21,9 @@ internal sealed class TransformationAggregateGpuExecutor : IDisposable
     private readonly bool _privateInput, _privateOutput;
     private readonly bool _ancientFixedPool;
     private readonly int _seedsPerInvocation;
+    private readonly int _outputCapacity;
+    private readonly bool _largeWindow;
+    private readonly int _prefixCapacity;
     private readonly bool _tracePrivate = EwPhysicalExperiment.Mode.Length != 0 || PrivateOrdinalSelection.IsRequested || NwaePhysicalExperiment.Mode.Length != 0;
     internal int Capacity { get; }
     internal GpuNumericalVariant NumericalVariant { get; }
@@ -34,11 +37,20 @@ internal sealed class TransformationAggregateGpuExecutor : IDisposable
             throw new InvalidOperationException("T.IntegerRne.PublicTransportOnly");
         _privateInput = privateInput is not null; _privateOutput = privateOutput is not null;
         _ancientFixedPool = plan.AncientFixedPool;
+
         if (_privateInput && ReferenceEquals(privateInput, privateOutput)) throw new ArgumentException("T.PrivateBuffersAlias");
-        _rd = rd; Capacity = plan.Capacity; NumericalVariant = plan.NumericalVariant; _seedsPerInvocation=plan.SeedsPerInvocation; var watch = Stopwatch.StartNew();
+        int portCapacity = Math.Max(privateInput?.ElementCapacity ?? 0, privateOutput?.ElementCapacity ?? 0);
+        if (privateInput is null && privateOutput is null) portCapacity = GpuRootStorageBudget.Current?.RootCapacity ?? 0;
+        _largeWindow = portCapacity > PrivateOrdinalBuffer.Capacity;
+        _prefixCapacity = _largeWindow ? GpuRootWindow.Maximum : NeowPrefixHashCache.MaxCandidateCount;
+        _rd = rd;
+        Capacity = _largeWindow ? (privateInput is not null && privateOutput is null ? Math.Min(portCapacity, 1 << 23) : portCapacity) : plan.Capacity;
+        _outputCapacity = privateOutput?.ElementCapacity ?? Capacity; NumericalVariant = plan.NumericalVariant; _seedsPerInvocation=plan.SeedsPerInvocation; var watch = Stopwatch.StartNew();
         // The full-target 16m window already uses 128 MiB for public ordinals.
         // Keep it single; normal windows add at most one 8 MiB ordinal pair.
         _groupingK = _privateOutput ? 4 : Capacity <= TransformationAggregateGpuPlan.WindowCapacity ? 2 : 1;
+        int inputBytes = _privateOutput && !_privateInput ? sizeof(uint) :
+            _largeWindow && !_privateInput ? 65536 * sizeof(uint) : Capacity * sizeof(uint);
         _batch=new Rid[_groupingK]; _input=new Rid[_groupingK]; _header=new Rid[_groupingK];
         _output=new Rid[_groupingK]; _uniforms=new Rid[_groupingK];
         Rid Add(Rid r) { _owned.Add(r); return r; }
@@ -48,8 +60,10 @@ internal sealed class TransformationAggregateGpuExecutor : IDisposable
             var buffers = new Rid[plan.PrefixReuse ? 7 : 6];
             for (int i = 0; i < plan.Buffers.Length; i++) buffers[i + 1] = Data(plan.Buffers[i]);
             if (plan.PrefixReuse)
-                buffers[6] = _prefixHashTable = Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, NeowPrefixHashCache.MaximumTableWords * 4));
+                buffers[6] = _prefixHashTable = Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, NeowPrefixHashCache.TableWordsFor(_prefixCapacity) * 4));
             string source = plan.ShaderSource();
+            if (_largeWindow)
+                source = GpuRootWindow.Shader2D(source);
             if (_privateInput)
             {
                 const string address = "input_ids.v[i]";
@@ -64,15 +78,15 @@ internal sealed class TransformationAggregateGpuExecutor : IDisposable
             for(int slot=0;slot<_groupingK;slot++)
             {
                 buffers[0]=_batch[slot]=Data(new uint[8]);
-                buffers[3]=_input[slot]=privateInput?.Buffer ?? (_privateOutput && slot>0 ? _input[0] : Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, Capacity*4)));
+                buffers[3]=_input[slot]=privateInput?.Buffer ?? (_privateOutput && slot>0 ? _input[0] : Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, inputBytes)));
                 buffers[4]=_header[slot]=_privateOutput && slot>0 ? _header[0] : Data(Header());
                 buffers[5]=_output[slot]=privateOutput?.Buffer ?? Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, Capacity*4));
                 _uniforms[slot]=Add(FamilyGpuComputeUtility.CreateUniformSet(rd, shader, buffers, "T.TransformationAggregate"));
             }
             WorkspaceBytes = _groupingK*32L + (_privateOutput ? 32 : _groupingK*32L) +
-                (privateInput is not null ? 0 : Capacity*4L*(_privateOutput ? 1 : _groupingK)) +
+                (privateInput is not null ? 0 : (long)inputBytes*(_privateOutput ? 1 : _groupingK)) +
                 (privateOutput is not null ? 0 : Capacity*4L*_groupingK) + plan.Buffers.Sum(b => Math.Max(4, b.Length*4L)) +
-                (plan.PrefixReuse ? NeowPrefixHashCache.MaximumTableWords * 4L : 0);
+                (plan.PrefixReuse ? NeowPrefixHashCache.TableWordsFor(_prefixCapacity) * 4L : 0);
             Device = rd.GetDeviceName(); SetupMs = watch.Elapsed.TotalMilliseconds;
         }
         catch (Exception failure)
@@ -90,13 +104,13 @@ internal sealed class TransformationAggregateGpuExecutor : IDisposable
     }
     internal FamilyCandidateSet ExecutePrivate(SearchBatch batch, int count, CancellationToken token, out TransformationAggregateGpuMetrics metrics)
     {
-        if (!_privateInput || _privateOutput || count < 0 || count > batch.BatchCandidateCount || batch.BatchCandidateCount > PrivateOrdinalBuffer.Capacity)
+        if (!_privateInput || _privateOutput || count < 0 || count > batch.BatchCandidateCount || batch.BatchCandidateCount > GpuRootWindow.Maximum)
             throw new InvalidDataException("T.PrivateTerminalBounds");
         return ExecuteCore(FamilyCandidateSet.Dense(batch), count, token, out metrics)!;
     }
     internal int ExecutePrivateStage(SearchBatch batch, int count, CancellationToken token, out TransformationAggregateGpuMetrics metrics)
     {
-        if (!_privateOutput || (!_privateInput && count != batch.BatchCandidateCount) || count < 0 || count > batch.BatchCandidateCount || batch.BatchCandidateCount > PrivateOrdinalBuffer.Capacity)
+        if (!_privateOutput || (!_privateInput && count != batch.BatchCandidateCount) || count < 0 || count > batch.BatchCandidateCount || batch.BatchCandidateCount > GpuRootWindow.Maximum)
             throw new InvalidDataException("T.PrivateStageBounds");
         ExecuteCore(FamilyCandidateSet.Dense(batch), count, token, out metrics);
         return metrics.Output;
@@ -109,11 +123,11 @@ internal sealed class TransformationAggregateGpuExecutor : IDisposable
         // batch.v[6] offset. It is immutable until all these submissions drain.
         // The fixed-pool body indexes this table by the actual batch-local ordinal,
         // including sparse and resident inputs. Oversized batches use the full codec.
-        bool ancientPrefix = _ancientFixedPool && input.Batch.BatchCandidateCount <= NeowPrefixHashCache.MaxCandidateCount;
+        bool ancientPrefix = _ancientFixedPool && input.Batch.BatchCandidateCount <= _prefixCapacity;
         bool usesPrefix = _ancientFixedPool ? ancientPrefix : input.IsDense && !_privateInput;
         if (_prefixHashTable.IsValid && usesPrefix && inputCount > 0)
             FamilyGpuComputeUtility.Update(_rd, _prefixHashTable,
-                NeowPrefixHashCache.BuildTable(input.Batch.BatchBase, input.Batch.BatchCandidateCount), "T.PrefixHash");
+                NeowPrefixHashCache.BuildTable(input.Batch.BatchBase, input.Batch.BatchCandidateCount, _prefixCapacity), "T.PrefixHash");
         double submitSync = 0, widen = 0;
         int privateCount = 0;
         if (_privateOutput) FamilyGpuComputeUtility.Update(_rd, _header[0], Header(), "T.PrivateHeader");
@@ -127,7 +141,7 @@ internal sealed class TransformationAggregateGpuExecutor : IDisposable
                 int windowOffset=offset+slot*Capacity,count=Math.Min(Capacity,inputCount-windowOffset);
                 FamilyGpuComputeUtility.Update(_rd, _batch[slot], [(uint)input.Batch.BatchBase,(uint)(input.Batch.BatchBase>>32),
                     (uint)input.Batch.BatchCandidateCount,(uint)count,input.IsDense && !_privateInput?0u:1u,
-                    (uint)(_privateOutput ? PrivateOrdinalBuffer.Capacity : Capacity),(uint)windowOffset,ancientPrefix ? 1u : 0u], "T.TransformationAggregate.Batch");
+                    (uint)_outputCapacity,(uint)windowOffset,ancientPrefix ? 1u : 0u], "T.TransformationAggregate.Batch");
                 if (!_privateOutput) FamilyGpuComputeUtility.Update(_rd, _header[slot], Header(), "T.TransformationAggregate.Header");
                 if(!input.IsDense && !_privateInput)
                     FamilyGpuComputeUtility.UpdateBytes(_rd,_input[slot],FamilyGpuComputeUtility.PackAbi1UInt32(input,windowOffset,count),"T.TransformationAggregate.Input");
@@ -150,7 +164,9 @@ internal sealed class TransformationAggregateGpuExecutor : IDisposable
                     if(slot>0)_rd.ComputeListAddBarrier(list);
                     _rd.ComputeListBindUniformSet(list, _uniforms[slot], 0);
                     int count=Math.Min(Capacity,inputCount-offset-slot*Capacity),groupRoots=64*_seedsPerInvocation;
-                    _rd.ComputeListDispatch(list, (uint)((count + groupRoots - 1) / groupRoots), 1, 1);
+                    uint grid = (uint)((count + groupRoots - 1) / groupRoots);
+                    if (_largeWindow) GpuRootWindow.Dispatch(_rd, list, grid);
+                    else _rd.ComputeListDispatch(list, grid, 1, 1);
                     dispatches++;
                 }
             }

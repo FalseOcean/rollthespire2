@@ -101,7 +101,8 @@ internal static class OperationSurfaceHoverCapture
         // Relic obtains can additionally open rewards or change other rewards.
         bool courier = inventory.Player.Relics.Any(r => !r.IsMelted && r.Id.Entry == "THE_COURIER");
         if (!courier && model.Id.Entry != "THE_COURIER" &&
-            (model is not RelicModel acquiredRelic || !MayDisplayRelicObtain(acquiredRelic))) return false;
+            (model is not RelicModel acquiredRelic || !SurfaceOperationForecast.MayShowShopObtain(model.Id.Entry) ||
+                !MayDisplayRelicObtain(acquiredRelic))) return false;
         run = actual; entryId = PredictorLiveRunCapture.Id(entry); source = PredictorLiveRunCapture.Key(model);
         return true;
     }

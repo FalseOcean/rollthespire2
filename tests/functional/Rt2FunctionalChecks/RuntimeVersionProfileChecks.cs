@@ -234,6 +234,11 @@ internal static class RuntimeVersionProfileChecks
         check(ReferenceEquals(modern, RuntimeProfilePolicies.EffectCatalogRules(RuntimeProfileId.Beta110)),
             "Audited compatible pool mechanisms share rules without sharing game-version evidence");
         var future = RuntimeVersionCompatibility.Resolve("0.112.0");
+        var later = RuntimeVersionCompatibility.Resolve("0.115.1");
+        check(RuntimeProfilePolicies.SupportsPredictorSeedInitialization(later) &&
+              RuntimeProfilePolicies.UsesInheritedDrawingRules(later) &&
+              later.GameVersionIdentity.ExactVersion == "0.115.1",
+            "A later ordinary build can draw with 0.114 rules and retains its detected version");
         check(ReferenceEquals(modern, RuntimeProfilePolicies.EffectCatalogRules(future.ProfileId)) &&
               future.IsProvisional && !RuntimeProfilePolicies.SupportsPredictorSeedInitialization(future),
             "Shared future mechanism selection preserves uncertainty and the full-seed support boundary");

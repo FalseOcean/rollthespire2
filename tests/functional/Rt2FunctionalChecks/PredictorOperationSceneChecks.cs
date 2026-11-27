@@ -71,6 +71,51 @@ internal static class PredictorOperationSceneChecks
             "Courier hover repeated the public purchased card or changed captured state");
 
         var astrolabe = entry with { Kind = PredictorShopEntryKind.Relic, Key = Relic("ASTROLABE"), Card = null, OperationRefill = null };
+        foreach (string item in new[] { "DOLLYS_MIRROR", "GNARLED_HAMMER", "KIFUDA", "PUNCH_DAGGER", "ROYAL_STAMP" })
+        {
+            var shop = snapshot with { Scene = new PredictorOperationShopScene([astrolabe with { Key = Relic(item) }], true) };
+            if (item == "GNARLED_HAMMER")
+            {
+                var stream = context.UsesNonCombatGeneration ? PredictorStream.Shops : PredictorStream.Rewards;
+                var rng = state.Streams.Single(value => value.Stream == stream).Restore();
+                for (int i = 0; rng.Clone().NextFloat() >= .5f; i++)
+                {
+                    Check(i < 64, "Controlled common shop restock unavailable");
+                    rng.NextFloat();
+                }
+                shop = shop with { State = state.WithRng(stream, rng) with { PersonalBag = new(false,
+                    [new(Relic("WHETSTONE"), "Common")], [new("Common", [Relic("WHETSTONE")])], []) } };
+            }
+            var noCourier = shop with { State = state with { Relics = [state.Relics[0] with { Melted = true }] } };
+            var quiet = SurfaceOperationForecast.BuildShop(noCourier, entry.Id);
+            Check(quiet.Branches.IsEmpty && quiet.Notices.IsEmpty && quiet.Evaluations.IsEmpty,
+                item + " plus a melted Courier has no hidden purchase result");
+
+            var purchase = new BuyShopEntry(entry.Id, 0);
+            var opened = PredictorOperation.Preview(shop, purchase);
+            ImmutableArray<PredictorInput> steps = [purchase];
+            if (opened.Waiting.Phase != PredictorPhase.Shop)
+                steps = steps.Add(new ChooseObtainDeckCards(
+                    [.. opened.Waiting.Selection.CandidateCardIds.TakeLast(opened.Waiting.Selection.MaximumCardCount)]));
+            var actual = PredictorOperation.Preview(shop, steps);
+            var offer = actual.ShopOffers.Single();
+            var forecast = SurfaceOperationForecast.BuildShop(shop, entry.Id);
+            var restocked = forecast.Branches.SelectMany(branch => branch.Sections).Single(s => s.Source == Relic("THE_COURIER")).Rows.Single();
+            Check(actual.Disposition == PredictorInputResult.Accepted && actual.Waiting.Phase == PredictorPhase.Shop &&
+                forecast.Faults.IsEmpty && forecast.PendingReasons.IsEmpty && forecast.Source == Relic("THE_COURIER") &&
+                forecast.Branches.SelectMany(branch => branch.Sections).All(section => section.Source != Relic(item)) &&
+                restocked.Models.SequenceEqual([offer.Key!.Value]) && restocked.Price == offer.Cost,
+                item + " shows the same priced replacement after the buyer chooses legal targets");
+            if (item == "GNARLED_HAMMER")
+            {
+                var second = PredictorOperation.Preview(shop, steps.Add(new BuyShopEntry(entry.Id, 1)));
+                var upgrades = second.RandomUpgrades.Single(upgrade => upgrade.Source == Relic("WHETSTONE")).After;
+                var predicted = forecast.Branches.Single().Sections.Single(section => section.Source == Relic("WHETSTONE"));
+                Check(offer.Key == Relic("WHETSTONE") && second.Disposition == PredictorInputResult.Accepted &&
+                    !upgrades.IsEmpty && upgrades.All(predicted.Rows.Single().Cards.Contains),
+                    "buying restocked Whetstone after enchanting several cards agrees with its conditional preview");
+            }
+        }
         var pending = SurfaceOperationPreview.BuildShop(snapshot with { Scene = new PredictorOperationShopScene([astrolabe], true) }, entry.Id);
         Check(pending.PendingReasons.Any(p => p.StartsWith("CourierRestockAwaitingPlayerChoice:", StringComparison.Ordinal)) &&
             !pending.Branches.SelectMany(b => b.Sections).Any(s => s.Source == Relic("THE_COURIER")),

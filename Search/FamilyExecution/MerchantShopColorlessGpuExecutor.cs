@@ -95,11 +95,13 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
     private readonly uint _planTag;
     private readonly string _performanceSuffix;
     private readonly int _ownerThreadId;
-    private readonly byte[] _metadataBytes = new byte[6 * sizeof(uint)];
+    private readonly byte[] _metadataBytes = new byte[7 * sizeof(uint)];
     private readonly byte[] _headerResetBytes;
     private bool _disposed;
     private PrivateOrdinalBuffer? _privateInput, _privateOutput;
-    private int OutputCapacity => _privateInput is not null || _privateOutput is not null ? Capacity : SurvivorCapacity;
+    private readonly int _rootCapacity = GpuRootStorageBudget.Current?.RootCapacity ?? Capacity;
+    private int _outputCapacity;
+    private int OutputCapacity => _outputCapacity;
 
     private MerchantShopColorlessGpuExecutor(
         RenderingDevice rd,
@@ -285,15 +287,18 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
                     ? FamilyPhysicalImplementationRevisions.MerchantShopColorlessStableOrderedCompaction
                     : FamilyPhysicalImplementationRevisions.MerchantShopColorlessAtomicAppendHostSort) + performanceSuffix);
 
-            Rid batchMeta = Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, 6 * sizeof(uint)));
+            Rid batchMeta = Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, 7 * sizeof(uint)));
             Rid inputOrdinals = privateInput?.Buffer ?? Add(FamilyGpuComputeUtility.AllocateStorageBuffer(
-                rd, CompactInputCapacity * 2 * sizeof(uint)));
+                rd, privateOutput is null ? CompactInputCapacity * 2 * sizeof(uint) : sizeof(uint)));
             Rid planBuffer = Add(FamilyGpuComputeUtility.CreateStorageBuffer(rd, FamilyGpuComputeUtility.ToBytes(plan)));
             Rid targetBuffer = Add(FamilyGpuComputeUtility.CreateStorageBuffer(rd, FamilyGpuComputeUtility.ToBytesNonEmpty(targets)));
             Rid outputHeader = Add(FamilyGpuComputeUtility.CreateStorageBuffer(rd,
                 FamilyGpuComputeUtility.ToBytes(CreateHeader(planTag))));
+            bool large = GpuRootStorageBudget.Current is not null;
+            int publicOutputCapacity = privateInput is null ? (large ? Capacity : SurvivorCapacity) :
+                (large ? SurvivorCapacity : Capacity);
             Rid outputOrdinals = privateOutput?.Buffer ?? Add(FamilyGpuComputeUtility.AllocateStorageBuffer(
-                rd, (privateInput is null ? SurvivorCapacity : Capacity) * 2 * sizeof(uint)));
+                rd, publicOutputCapacity * 2 * sizeof(uint)));
 
             string source = FamilyGpuComputeUtility.LoadFamilyShaderWithVisibleSeedRootHash(ShaderSuffix);
             source = ConfigureEarlyRejection(source, request.EarlyRejection);
@@ -303,7 +308,8 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
             {
                 const string read = "make_u64(compact_input.values[input_index * 2u], compact_input.values[input_index * 2u + 1u])";
                 if (!source.Contains(read, StringComparison.Ordinal)) throw new InvalidOperationException("S.PrivateInputSeamChanged");
-                source = source.Replace(read, "uint64_t(compact_input.values[input_index])", StringComparison.Ordinal)
+                string address = large ? "input_index + batch_meta.values[6u]" : "input_index";
+                source = source.Replace(read, $"uint64_t(compact_input.values[{address}])", StringComparison.Ordinal)
                     .Replace("if (logical_ordinal >= uint64_t(batch_meta.values[2u])) return;",
                         "if (logical_ordinal >= uint64_t(batch_meta.values[2u])) { atomicExchange(output_header.values[3u],2u); return; }", StringComparison.Ordinal);
             }
@@ -314,6 +320,9 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
                 if (!source.Contains(low, StringComparison.Ordinal) || !source.Contains(high, StringComparison.Ordinal)) throw new InvalidOperationException("S.PrivateOutputSeamChanged");
                 source = source.Replace(low, "compact_output.values[slot] = uint(logical_ordinal);", StringComparison.Ordinal).Replace(high, "", StringComparison.Ordinal);
             }
+            // Stable public passes operate on bounded 1-D slices; only a resident
+            // atomic append can dispatch the entire large root in one command.
+            if (large && privateOutput is not null) source = GpuRootWindow.Shader2D(source);
             Rid shader = Add(FamilyGpuComputeUtility.CompileShader(rd, source, "MerchantShopColorlessFamilyS"));
             Rid pipeline = Add(FamilyGpuComputeUtility.CreateComputePipeline(rd, shader, "S.MerchantShopColorless"));
             if (!rd.ComputePipelineIsValid(pipeline))
@@ -367,6 +376,7 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
                 stableScatterPipeline, stableScatterUniformSet, stableKeepMasks, stableBlockCounts,
                 stableBlockOffsets, planTag, Thread.CurrentThread.ManagedThreadId,
                 timer.Elapsed.TotalMilliseconds, rd.GetDeviceName()?.Trim() ?? "unknown", performanceSuffix);
+            result._outputCapacity = privateOutput?.ElementCapacity ?? publicOutputCapacity;
             result._privateInput = privateInput; result._privateOutput = privateOutput;
             result._owned.AddRange(owned);
             owned.Clear();
@@ -385,7 +395,8 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
         if (_privateInput is not null || _privateOutput is not null) throw new InvalidOperationException("S.PrivateEntryRequired");
         // Public output has the same bounded capacity as compact upload. Dense
         // inputs also need windows: legal small/modded pools can pass every root.
-        if (input.Count > SurvivorCapacity && input.Count <= Capacity)
+        if (input.Count > _rootCapacity) throw new InvalidOperationException("SFamilyGpuInputExceedsPhysicalBatch");
+        if (input.Count > (input.IsDense ? OutputCapacity : Math.Min(CompactInputCapacity, OutputCapacity)))
             return ExecutePublicWindows(input, token, out metrics);
         return ExecuteCore(input, input.Count, token, out metrics)!;
     }
@@ -393,6 +404,8 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
     {
         if (_privateInput is null || _privateOutput is not null) throw new InvalidOperationException("S.PrivateTerminalPortsRequired");
         _privateInput.CheckPopulation(batch, count);
+        if (count > OutputCapacity)
+            return ExecutePrivateInputWindows(batch, count, token, out metrics);
         return ExecuteCore(FamilyCandidateSet.Dense(batch), count, token, out metrics)!;
     }
     internal int ExecutePrivateStage(SearchBatch batch, int count, CancellationToken token, out MerchantShopColorlessGpuBatchMetrics metrics)
@@ -402,7 +415,7 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
         ExecuteCore(FamilyCandidateSet.Dense(batch), count, token, out metrics);
         return metrics.Survivors;
     }
-    private FamilyCandidateSet? ExecuteCore(FamilyCandidateSet input, int inputCount, CancellationToken cancellationToken, out MerchantShopColorlessGpuBatchMetrics metrics)
+    private FamilyCandidateSet? ExecuteCore(FamilyCandidateSet input, int inputCount, CancellationToken cancellationToken, out MerchantShopColorlessGpuBatchMetrics metrics, int privateInputOffset = 0)
     {
         AssertOwnerThread();
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -412,7 +425,7 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
             metrics = new MerchantShopColorlessGpuBatchMetrics();
             return FamilyCandidateSet.FromSortedAbi1(input.Batch, Array.Empty<ulong>());
         }
-        if (inputCount > Capacity)
+        if (inputCount > _rootCapacity)
             throw new InvalidOperationException("SFamilyGpuInputExceedsPhysicalBatch");
         if (!input.IsDense && inputCount > CompactInputCapacity)
             throw new InvalidOperationException("SFamilyCompactInputExceedsTransferCapacity");
@@ -425,6 +438,7 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
         meta[0] = unchecked((uint)input.Batch.BatchBase); meta[1] = unchecked((uint)(input.Batch.BatchBase >> 32));
         meta[2] = checked((uint)input.Batch.BatchCandidateCount); meta[3] = checked((uint)inputCount);
         meta[4] = input.IsDense && _privateInput is null ? 0u : 1u; meta[5] = (uint)OutputCapacity;
+        meta[6] = (uint)privateInputOffset;
         FamilyGpuComputeUtility.UpdateBytes(_rd, _batchMeta, _metadataBytes, "SFamilyBatchMeta");
         FamilyGpuComputeUtility.UpdateBytes(_rd, _outputHeader, _headerResetBytes, "SFamilyOutputHeader");
         if (!input.IsDense && _privateInput is null)
@@ -445,7 +459,8 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
         _rd.ComputeListBindUniformSet(list, _uniformSet, 0);
         int candidatesPerGroup = WorkgroupSize * SeedsPerInvocation;
         uint groups = checked((uint)((inputCount + candidatesPerGroup - 1) / candidatesPerGroup));
-        _rd.ComputeListDispatch(list, groups, 1u, 1u);
+        if (_privateOutput is not null && _rootCapacity > Capacity) GpuRootWindow.Dispatch(_rd, list, groups);
+        else _rd.ComputeListDispatch(list, groups, 1u, 1u);
         _rd.ComputeListEnd();
         timer.Stop();
         double commandMs = timer.Elapsed.TotalMilliseconds;
@@ -531,7 +546,7 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
         Span<uint> meta = FamilyGpuComputeUtility.UInt32Span(_metadataBytes);
         meta[0] = unchecked((uint)input.Batch.BatchBase); meta[1] = unchecked((uint)(input.Batch.BatchBase >> 32));
         meta[2] = checked((uint)input.Batch.BatchCandidateCount); meta[3] = checked((uint)input.Count);
-        meta[4] = 0u; meta[5] = SurvivorCapacity;
+        meta[4] = 0u; meta[5] = (uint)OutputCapacity;
         FamilyGpuComputeUtility.UpdateBytes(_rd, _batchMeta, _metadataBytes, "SFamilyStableBatchMeta");
         FamilyGpuComputeUtility.UpdateBytes(_rd, _outputHeader, _headerResetBytes, "SFamilyStableOutputHeader");
         timer.Stop();
@@ -576,7 +591,7 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
         {
             offsets[index] = checked((uint)total);
             total += counts[index];
-            if (total > SurvivorCapacity)
+            if (total > checked((ulong)OutputCapacity))
                 throw new InvalidDataException("SFamilyStablePrefixExceedsSurvivorCapacity");
         }
         if (total != checked((uint)survivorCount))

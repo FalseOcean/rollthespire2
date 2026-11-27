@@ -1,0 +1,13 @@
+<Project Sdk="Godot.NET.Sdk/4.5.1">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="RolltheSpire2" HintPath="$(ProductDll)" Private="true"/>
+    <Reference Include="sts2" HintPath="$(GameDlls)/sts2.dll" Private="true"/>
+    <Reference Include="0Harmony" HintPath="$(GameDlls)/0Harmony.dll" Private="true"/>
+  </ItemGroup>
+</Project>

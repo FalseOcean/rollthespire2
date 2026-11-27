@@ -344,6 +344,21 @@ internal static class PredictorRouteKnowledgeChecks
         Check(denied.Nodes.Length == 3 && !denied.PendingCauses.Any(c => c.Code == "PendingPotionChoice") &&
             denied.Nodes[0].Inventory!.PotionSlots.All(p => p.Value == null),
             "Sozu blocks default procurement without inventing occupied slots or stopping independent route projection");
+        var blockedBottle = denied.Nodes[0].Rewards.Single(reward => reward.Kind == PredictorRewardKind.Potion && reward.IsKnown);
+        var siblingCard = denied.Nodes[0].Rewards.Single(reward => reward.Kind == PredictorRewardKind.Card && reward.OfferBinding != null);
+        var takeBoth = new PredictorPlannedNode(denied.Nodes[0].Position.NodeId)
+        {
+            RewardChoices = [new(blockedBottle.Value!, blockedBottle.Occurrence),
+                new(siblingCard.OfferBinding!.Value, siblingCard.Occurrence, CardIndex: 0)
+                { UnresolvedEnchantmentIndices = siblingCard.OfferBinding.UnresolvedEnchantmentIndices }]
+        };
+        var deniedThenCard = Pure(sozu, [takeBoth], 3, PredictorRoutePreviewPolicy.LiveMapDefaults);
+        var continued = deniedThenCard.Nodes[0];
+        Check(continued.Advanced && deniedThenCard.Nodes.Length == 3 && continued.Inventory!.PotionSlots.All(slot => slot.Value == null) &&
+            continued.Rewards.Any(reward => reward.Value is { Kind: PredictorRewardKind.Potion, PotionReceiptDenied: true } &&
+                reward.AppliedChoice is { Skip: false }) && continued.Rewards.Any(reward => reward.Kind == PredictorRewardKind.Card &&
+                reward.AppliedChoice is { CardIndex: 0, Skip: false }),
+            "A real Sozu rejection closes the authored potion receipt without granting a bottle or interrupting the following card choice");
         var sourceUnknown = PredictorRouteCauseEvidence.CreateExplicit("PotionInventoryUnknown", "capture:potions",
             PredictorCombatDomain.PotionInventory, PredictorPendingReasonKind.MissingObservation,
             "Captured capacity is known, but its occupied slots have not been observed.", ["potions.orderedSlots"]);
@@ -656,7 +671,9 @@ internal static class PredictorRouteKnowledgeChecks
         var missing = run.PreviewRouteContinuation([], maximumNodes: 1, scope: PredictorRoutePreviewScope.AllModeledNodes);
         Check(missing.Nodes.IsEmpty && missing.PendingCauses.Any(c => c.Code == "NextActRouteRequired"),
             "An absent next-act route is a local authoring remainder, not a failed execution or invented route");
-        var nextMap = run.RouteMap(2);
+        var redrawMap = missing.TerminalBoundary?.RedrawMap;
+        Check(redrawMap is { Act: 2, Visited.IsEmpty: true }, "Next-act redraw has the determined map and a fresh visit prefix");
+        var nextMap = redrawMap!.Map;
         var point = nextMap.Points.Single(p => p.Position.Row == 0);
         var path = ImmutableArray.CreateBuilder<MapPosition>();
         while (true)
@@ -665,6 +682,10 @@ internal static class PredictorRouteKnowledgeChecks
             if (point.Children.Count == 0) break;
             point = nextMap.Points.Single(p => p.Position == point.Children[0]);
         }
+        var redrawn = new PredictorPlannedNode(state.Position.NodeId) { RedrawnRoute = new(2, path.ToImmutable()) };
+        var resumed = run.PreviewRouteContinuation([redrawn], maximumNodes: 1, scope: PredictorRoutePreviewScope.AllModeledNodes);
+        Check(resumed.Nodes is [{ Room: PredictorRoomKind.Ancient }] && run.Routes.IsEmpty,
+            "A replacement path bound at departure reaches the next Ancient without changing the original path");
         run.SetRoute(2, path.ToImmutable());
         var before = JsonSerializer.Serialize(run.Working);
         var preview = run.PreviewRouteContinuation([], maximumNodes: 1, scope: PredictorRoutePreviewScope.AllModeledNodes);

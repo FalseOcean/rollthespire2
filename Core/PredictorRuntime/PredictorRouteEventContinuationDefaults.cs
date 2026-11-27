@@ -17,18 +17,21 @@ internal sealed partial class PredictorRun
     }
 
     private static bool TryContinueRouteEventDeckAction(PredictorRun run, PredictorEventOption option,
-        ImmutableArray<PredictorCombatPendingCause> readCauses, List<RouteDependency> dependencies, CancellationToken token)
+        ImmutableArray<PredictorCombatPendingCause> readCauses, List<RouteDependency> dependencies,
+        HashSet<long> knownInstanceIds, List<PredictorCombatPendingCause> local, CancellationToken token)
     {
         if (run._preview.Settings.Policy != PredictorRoutePreviewPolicy.LiveMapDefaults || run._preview.Partial == null ||
             run._eventKey is not { } key || readCauses.IsEmpty)
             return false;
+        if ((key.Entry, option.Key) == ("REFLECTIONS", "SHATTER"))
+            return ContinueDrawingReflectionsShatter(run, readCauses, dependencies, token);
         bool terminalLocalUpgrade = (key.Entry, option.Key) is ("DOORS_OF_LIGHT_AND_DARK", "LIGHT") or
             ("REFLECTIONS", "TOUCH_A_MIRROR") or ("WELCOME_TO_WONGOS", "LEAVE") or
             ("ENDLESS_CONVEYOR", "OBSERVE_CHEF");
-        // A parent may also affect Health/Gold without this terminal local
-        // upgrade reading those fields. Keep that original parent intact;
-        // selectors with real fixed costs/hooks retain the broader guard.
-        if (!terminalLocalUpgrade && readCauses.Any(c => (c.AffectedDomains & ~PredictorCombatDomain.Deck) != 0))
+        // A missing picker target can share a cause with unrelated fields.
+        // Recheck the operation's own other readers before deferring it.
+        if (!terminalLocalUpgrade && !RouteEventActionReadCauses(run, option, dependencies, knownInstanceIds,
+            includePickerTargets: false).IsEmpty)
             return false;
         if (RouteEventPicker(run, key.Entry, option.Key) is { } picker &&
             PendingRouteEventCardsEffect(run, out _, key.Entry, option.Key,
@@ -55,11 +58,18 @@ internal sealed partial class PredictorRun
             {
                 var pending = new List<PredictorCombatPendingCause> { cause };
                 if (!ContinuePendingRouteEvent(run, dependencies, pending, token))
-                    throw new InvalidOperationException("PredictorConditionalEventLeafNotCompleted");
+                    local.AddRange(pending);
                 return true;
             }
             if (run.Phase != PredictorPhase.Complete)
-                throw new InvalidOperationException("PredictorConditionalEventLeafChangedStructure");
+            {
+                local.Add(PredictorRouteCauseEvidence.CreateExplicit("EventConditionalActionContinuationPending",
+                    before.Position.NodeId, PredictorCombatDomain.Continuation, PredictorPendingReasonKind.ImplementationGap,
+                    "The chosen operation reached another event stage. This partial target projection preserves that stage and its inputs.",
+                    ["event.option." + option.Key + "." + run.Phase], readCauses,
+                    occurrenceKey: key.Serialized + ":" + option.Key));
+                return true;
+            }
             // A zero-candidate native branch may finish before opening a picker.
             // Its fixed tail already ran. Retain the possible card edit from
             // other incoming alternatives, without repeating that tail.
@@ -103,6 +113,55 @@ internal sealed partial class PredictorRun
         run.Accept(new("EventOption:" + option.Key, 0, [], null, null));
         run.FinishEvent();
         return true;
+    }
+
+    private static bool ContinueDrawingReflectionsShatter(PredictorRun run,
+        ImmutableArray<PredictorCombatPendingCause> parents, List<RouteDependency> dependencies, CancellationToken token)
+    {
+        var before = run.Working;
+        var partial = run._preview.Partial!;
+        var sourceChanges = dependencies.Where(d => (d.Cause.AffectedDomains & PredictorCombatDomain.Deck) != 0).ToArray();
+        var cards = sourceChanges.Any(d => d.ChangedCardMembershipEntries.IsDefault && d.PossibleCards.IsDefaultOrEmpty)
+            ? run.Context.Catalog!.CardDefinitions.Select(d => d.Prototype)
+            : before.Deck.Select(before.Card).Concat(sourceChanges.SelectMany(d => d.PossibleCards.IsDefault ? [] : d.PossibleCards));
+        var possible = cards.Append(PredictorCardChanges.Definition(run.Context, new("CARD", "BAD_LUCK")).Prototype)
+            .Distinct().ToImmutableArray();
+
+        bool MayHold(string entry) => PredictorSettlementEffects.Has(before, entry) ||
+            !RouteRelicMembershipCauses(run, dependencies, entry).IsEmpty;
+        var changedRelicState = new[] { "BOOK_OF_FIVE_RINGS", "BING_BONG" }.Where(MayHold).ToImmutableArray();
+        var domains = PredictorCombatDomain.Deck | PredictorCombatDomain.InstanceIds;
+        if (MayHold("LUCKY_FYSH")) domains |= PredictorCombatDomain.Gold;
+        if (MayHold("BOOK_OF_FIVE_RINGS") || MayHold("DARKSTONE_PERIAPT")) domains |= PredictorCombatDomain.Health;
+        if (!changedRelicState.IsEmpty) domains |= PredictorCombatDomain.Relics;
+        if (run.Context.HasRunModifier("HOARDER")) domains |= PredictorCombatDomain.CardRewardHookState;
+
+        var cause = PredictorRouteCauseEvidence.CreateExplicit("ReflectionsCopiesPending", before.Position.NodeId, domains,
+            PredictorPendingReasonKind.DerivedDependency,
+            "Shatter copies the carried deck and adds Bad Luck. The copied cards, receipt IDs and any applicable pickup effects depend on the earlier deck choices; the event consumes no public random stream.",
+            ["deck.All.candidates", "event.REFLECTIONS.SHATTER.recipients"], parents, occurrenceKey: "REFLECTIONS:SHATTER");
+        var effect = new PendingRouteEventCardEffect(possible, [], domains, PredictorDeckUncertainFact.Membership,
+            true, true, 0, 0) { ChangedRelicStateEntries = changedRelicState };
+        if (run.Submit(run.Request!, new ChooseEventOption("SHATTER"), token) != PredictorInputResult.Accepted ||
+            run.Phase != PredictorPhase.Complete)
+            throw new InvalidOperationException("PredictorReflectionsShatterContinuationRejected");
+        run._preview.Event.PendingCardEffect = effect;
+        partial.RecordReflectionsCopies(before, run, cause, effect);
+        AddDependency(dependencies, EventCardEffectDependency(cause, effect));
+        return true;
+    }
+
+    private sealed partial class RoutePartialState
+    {
+        internal void RecordReflectionsCopies(PredictorState before, PredictorRun run,
+            PredictorCombatPendingCause cause, PendingRouteEventCardEffect effect)
+        {
+            PendingEventCards(run, cause, effect, before);
+            // The concrete event provides the detached successor. Its appended
+            // cards represent only one uncertain source deck, so importing
+            // them as fixed instances into the knowledge ledger would be wrong.
+            _observed = run.Working;
+        }
     }
 
     private static bool ContinueDefaultFakeMerchant(PredictorRun run, PredictorPlannedEvent? plan,
@@ -367,7 +426,8 @@ internal sealed partial class PredictorRun
         string? fixedAdded = RolltheSpire2.Core.Events.Beta111EventOptionRules.CardProductAfterSelection(key, branch)?.Entry;
         effect = new(cards, existing, domains, facts, removes || transforms || fixedTransform || addsCards, addsCards, damage,
             (key, branch) == ("STONE_OF_ALL_TIME", "PUSH") ? 1 : 0,
-            key == "ZEN_WEAVER" ? run.PendingZenWeaverCost().Amount : 0, fixedAdded)
+            key != "ZEN_WEAVER" ? 0 : sourceBranch == null ? run.PendingZenWeaverCost().Amount :
+                RolltheSpire2.Core.Events.Beta111EventOptionRules.ZenWeaver(sourceBranch).Cost.Amount, fixedAdded)
         { TargetRead = RouteEventDeckRead(key, branch),
             ChangedRelicStateEntries = addsCards ? EventCardReceiptRelicStateEntries(run) : [],
             MayEditExistingCards = removes || transforms || fixedTransform || upgrade || enchant };

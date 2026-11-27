@@ -13,6 +13,32 @@ internal interface IFilterExecution
     ValueTask DisposeAsync(FilterRuntimeServices services);
 }
 
+// A capacity change retires the whole invocation before any replacement can bind.
+internal static class FilterExecutionCleanup
+{
+    internal static async ValueTask DisposeChildrenAsync(FilterRuntimeServices services, string family,
+        IEnumerable<IFilterExecution?> children, params IDisposable?[] deviceResources)
+    {
+        List<Exception>? failures = null;
+        if (deviceResources.Any(resource => resource is not null))
+        {
+            try
+            {
+                await services.ExecuteGpuAsync(_ => { PrivateOrdinalBuffer.DisposeAll(deviceResources); return true; },
+                    CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception failure) { (failures ??= []).Add(failure); }
+        }
+        foreach (var child in children)
+        {
+            if (child is null) continue;
+            try { await child.DisposeAsync(services).ConfigureAwait(false); }
+            catch (Exception failure) { (failures ??= []).Add(failure); }
+        }
+        if (failures is not null) throw new AggregateException(family + ".CleanupFailed", failures);
+    }
+}
+
 internal readonly record struct FilterBatchResult(FamilyCandidateSet Output, double CanonicalMs,
     double DispatchMs = -1, double ReadbackMs = -1, long ReadbackBytes = -1);
 
@@ -34,6 +60,7 @@ internal sealed class GpuFilterExecution<TResource> : IFilterExecution where TRe
     private readonly string _faultCleanupStage;
     private TResource? _resource;
     private bool _parity;
+    private int _resourceCapacity;
     internal GpuFilterExecution(FilterBodyDescription body, Func<RenderingDevice,TResource> create,
         Func<TResource,FamilyCandidateSet,CancellationToken,FilterBatchResult> run, Action<TResource> dispose,
         Func<ulong,bool> reference, IRuntimeProfile profile, Func<TResource,(string Device,double SetupMs)> details,
@@ -46,7 +73,16 @@ internal sealed class GpuFilterExecution<TResource> : IFilterExecution where TRe
         if(input.Count==0)return input;
         try
         {
-            _resource ??= await services.ExecuteGpuAsync(_create,token).ConfigureAwait(false);
+            int capacity = GpuRootWindow.PublicCapacity(Body, input.Count);
+            if (_resource is null || capacity > _resourceCapacity)
+            {
+                _resource = await services.ExecuteGpuAsync(rd => {
+                    if (_resource is { } old) { _resource = null; _dispose(old); }
+                    return GpuRootWindow.BindPublic(Body.FamilyId, capacity, () => _create(rd));
+                },token).ConfigureAwait(false);
+                _resourceCapacity = capacity;
+                _parity = false;
+            }
             _lastResource=_details(_resource);
             if(!_parity)
             {
@@ -63,6 +99,7 @@ internal sealed class GpuFilterExecution<TResource> : IFilterExecution where TRe
                 result.ReadbackMs,result.ReadbackBytes,passedCoverage:services.CoverageFor(Body));
             return result.Output;
         }
+        catch(GpuRootWindowBindingRefused){throw;}
         catch(OperationCanceledException){throw;}
         catch
         {

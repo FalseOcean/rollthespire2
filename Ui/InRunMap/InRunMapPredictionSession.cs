@@ -1,6 +1,8 @@
 using System.Collections.Immutable;
 using System.Text.Json;
 using MegaCrit.Sts2.Core.Runs;
+using MegaCrit.Sts2.Core.Context;
+using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Bootstrap;
 using RolltheSpire2.Core.Prediction.Maps;
 using RolltheSpire2.Core.PredictorRuntime;
@@ -17,6 +19,7 @@ internal sealed partial class InRunMapPredictionSession
         ImmutableArray<MapPosition> Selected, ImmutableArray<MapPosition> ReadyPrefix);
     private sealed record RedrawUndo(string DraftFingerprint, ImmutableDictionary<string, PredictorPlannedNode> Plans);
     private RunState? _native;
+    private ImmutableArray<ModelKey?> _currentPotionSlots;
     private string? _version, _draftFingerprint;
     private ImmutableDictionary<int, DraftSnapshot> _drafts = ImmutableDictionary<int, DraftSnapshot>.Empty;
     private ImmutableDictionary<string, PredictorPlannedNode> _plans = ImmutableDictionary<string, PredictorPlannedNode>.Empty;
@@ -31,6 +34,8 @@ internal sealed partial class InRunMapPredictionSession
     internal ImmutableDictionary<(int ActIndex, MapPosition Point), PredictorRouteTerminalBoundary> TerminalBoundaries { get; private set; }
         = ImmutableDictionary<(int, MapPosition), PredictorRouteTerminalBoundary>.Empty;
     internal bool WaitingForBoundary { get; private set; }
+    internal bool WaitingForRoomChoice { get; private set; }
+    internal bool RoomChoiceInterrupted { get; private set; }
     internal bool IsCurrentNodeReplay => Snapshot?.EntryPoint != null;
     internal long Revision { get; private set; }
     internal (int ActIndex, MapPosition Point)? FaultLocation => Forecast?.Fault is { } fault &&
@@ -62,24 +67,33 @@ internal sealed partial class InRunMapPredictionSession
         bool newRun = _native != null && !ReferenceEquals(_native, native);
         if (newRun) ResetForRun();
         _native = native;
-        var entry = PredictorLiveRunCapture.CurrentNodeEntry(native, version);
-        // Travel availability is not completion: shops enable it immediately,
-        // and combat enables it before pending reward choices are resolved.
-        // Keep the reliable entry premise until actual travel supplies a new one.
-        bool lostEntry = Snapshot?.EntryPoint != null && entry == null;
+        var progress = PredictorLiveRunCapture.RoomProgress(native);
+        var entry = PredictorLiveRunCapture.CurrentNodeEntry(native, version, progress);
+        // An accepted event choice can still be awaiting an actual child picker.
+        // On its final page the completed handler, independent of map animation,
+        // supplies a fresh departure basis with the player's actual outcomes.
+        bool couldCapture = progress == LiveRoomProgress.Settled ||
+            progress == LiveRoomProgress.Unobserved && canLeaveCurrentNode;
+        bool lostEntry = Snapshot != null && (Snapshot.EntryPoint != null && entry == null ||
+            progress is LiveRoomProgress.Resolving or LiveRoomProgress.Interrupted);
         if (lostEntry)
         {
             Snapshot = null; Forecast = null;
             Nodes = ImmutableDictionary<(int, MapPosition), PredictorRouteNodeKnowledge>.Empty;
             TerminalBoundaries = ImmutableDictionary<(int, MapPosition), PredictorRouteTerminalBoundary>.Empty;
         }
-        bool waiting = !canLeaveCurrentNode && entry == null;
-        bool waitingChanged = WaitingForBoundary != waiting;
+        bool waiting = !couldCapture && entry == null;
+        bool waitingForRoom = progress == LiveRoomProgress.Resolving;
+        bool interrupted = progress == LiveRoomProgress.Interrupted;
+        bool waitingChanged = WaitingForBoundary != waiting || WaitingForRoomChoice != waitingForRoom ||
+            RoomChoiceInterrupted != interrupted;
         WaitingForBoundary = waiting;
+        WaitingForRoomChoice = waitingForRoom;
+        RoomChoiceInterrupted = interrupted;
         // An unfinished room never supplies inventory/RNG for a new snapshot.
         // Existing detached state remains a valid basis for hypothetical edits.
-        string? fingerprint = entry?.Fingerprint ?? (canLeaveCurrentNode ? PredictorLiveRunCapture.Fingerprint(native, true) : null);
-        bool changedCapture = entry != null ? !ReferenceEquals(entry, Snapshot) : canLeaveCurrentNode &&
+        string? fingerprint = entry?.Fingerprint ?? (couldCapture ? PredictorLiveRunCapture.Fingerprint(native, true) : null);
+        bool changedCapture = entry != null ? !ReferenceEquals(entry, Snapshot) : couldCapture &&
             (Snapshot == null || Snapshot.Fingerprint != fingerprint || _version != version);
         // Freeze authored selection values; no live native map references are
         // retained in these dictionaries, and no absent rows are filled.
@@ -91,11 +105,19 @@ internal sealed partial class InRunMapPredictionSession
             _version = version;
             _redrawUndo = null;
         }
+        // Only Future of Potions uses the player's present bottles while
+        // the native room-entry snapshot still owns the rest of the drawing.
+        var currentSlots = entry != null && LocalContext.GetMe(native) is { } player
+            ? player.PotionSlots.Select(potion => potion == null ? (ModelKey?)null : PredictorLiveRunCapture.Key(potion)).ToImmutableArray()
+            : default;
+        bool changedSlots = _currentPotionSlots.IsDefault != currentSlots.IsDefault ||
+            !currentSlots.IsDefault && !_currentPotionSlots.SequenceEqual(currentSlots);
+        _currentPotionSlots = currentSlots;
         if (Snapshot != null) nextDrafts = FromSnapshotBoundary(native, nextDrafts);
         string draftFingerprint = JsonSerializer.Serialize(nextDrafts.OrderBy(p => p.Key).Select(p => new
             { ActIndex = p.Key, p.Value.Map, p.Value.Previous, p.Value.Selected, p.Value.ReadyPrefix }));
         bool changedDrafts = draftFingerprint != _draftFingerprint;
-        if (!changedCapture && !changedDrafts && !lostEntry)
+        if (!changedCapture && !changedDrafts && !changedSlots && !lostEntry)
         {
             if (waitingChanged) Revision++;
             return;
@@ -126,6 +148,8 @@ internal sealed partial class InRunMapPredictionSession
         _drafts = ImmutableDictionary<int, DraftSnapshot>.Empty;
         _draftFingerprint = null; _version = null; _redrawUndo = null;
         WaitingForBoundary = false;
+        WaitingForRoomChoice = false;
+        RoomChoiceInterrupted = false;
         Revision++;
     }
 
@@ -273,7 +297,7 @@ internal sealed partial class InRunMapPredictionSession
             run.RestorePlannedNodes(Plans);
             forecast = run.PreviewRouteContinuation(run.PlannedNodes, maximumNodes: maximumNodes,
                 scope: PredictorRoutePreviewScope.AllModeledNodes, policy: PredictorRoutePreviewPolicy.LiveMapDefaults,
-                allowSelectedPrefixes: true, isolateNodeFailures: true);
+                allowSelectedPrefixes: true, isolateNodeFailures: true, currentPotionSlots: _currentPotionSlots);
             // Stopping at the authored current-Act prefix is ordinary route
             // completion, and prevents even a private next-Act entry attempt.
             if (draft.ReadyPrefix.Length <= 64 && forecast.ReachedLimit) forecast = forecast with { ReachedLimit = false };

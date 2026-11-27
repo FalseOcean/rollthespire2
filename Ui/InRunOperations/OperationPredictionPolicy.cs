@@ -12,6 +12,8 @@ internal sealed record OperationDemand(OperationPredictionPreferences Preference
     internal OperationPotionDemand Potion { get; init; } = new();
     internal bool ShowPrimary { get; init; } = true;
     internal bool ChainOnly { get; init; }
+    internal bool HideBonesRelics { get; init; }
+    internal bool HideSharedBonesCurse { get; init; }
     internal bool IncludeChain { get; init; } = true;
     internal bool IncludeTransformEffects { get; init; } = true;
     internal bool IncludeEventContinuation { get; init; } = true;
@@ -23,7 +25,8 @@ internal sealed record OperationDemand(OperationPredictionPreferences Preference
     internal bool SamePolicy(OperationDemand other) => Preferences == other.Preferences &&
         PrimaryFeature == other.PrimaryFeature && MayPredict == other.MayPredict && Surface == other.Surface &&
         RfSignature == other.RfSignature && Potion == other.Potion && ShowPrimary == other.ShowPrimary &&
-        ChainOnly == other.ChainOnly && IncludeChain == other.IncludeChain &&
+        ChainOnly == other.ChainOnly && HideBonesRelics == other.HideBonesRelics &&
+        HideSharedBonesCurse == other.HideSharedBonesCurse && IncludeChain == other.IncludeChain &&
         IncludeTransformEffects == other.IncludeTransformEffects &&
         IncludeEventContinuation == other.IncludeEventContinuation && IncludeEventCombat == other.IncludeEventCombat &&
         TransformSource == other.TransformSource && HasParentChain == other.HasParentChain &&
@@ -33,8 +36,8 @@ internal sealed record OperationDemand(OperationPredictionPreferences Preference
 
 internal static class OperationPredictionPolicy
 {
-    internal static bool Wants(OperationPredictionMode mode, bool rfLoaded, bool supplement) =>
-        mode != OperationPredictionMode.Off && (mode == OperationPredictionMode.On || !rfLoaded || supplement);
+    internal static bool Wants(OperationPredictionMode mode, bool duplicateEnabled, bool supplement) =>
+        mode != OperationPredictionMode.Off && (mode == OperationPredictionMode.On || !duplicateEnabled || supplement);
 
     internal static string SourceFeature(ModelKey source) => source.Category switch
     {
@@ -60,7 +63,9 @@ internal static class OperationPredictionPolicy
             section.FeatureId == null && section.Source != preview.Source &&
             demand.Enabled(SourceFeature(section.Source)) &&
             (!section.Rows.IsEmpty || !section.CardGroups.IsEmpty || section.EmptyReason != null)));
-        bool showPrimary = demand.ShowPrimary && (!demand.ChainOnly || hasChain);
+        bool branchCurse = demand.HideBonesRelics && preview.CurseCandidates.IsEmpty && preview.Branches.Any(branch =>
+            branch.Sections.Any(section => section.Source == preview.Source && section.Rows.Any(row => row.Action == OperationPreviewAction.AddCard)));
+        bool showPrimary = demand.ShowPrimary && (!demand.ChainOnly || hasChain || branchCurse);
         bool Keep(OperationPreviewSection section)
         {
             if (section.FeatureId is { } feature) return demand.VisibleFeatures.Contains(feature);
@@ -69,10 +74,20 @@ internal static class OperationPredictionPolicy
             if (!string.IsNullOrEmpty(own) && !demand.Enabled(own)) return false;
             return true;
         }
+        bool DuplicateBonesRow(OperationPreviewRow row)
+        {
+            if (row.Action == OperationPreviewAction.ObtainRelic)
+                return !row.Models.IsEmpty && row.Models.All(preview.ContainedRelics.Contains);
+            if (!demand.HideSharedBonesCurse || row.Action != OperationPreviewAction.AddCard || row.Cards.IsEmpty)
+                return false;
+            return row.Cards.All(card => preview.CurseCandidates.Any(c => (c with { Id = 0 }) == (card with { Id = 0 })));
+        }
         var branches = preview.Branches.Select(branch =>
         {
             var sections = branch.Sections.Where(Keep).Select(section =>
             {
+                if (demand.HideBonesRelics && section.Source == preview.Source)
+                    section = section with { Rows = section.Rows.Where(row => !DuplicateBonesRow(row)).ToImmutableArray() };
                 if (!demand.TransformSource || demand.IncludeTransformEffects ||
                     demand.HasParentChain && demand.IncludeChain || section.FeatureId != null ||
                     section.Category == OperationPredictionCategory.CardTransform) return section;
@@ -99,8 +114,8 @@ internal static class OperationPredictionPolicy
         return preview with
         {
             Branches = branches,
-            ContainedRelics = showPrimary ? preview.ContainedRelics : [],
-            CurseCandidates = showPrimary ? preview.CurseCandidates : [],
+            ContainedRelics = showPrimary && !demand.HideBonesRelics ? preview.ContainedRelics : [],
+            CurseCandidates = showPrimary && !demand.HideSharedBonesCurse ? preview.CurseCandidates : [],
             Notices = visible ? preview.Notices : preview.Notices.Where(notice =>
                 shopRestock && notice.StartsWith("Purchase:", StringComparison.Ordinal)).ToImmutableArray(),
             PendingReasons = visible ? preview.PendingReasons : preview.PendingReasons.Where(reason =>

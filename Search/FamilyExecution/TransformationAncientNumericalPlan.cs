@@ -41,11 +41,11 @@ internal sealed partial class TransformationAncientNumericalPlan
         if (evaluation.TransformationAggregate is not { UsesAncient: true, UsesNeow: false, UsesEvents: false } condition ||
             authority.ProfileId != RuntimeProfileId.Beta111 || authority.PlayersCount != 1 ||
             authority.VersionResolution.SemanticProfileId != RngSemanticProfileId.Modern113 ||
-            evaluation.NeowRoute is not null)
+            !ScopedTransformationPools.StartsAncientAtInitialCursor(model, evaluation.NeowRoute?.RouteRelicKey))
             return null;
 
-        // With no selected opening the personal stream starts at zero. The query
-        // already carries the draw count shown in the editor.
+        // The opening preserves the initial cursor. Its offer is checked by N
+        // and Exact; the query already carries the planned material count.
         int drawCount = condition.AncientOpportunityCount;
         if (drawCount > TransformationRelicProjector.ProjectionDrawBudget) return null;
         if (drawCount == 0) return Impossible;

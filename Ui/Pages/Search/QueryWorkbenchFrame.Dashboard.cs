@@ -30,28 +30,33 @@ internal sealed partial class QueryWorkbenchFrame
             Size = new(RightRailWidth - ColumnInset * 2, CanvasHeight) };
         sidebar.AddThemeConstantOverride("separation", 14);
         AddChild(sidebar);
-        sidebar.AddChild(_p.Label(_text.Get("layout.settings"), 17, heading: true));
-        var controls = new HBoxContainer { Name = "SearchSettingsFields" }; controls.AddThemeConstantOverride("separation", 12); sidebar.AddChild(controls);
-        VBoxContainer Field(string title)
-        {
-            var column = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
-            column.AddThemeConstantOverride("separation", 6); controls.AddChild(column);
-            column.AddChild(_p.Label(title, 15, true)); return column;
-        }
-        var target = Field(_persistence.Preferences.SkipExactValidation ? _text.Get("workflow.candidate_target") : (_language == "zh" ? "结果数量" : "Results"));
-        _targetCount = new SpinBox { MinValue = 1, MaxValue = 1000, Value = _target,
-            SizeFlagsHorizontal = SizeFlags.ExpandFill, CustomMinimumSize = new(0, 38) };
-        _targetCount.AddThemeFontSizeOverride("font_size", 17);
-        SearchTooltip.Set(_targetCount, _text.Get("workflow.result_target_hint"));
-        SearchTooltip.Set(_targetCount.GetLineEdit(), _text.Get("workflow.result_target_hint"));
-        _targetCount.ValueChanged += v => { _target = (int)v; _analysisKey = ""; }; target.AddChild(_targetCount);
-        var plan = Field(_text.Get("workflow.plan")); plan.SizeFlagsStretchRatio = 1.4f;
-        _planSelector = ContextOptions(0, 0, 144); _planSelector.Reparent(plan, false);
-        _planSelector.SizeFlagsHorizontal = SizeFlags.ExpandFill; _planSelector.CustomMinimumSize = new(0, 38);
-        _planSelector.AddItem(_text.Get("workflow.plan.auto")); _planSelector.AddItem(_text.Get("workflow.plan.cpu"));
-        _planSelector.Select(_persistence.Preferences.SearchMode == "CPU" ? 1 : 0);
-        _planSelector.ItemSelected += index => { _persistence.SetWorkbenchSearchMode(index == 1 ? "CPU" : "Auto"); _analysisKey = ""; };
-        BuildExecutionOrder(sidebar);
+        var settingsEntry = _p.CompactButton(_text.Get("layout.settings"), 38, 17);
+        settingsEntry.Alignment = HorizontalAlignment.Left;
+        settingsEntry.TooltipText = "";
+        var arrow = _p.Label("▾", 16, true);
+        arrow.MouseFilter = MouseFilterEnum.Ignore;
+        arrow.HorizontalAlignment = HorizontalAlignment.Right;
+        arrow.VerticalAlignment = VerticalAlignment.Center;
+        settingsEntry.AddChild(arrow);
+        arrow.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        arrow.OffsetRight = -12;
+        settingsEntry.Name = "OpenSearchSettings";
+        settingsEntry.ToggleMode = true;
+        sidebar.AddChild(settingsEntry);
+        var settingsScroll = new ScrollContainer { Name = "SearchOptionsScroll", Visible = false, FollowFocus = true,
+            HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
+        sidebar.AddChild(settingsScroll);
+        var card = new PanelContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, SizeFlagsVertical = SizeFlags.ShrinkBegin };
+        var style = _p.Box(_p.Surface, _p.Line, 1);
+        style.BorderColor = new Color(style.BorderColor, 0.5f);
+        style.ContentMarginLeft = style.ContentMarginRight = 12;
+        style.ContentMarginTop = style.ContentMarginBottom = 10;
+        card.AddThemeStyleboxOverride("panel", style);
+        settingsScroll.AddChild(card);
+        var settings = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        settings.AddThemeConstantOverride("separation", 10);
+        card.AddChild(settings);
+        var showSettings = BuildRunSettings(settings);
         _start = _p.Button(_text.Get("query.action.start"), primary: true); _start.CustomMinimumSize = new(0, 46);
         _start.Name = "StartSearch";
         // The main action uses a blue surface; gold remains authored-condition ink.
@@ -71,6 +76,25 @@ internal sealed partial class QueryWorkbenchFrame
         var scroll = new ScrollContainer { Name = "SearchInformationScroll", SizeFlagsVertical = SizeFlags.ExpandFill,
             HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
         sidebar.AddChild(scroll);
+        void FitSettings()
+        {
+            if (!settingsScroll.Visible) return;
+            float available = sidebar.Size.Y;
+            foreach (var child in sidebar.GetChildren().OfType<Control>())
+                if (child.Visible && child != settingsScroll)
+                    available -= child.GetCombinedMinimumSize().Y + sidebar.GetThemeConstant("separation");
+            settingsScroll.CustomMinimumSize = new(0, Math.Clamp(card.GetCombinedMinimumSize().Y, 0, Math.Max(0, available)));
+        }
+        card.MinimumSizeChanged += FitSettings;
+        sidebar.Resized += FitSettings;
+        settingsEntry.Toggled += open =>
+        {
+            arrow.Text = open ? "▴" : "▾";
+            settingsScroll.Visible = open;
+            scroll.Visible = !open;
+            if (open) { showSettings(); FitSettings(); }
+        };
+        _sidebarSettingsEntry = settingsEntry;
         var content = new VBoxContainer { Name = "SearchEstimateContent", SizeFlagsHorizontal = SizeFlags.ExpandFill };
         content.AddThemeConstantOverride("separation", 16); scroll.AddChild(content); _estimateContent = content;
         content.AddChild(new RolltheSpire2.Ui.Components.GpuInitializationPanel(_language, () => HasActiveSearch, compact: true));

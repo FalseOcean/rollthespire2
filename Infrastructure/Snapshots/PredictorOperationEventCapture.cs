@@ -126,6 +126,38 @@ internal static class PredictorOperationEventCapture
 
     internal static bool Supports(EventModel ev) => Supported.Contains(ev.Id.Entry);
 
+    internal sealed record FuturePotionHoverOffer(long Identity, PredictorEventOption Option, EffectCardRarity Rarity);
+    internal sealed record ConveyorHoverStage(string Dish, string Last, int Grabs);
+    internal sealed record EventHoverPage(long Choice, string? Branch, ConveyorHoverStage? Conveyor,
+        ImmutableArray<FuturePotionHoverOffer> Offers);
+
+    internal static bool IsRandomTransformEvent(string entry) => entry is
+        "AROMA_OF_CHAOS" or "MORPHIC_GROVE" or "SYMBIOTE" or "WHISPERING_HOLLOW" or "ENDLESS_CONVEYOR" or "TRIAL";
+
+    internal static EventHoverPage? ReadHoverOptions(EventModel ev, IReadOnlyList<EventOption> options, bool selectingCards)
+    {
+        if (!selectingCards)
+        {
+            if (ev.Id.Entry != "THE_FUTURE_OF_POTIONS" || options.Count == 0 || options.Any(option => option.WasChosen || option.IsProceed)) return null;
+            return new(0, null, null, options.Select(option =>
+            {
+                var potion = Captured<PotionModel>(Callback(option)?.Target)
+                    ?? throw new InvalidOperationException("OperationFuturePotionChoiceMissing");
+                return new FuturePotionHoverOffer(Id(option), Option(ev, option), FutureRarity(potion));
+            }).ToImmutableArray());
+        }
+
+        if (!IsRandomTransformEvent(ev.Id.Entry)) return null;
+        var chosen = options.Where(option => option.WasChosen && Read<bool>(option, "<DisableOnChosen>k__BackingField")).ToArray();
+        if (chosen.Length != 1) return null;
+        var branch = Option(ev, chosen[0]).Key;
+        if (!TransformSelectionForecast.IsRandomEventTransform(ev.Id.Entry, branch)) return null;
+        var conveyor = ev.Id.Entry == "ENDLESS_CONVEYOR"
+            ? new ConveyorHoverStage(Read<string>(Read<object>(ev, "_currentDish"), "id"),
+                Read<string>(ev, "_lastDishId"), Read<int>(ev, "_numOfGrabs")) : null;
+        return new(Id(chosen[0]), branch, conveyor, []);
+    }
+
     private static readonly ImmutableHashSet<string> Supported = new[]
     {
         "BRAIN_LEECH", "COLORFUL_PHILOSOPHERS", "INFESTED_AUTOMATON", "ROOM_FULL_OF_CHEESE",
@@ -385,7 +417,11 @@ internal static class PredictorOperationEventCapture
             var offered = ReadNullable(ev, "_newRelics") as IReadOnlyList<RelicModel>;
             if (owned == null || offered == null || index >= owned.Count || index >= offered.Count)
                 throw new InvalidOperationException("OperationRelicTraderOffersMissing");
-            return new(key, !option.IsLocked, RelicId: Id(owned[index]), OfferedRelic: Key(offered[index]));
+            return new(key, !option.IsLocked, RelicId: Id(owned[index]), OfferedRelic: Key(offered[index]))
+            {
+                HasHiddenObtain = OperationSurfaceHoverCapture.MayDisplayRelicObtain(offered[index]) ||
+                    owned[index].GetType().GetMethod(nameof(RelicModel.AfterRemoved))?.DeclaringType != typeof(RelicModel)
+            };
         }
         if (ev.Id.Entry == "TRIAL" && key is "GUILTY" or "INNOCENT")
             key = option.TextKey.Split('.')[2] + "_" + key;

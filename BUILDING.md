@@ -36,6 +36,8 @@ pass `-p:Rt2ModsDir="<absolute staging directory>"`; its DLL goes under `Rollthe
 Build target evidence defaults to `.build-evidence`; `Rt2BuildEvidenceDir` remains an
 override. Historical `.rewrite-build-evidence` artifacts are not relocated.
 
+Before the build copies the DLL to the output and mod directories, it checks each emitted type’s method range. A malformed method list can compile successfully and fail only when the game loads an affected type. This occurred at exactly 65,535 methods when the metadata writer wrapped the first index following the last method. If this check fails, update the SDK metadata writer or adjust the compiled method count and rebuild. Valid larger tables pass the same check.
+
 The two cost-reference JSON files under `Search/FamilyExecution` remain readable
 source. `tools/build/CompressCostReferences.targets` uses the .NET SDK to generate
 GZip payloads under the intermediate output directory and embeds only those

@@ -201,7 +201,7 @@ internal static partial class PredictorLiveRunCapture
                 PredictorCombatDomain.PotionRewards | PredictorCombatDomain.RelicRewards |
                 PredictorCombatDomain.InstanceIds | PredictorCombatDomain.ReturnedCards |
                 PredictorCombatDomain.ExtraCardRewards | PredictorCombatDomain.ExtraGoldRewards |
-                PredictorCombatDomain.RemoveCardRewards) { NodeId = node });
+                PredictorCombatDomain.RemoveCardRewards) { NodeId = node, UnmodeledRelic = key.Category == "RELIC" ? key : null });
         context = context with { Live = new(act, canLeaveCurrentNode,
             PredictorRouteCauseEvidence.Normalize(pending)) { PreviousVisits = previousVisits } };
         var detachedRewards = CardRewardSubscriptions(player).Select(reward => new PredictorReward(Id(reward),
@@ -468,17 +468,8 @@ internal static partial class PredictorLiveRunCapture
         var constraint = ((IRunState)run).CardMultiplayerConstraint;
         IEnumerable<CardModel> Pool(CardPoolModel pool) => pools == null
             ? pool.GetUnlockedCards(unlocks, constraint) : pools.Read(pool);
-        var definitions = catalog.CardDefinitions.Select(d =>
-        {
-            var canonical = ModelDb.GetById<CardModel>(new(d.Prototype.Key.Category, d.Prototype.Key.Entry));
-            var keywords = canonical.GetKeywordsWithSources(KeywordSources.Local);
-            return d with { Prototype = d.Prototype with
-            {
-                SpoilsActIndex = canonical.Id.Entry == "SPOILS_MAP" ? 1 : -1,
-                HasExhaustKeyword = keywords.Contains(CardKeyword.Exhaust), HasEternalKeyword = keywords.Contains(CardKeyword.Eternal),
-                HasInnateKeyword = keywords.Contains(CardKeyword.Innate), HasRetainKeyword = keywords.Contains(CardKeyword.Retain)
-            } };
-        }).ToImmutableArray();
+        var definitions = catalog.CardDefinitions.Select(d => CompleteCardDefinition(d,
+            ModelDb.GetById<CardModel>(new(d.Prototype.Key.Category, d.Prototype.Key.Entry)))).ToImmutableArray();
         var curses = Pool(ModelDb.CardPool<CurseCardPool>()).Where(c => rules.IsGeneratedCurseEligible(c.CanBeGeneratedByModifiers) == true).Select(Key).ToImmutableArray();
         EncounterModel[] extras = [ModelDb.Encounter<DenseVegetationEventEncounter>(), ModelDb.Encounter<PunchOffEventEncounter>(),
             ModelDb.Encounter<MysteriousKnightEventEncounter>(), ModelDb.Encounter<BattlewornDummyEventV1Encounter>(),
@@ -510,5 +501,16 @@ internal static partial class PredictorLiveRunCapture
             DustyTomeCards = Pool(player.Character.CardPool).Where(c => c.Rarity == CardRarity.Ancient &&
                 !ArchaicTooth.TranscendenceCards.Contains(c)).Select(Key).ToImmutableArray()
         };
+    }
+
+    internal static PredictorCardDefinition CompleteCardDefinition(PredictorCardDefinition definition, CardModel canonical)
+    {
+        var keywords = canonical.GetKeywordsWithSources(KeywordSources.Local);
+        return definition with { Prototype = definition.Prototype with
+        {
+            SpoilsActIndex = canonical.Id.Entry == "SPOILS_MAP" ? 1 : -1,
+            HasExhaustKeyword = keywords.Contains(CardKeyword.Exhaust), HasEternalKeyword = keywords.Contains(CardKeyword.Eternal),
+            HasInnateKeyword = keywords.Contains(CardKeyword.Innate), HasRetainKeyword = keywords.Contains(CardKeyword.Retain)
+        } };
     }
 }

@@ -125,12 +125,12 @@ internal static partial class UiSurfaceChecks
                 "native draw delivers readiness and releases both request-owned callbacks");
             var settings = Field<Control>(shell, "_settingsPage");
             Call(shell, "SelectSettingsCategory", 2); await Ready();
-            var origin = Field<LineEdit>(shell, "_originInput"); origin.Text = "000000000789";
+            var history = Field<SpinBox>(shell, "_queryHistoryLimit"); history.Value = 7;
             Navigate("Feedback"); await Ready();
             var feedback = Field<Control>(shell, "_feedbackPage");
             Call(shell, "OpenSettings"); await Ready();
-            Check(ReferenceEquals(settings, Field<Control>(shell, "_settingsPage")) && origin.Text == "000000000789",
-                "cross-page reuse preserves the actual uncommitted input");
+            Check(ReferenceEquals(settings, Field<Control>(shell, "_settingsPage")) && history.Value == 7,
+                "cross-page reuse preserves the selected history limit");
             Call(shell, "SelectSettingsCategory", 1); await Frames(2);
             store.SetLanguageOverride("en"); Call(shell, "RefreshLanguage");
             var changedText = RolltheSpire2.Presentation.Localization.JsonUiTextProvider.CreateUi13("en");
@@ -165,7 +165,7 @@ internal static partial class UiSurfaceChecks
             }
             await Frames(4); Observe("after-eight-reuse-cycles");
             Check(Nodes(shell).Count() == warmNodes && ReferenceEquals(feedback, Field<Control>(shell, "_feedbackPage")) &&
-                ReferenceEquals(initialRuntime, store.Runtime) && origin.Text == "000000000789",
+                ReferenceEquals(initialRuntime, store.Runtime) && history.Value == 7,
                 "repeated navigation and real closes preserve instances, drafts and business owner without node growth");
             GC.Collect(); GC.WaitForPendingFinalizers(); await Frames(4); Observe("after-eight-reuse-cycles-collected");
             Check(Field<Dictionary<int, IEnumerator<object?>>>(shell, "_pageViewBuilds").Count == 0,

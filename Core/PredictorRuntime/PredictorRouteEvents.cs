@@ -24,28 +24,27 @@ internal sealed partial class PredictorRun
         bool selectionBlocked = false;
         bool automaticOccurrenceChanged = false;
         PredictorEventOccurrenceCandidate? selectedOccurrence = null;
+        PredictorEventOccurrenceCandidate? pendingOccurrence = null;
         if (occurrence != null)
         {
             var choice = plan?.Occurrence;
             run._preview.OccurrenceOrigin = PredictorKnowledgeOrigin.PlayerInput;
             if (choice == null && run._preview.Settings.Policy == PredictorRoutePreviewPolicy.LiveMapDefaults &&
-                occurrencePending.IsEmpty && occurrence.Candidates.FirstOrDefault(c => !c.ExcludedByPlayer) is { } first)
+                occurrencePending.IsEmpty && occurrence.Candidates.FirstOrDefault(c => !c.ExcludedByPlayer &&
+                    (!c.OmittedByPotionDefault || plan?.ExpectedEvent == c.Event)) is { } first)
             {
                 choice = new(first.Event, first.QueueEvent, first.RawOrdinal, occurrence.Cursor, first.Cursor);
                 run._preview.OccurrenceOrigin = PredictorKnowledgeOrigin.ApprovedDefault;
             }
+            var candidate = choice == null ? null : occurrence.Match(choice);
             if (choice == null)
                 local.Add(RouteCause("EventOccurrenceChoice", run.Working.Position.NodeId, PredictorCombatDomain.Continuation));
             else if (!occurrencePending.IsEmpty)
                 local.Add(RouteCause("EventOccurrenceIdentityPending", run.Working.Position.NodeId, PredictorCombatDomain.Continuation, occurrencePending));
-            else if ((plan?.Occurrence != null && choice.Event != plan.ExpectedEvent) || !occurrence.Candidates.Any(c => c.Event == choice.Event &&
-                c.QueueEvent == choice.QueueEvent && c.RawOrdinal == choice.RawOrdinal && c.Cursor == choice.SelectedCursor) ||
-                choice.ExpectedCursor != occurrence.Cursor)
+            else if (candidate == null || plan?.Occurrence != null && choice.Event != plan.ExpectedEvent)
                 local.Add(RouteCause("PlannedEventOccurrenceChanged", run.Working.Position.NodeId, PredictorCombatDomain.Continuation));
-            else if (run._preview.Settings.Policy == PredictorRoutePreviewPolicy.LiveMapDefaults &&
-                occurrence.Candidates.Single(candidate => candidate.Event == choice.Event &&
-                    candidate.QueueEvent == choice.QueueEvent && candidate.RawOrdinal == choice.RawOrdinal &&
-                    candidate.Cursor == choice.SelectedCursor) is { IsCycleFallback: false } selected &&
+            else if (plan?.Occurrence == null && run._preview.Settings.Policy == PredictorRoutePreviewPolicy.LiveMapDefaults &&
+                candidate is { IsCycleFallback: false } selected &&
                 selected.EligibilityPendingCauses.Where(cause => (cause.AffectedDomains & PredictorCombatDomain.Gold) != 0)
                     .ToImmutableArray() is { IsEmpty: false } goldAppearance)
                 local.Add(PredictorRouteCauseEvidence.CreateExplicit("EventGoldAppearancePending", run.Working.Position.NodeId,
@@ -56,11 +55,11 @@ internal sealed partial class PredictorRun
             else if (!CanEnterPlannedRouteEvent(run, choice.Event, dependencies, local)) { }
             else if (run.Submit(run.Request!, choice, token) != PredictorInputResult.Accepted)
                 local.Add(RouteCause("PlannedEventOccurrencePending", run.Working.Position.NodeId, PredictorCombatDomain.Continuation));
-            else selectedOccurrence = occurrence.Candidates.Single(c => c.Event == choice.Event && c.QueueEvent == choice.QueueEvent &&
-                c.RawOrdinal == choice.RawOrdinal && c.Cursor == choice.SelectedCursor);
+            else selectedOccurrence = candidate;
             eventKey = run._eventKey ?? eventKey;
             automaticOccurrenceChanged = plan is { Occurrence: null, ExpectedOccurrence: { } receipt } && choice != receipt;
             selectionBlocked = run.Phase == PredictorPhase.EventEligibility;
+            if (selectionBlocked && occurrencePending.IsEmpty) pendingOccurrence = candidate;
         }
         // An automatic receipt binds actions without selecting an occurrence.
         // A changed queue position is a different instance even with the same
@@ -79,6 +78,12 @@ internal sealed partial class PredictorRun
                 local.Add(RouteCause("PlannedEventChanged", run.Working.Position.NodeId, PredictorCombatDomain.Continuation));
             plan = null;
         }
+
+        // Vanilla SetEventState finishes an exhausted queue's zero-bottle
+        // fallback immediately. There is no trade, reward draw, or local input.
+        if (run.Phase == PredictorPhase.EventChoice && run._eventKey is { } emptyEvent &&
+            run.UsesCapturedEventPotions(emptyEvent) && run.EventPotionSlots.All(slot => slot == null))
+            run.FinishEvent();
 
         var entryOptions = run._preview.Settings.Policy == PredictorRoutePreviewPolicy.LiveMapDefaults && !selectionBlocked
             ? ObserveRouteEventEntryOptions(run, dependencies, knownInstanceIds, token) : [];
@@ -106,7 +111,10 @@ internal sealed partial class PredictorRun
                     ContinueDrawingEventConfirmation(run, dependencies, knownInstanceIds, local, token);
                 CaptureBeforeCombat();
                 if (plan.Actions[applied].Action is PredictorEventActionKind.Reward or PredictorEventActionKind.Obtain or PredictorEventActionKind.LeaveRewards)
+                {
                     ContinueDrawingEventCombat(run, dependencies, local, token);
+                    run.FinishDrawingCrystalWithoutNewItems(dependencies, local, token);
+                }
                 if (local.Count != 0 || run.Phase == PredictorPhase.Complete) break;
                 if (!ApplyRouteEventAction(run, plan.Actions[applied], dependencies, knownInstanceIds, local, token)) break;
                 PropagateRouteEventHealthPending(run, dependencies);
@@ -122,6 +130,8 @@ internal sealed partial class PredictorRun
             ContinueDrawingEventCombat(run, dependencies, local, token);
         }
         ApplyRouteEventDefaultCardTarget(run, dependencies, knownInstanceIds, local, token);
+        var defaultCrystal = plan == null || applied >= plan.Actions.Length
+            ? run.FinishDrawingCrystalWithoutNewItems(dependencies, local, token) : null;
         if (eventKey is { } rewardEvent)
             ConfigureCompletedRewardEdits(run, new(run.Working.Position.NodeId)
                 { Event = plan ?? new(rewardEvent)
@@ -154,6 +164,7 @@ internal sealed partial class PredictorRun
         var options = ObserveRouteEventOptions(run, dependencies, knownInstanceIds);
         if (run._preview.Settings.Policy == PredictorRoutePreviewPolicy.LiveMapDefaults)
             options = ObserveRouteEventOptionResults(run, options, dependencies, knownInstanceIds, token);
+        var potionSource = eventKey ?? occurrence?.Candidates.FirstOrDefault()?.Event;
         var result = new PredictorEventNodeKnowledge(eventKey, options, candidates,
             offeredKnowledge?.OfferBinding?.Value.Cards ?? [],
             child == null ? [] : [child], ObserveRouteRewards(run, dependencies),
@@ -161,8 +172,8 @@ internal sealed partial class PredictorRun
         {
             OfferedCardOptions = offeredKnowledge?.CardOptions ?? [],
             OfferedCardBinding = offeredKnowledge?.OfferBinding,
-            PotionInputRequirement = EventPotionRequirement(eventKey ?? occurrence?.Candidates.FirstOrDefault()?.Event),
-            PotionInput = eventKey is { } potionEvent ? run.RouteEventPotionInput(potionEvent) : null,
+            PotionInputRequirement = run.UsesCapturedEventPotions(potionSource) ? PredictorEventPotionRequirement.None : EventPotionRequirement(potionSource),
+            PotionInput = eventKey is { } potionEvent && !run.UsesCapturedEventPotions(potionEvent) ? run.RouteEventPotionInput(potionEvent) : null,
             ConveyorInput = run._conveyorInput, ConveyorLostHp = run._conveyorLostHp,
             EntryOptions = entryOptions,
             // CompleteNode retires the editable replay draft. The accepted
@@ -171,7 +182,7 @@ internal sealed partial class PredictorRun
             AppliedResult = run._inputs.Any(input => input.Action.StartsWith("EventOption:", StringComparison.Ordinal))
                 ? ObserveAppliedRouteEventResult(appliedDisplayStart,
                     appliedDisplayEnd ?? CaptureRouteEventDisplayBoundary(run, dependencies, knownInstanceIds)) : null,
-            Occurrence = occurrence, SelectedOccurrence = selectedOccurrence,
+            Occurrence = occurrence, SelectedOccurrence = selectedOccurrence, PendingOccurrence = pendingOccurrence,
             AuthoredEvent = authoredPlan?.ExpectedEvent,
             AuthoredActionsNotApplied = authoredEventChanged &&
                 (authoredPlan!.Actions.Length > 0 || authoredPlan.Potions != null),
@@ -180,7 +191,8 @@ internal sealed partial class PredictorRun
             BusinessChoiceRequired = !advanced && needed == PredictorEventNeededInput.Option &&
                 DrawingEventBusinessChoiceRequired(run, options),
             CardsRequired = run.EventCardsRequired, Combat = combat,
-            CombatEncounter = combat == null ? null : run._eventCombatEntry?.Encounter.Key, Crystal = run.CrystalView,
+            CombatEncounter = combat == null ? null : run._eventCombatEntry?.Encounter.Key, Crystal = defaultCrystal ?? run.CrystalView,
+            CrystalDefaultApplied = defaultCrystal != null,
             GoldBalance = CausesFor(dependencies, PredictorCombatDomain.Gold).IsEmpty ? run.Working.GoldBudget : null,
             GoldPendingCauses = CausesFor(dependencies, PredictorCombatDomain.Gold),
             HealthConsequences = RouteEventHealthConsequences(run),
@@ -250,17 +262,21 @@ internal sealed partial class PredictorRun
         {
             case PredictorEventActionKind.Option:
             {
-                if (run.Phase != PredictorPhase.EventChoice || run.EventNeedsHealthFact || run.CrystalView != null ||
+                if (run.Phase != PredictorPhase.EventChoice ||
+                    run.EventNeedsHealthFact && !(run._conveyorEntryHealthPending && step.ExpectedOption?.Key == "OBSERVE_CHEF") ||
+                    run.CrystalView != null ||
                     step.ExpectedOption is not { } expected) return Pending("PlannedEventOptionPending");
                 var actual = run.EventOptions.FirstOrDefault(o => o.Key == expected.Key);
                 var observation = ObserveRouteEventOptions(run, dependencies, knownInstanceIds).FirstOrDefault(o => o.Key == expected.Key);
-                if (actual == null || !SameRouteEventOption(actual, expected)) return Pending("PlannedEventOptionChanged");
+                if (expected.TradedRelic != null && observation is { IsKnown: false })
+                    return Pending("PlannedEventOptionPending", observation.PendingCauses);
+                if (actual == null || !SameRouteEventOption(run, actual, expected)) return Pending("PlannedEventOptionChanged");
                 if (observation?.IsKnown != true || !actual.Enabled) return Pending("PlannedEventOptionPending", observation?.PendingCauses ?? []);
                 var reads = RouteEventActionReadDomains(run, actual, dependencies, knownInstanceIds);
                 var readCauses = RouteEventActionReadCauses(run, actual, dependencies, knownInstanceIds);
                 if (!readCauses.IsEmpty)
                 {
-                    if (TryContinueRouteEventDeckAction(run, actual, readCauses, dependencies, token)) return true;
+                    if (TryContinueRouteEventDeckAction(run, actual, readCauses, dependencies, knownInstanceIds, local, token)) return true;
                     return Pending("PlannedEventActionDependent", readCauses);
                 }
                 traceDomains = reads;
@@ -365,21 +381,23 @@ internal sealed partial class PredictorRun
             case PredictorEventActionKind.CrystalCell:
                 if (!SameRouteCrystal(run.CrystalView, step.ExpectedCrystal)) return Pending("PlannedEventCrystalChanged");
                 if (step.Action == PredictorEventActionKind.CrystalCell &&
-                    !CausesFor(dependencies, PredictorCombatDomain.Relics | PredictorCombatDomain.Deck).IsEmpty)
-                    return Pending("PlannedEventCrystalDependent", CausesFor(dependencies, PredictorCombatDomain.Relics | PredictorCombatDomain.Deck));
+                    run.CrystalClickReadCauses(step.X!.Value, step.Y!.Value, dependencies) is { IsEmpty: false } crystalReads)
+                    return Pending("PlannedEventCrystalDependent", crystalReads);
                 input = step.Action == PredictorEventActionKind.CrystalTool ? new SelectCrystalTool(step.Tool!.Value) :
                     new RevealCrystalCell(step.X!.Value, step.Y!.Value);
                 break;
             default: throw new ArgumentException("PredictorRouteEventPlanInvalid");
         }
         var selectedEvent = run._eventKey;
-        bool zeroGold = input is ChooseEventOption { OptionKey: "GROUP" } && selectedEvent?.Entry == "MORPHIC_GROVE";
+        bool zeroGold = input is ChooseEventOption goldChoice && (selectedEvent?.Entry, goldChoice.OptionKey) is
+            ("MORPHIC_GROVE", "GROUP") or ("THERMAE_NONUPEIPE", "PRIVATE_OASIS");
         var generatedCards = input is ChooseEventOption selected ? RouteEventDirectCardCandidates(run, selected.OptionKey) : [];
         var actionTrace = run.EventTrace();
         var actionReads = actionTrace?.Action(run, input, traceDomains, dependencies) ?? [];
         var result = run.Submit(run.Request!, input, token);
         if (result != PredictorInputResult.Accepted) return Pending("PlannedEventInputPending");
-        if (!generatedCards.IsEmpty) PropagateRouteEventDirectCardGeneration(run, dependencies, generatedCards);
+        if (!generatedCards.IsEmpty) PropagateRouteEventDirectCardGeneration(run, dependencies, generatedCards,
+            selectedEvent?.Entry == "MUSEUM_OF_TORTURE" ? PredictorCombatDomain.NonCombatGenerationRng : PredictorCombatDomain.RewardsRng);
         if (zeroGold)
         {
             run._preview.Event.AssignedGold = 0;
@@ -418,6 +436,9 @@ internal sealed partial class PredictorRun
     private static ImmutableArray<PredictorCard> RouteEventDirectCardCandidates(PredictorRun run, string branch)
     {
         PredictorRewardPlan recipe;
+        if ((run._eventKey?.Entry, branch) == ("MUSEUM_OF_TORTURE", "TAKE"))
+            return run.Context.Catalog!.UnlockedCurseCards.Select(key => PredictorCardChanges.Definition(run.Context, key).Prototype)
+                .ToImmutableArray();
         if (run._eventKey?.Entry == "INFESTED_AUTOMATON")
         {
             bool power = branch == "STUDY";
@@ -432,21 +453,26 @@ internal sealed partial class PredictorRun
         }
         else if (run._eventKey?.Entry == "ENDLESS_CONVEYOR" && branch == "GRAB_FRIED_EEL")
             recipe = new(PredictorRewardKind.Card, CardCount: 1, Colorless: true, NoUpgradeRoll: true);
+        else if ((run._eventKey?.Entry, branch) == ("WATERFALL_OF_OBVIOUS_SECRETS", "NEGOTIATE"))
+            recipe = new(PredictorRewardKind.Card, CardCount: 1, Odds: PredictorCardOdds.Uniform,
+                Rarity: EffectCardRarity.Rare, NoUpgradeRoll: true);
         else return [];
         return PredictorRewardGeneration.ResolveCardPool(run.Context, run.Working, ref recipe, isCardReward: false)
-            .Where(c => c.Rarity is EffectCardRarity.Common or EffectCardRarity.Uncommon or EffectCardRarity.Rare)
+            .Where(c => recipe.Rarity is { } fixedRarity ? c.Rarity == fixedRarity :
+                c.Rarity is EffectCardRarity.Common or EffectCardRarity.Uncommon or EffectCardRarity.Rare)
             .Select(c => PredictorCardChanges.Definition(run.Context, c.CardKey).Prototype).ToImmutableArray();
     }
 
     private static void PropagateRouteEventDirectCardGeneration(PredictorRun run, List<RouteDependency> dependencies,
-        ImmutableArray<PredictorCard> possibleCards)
+        ImmutableArray<PredictorCard> possibleCards, PredictorCombatDomain streamDomain)
     {
         var domains = PredictorCombatDomain.Deck | PredictorCombatDomain.InstanceIds;
         if (PredictorSettlementEffects.Has(run.Working, "LUCKY_FYSH")) domains |= PredictorCombatDomain.Gold;
         if (PredictorSettlementEffects.Has(run.Working, "BOOK_OF_FIVE_RINGS")) domains |= PredictorCombatDomain.Health;
-        // Both donor recipes are non-encounter generation; neither reads the
-        // persistent card-rarity offset, and only its actual pool is possible.
-        foreach (var dependency in dependencies.Where(d => (d.Cause.AffectedDomains & PredictorCombatDomain.RewardsRng) != 0).ToArray())
+        if (possibleCards.Any(card => card.Type == EffectCardType.Curse) &&
+            PredictorSettlementEffects.Has(run.Working, "DARKSTONE_PERIAPT")) domains |= PredictorCombatDomain.Health;
+        // Non-encounter generation does not read the persistent rarity offset.
+        foreach (var dependency in dependencies.Where(d => (d.Cause.AffectedDomains & streamDomain) != 0).ToArray())
             AddDependency(dependencies, dependency with { Cause = dependency.Cause with { AffectedDomains = domains },
                 PossibleCards = possibleCards });
     }
@@ -482,8 +508,9 @@ internal sealed partial class PredictorRun
         return preview with { Rewards = rewards, PendingCauses = preview.PendingCauses.AddRange(inherited).Distinct().ToImmutableArray() };
     }
 
-    private static bool SameRouteEventOption(PredictorEventOption actual, PredictorEventOption expected)
-        => actual with { Enabled = true } == expected with { Enabled = true };
+    private static bool SameRouteEventOption(PredictorRun run, PredictorEventOption actual, PredictorEventOption expected)
+        => (expected.TradedRelic != null ? RouteEventOptionBinding(run, actual) : actual with { Enabled = true, TradedRelic = null }) ==
+            expected with { Enabled = true };
 
     private static bool SameRouteCrystal(PredictorCrystalView? actual, PredictorCrystalView? expected)
         => actual != null && expected != null && actual.Remaining == expected.Remaining && actual.Tool == expected.Tool &&
@@ -549,7 +576,8 @@ internal sealed partial class PredictorRun
         ("SLIPPERY_BRIDGE", "HOLD_ON") or ("ROUND_TEA_PARTY", "ENJOY_TEA") or
         ("ABYSSAL_BATHS", "IMMERSE" or "LINGER" or "ABSTAIN") or
         ("COLOSSAL_FLOWER", "REACH_DEEPER" or "POLLINOUS_CORE") or
-        ("DENSE_VEGETATION", "REST") or ("SPIRALING_WHIRLPOOL", "DRINK");
+        ("DENSE_VEGETATION", "REST") or ("SPIRALING_WHIRLPOOL", "DRINK") or
+        ("MUSEUM_OF_TORTURE", "BREAK_OUT") or ("WUPPY_IN_TROUBLE", "BE_CAUTIOUS") or ("THERMAE_NONUPEIPE", "DRINK_WATERS");
 
     private static (ImmutableArray<long> Candidates, int Requested)? RouteEventPicker(PredictorRun run, string key, string branch)
     {
@@ -590,6 +618,23 @@ internal sealed partial class PredictorRun
     {
         if (RolltheSpire2.Core.Events.Beta111EventOptionRules.FixedRelicProduct(key, branch) is { } fixedProduct)
             return fixedProduct;
+        if ((key, branch) is ("MUSEUM_OF_TORTURE", "TAKE") or ("THERMAE_NONUPEIPE", "DRINK_WATERS"))
+            return run.EventOptions.Concat(run._pendingHealthOptions).FirstOrDefault(option => option.Key == branch)?.OfferedRelic;
+        var modernFixedProduct = (key, branch) switch
+        {
+            ("WUPPY_IN_TROUBLE", "HELP_IMMEDIATELY" or "BE_CAUTIOUS") => "WUPPY",
+            ("THERMAE_NONUPEIPE", "THERMAL_BATHS") => "BATH_TOWEL",
+            ("THERMAE_NONUPEIPE", "PRIVATE_OASIS") => "BATH_ROBES",
+            ("SHRINE_OF_THE_WARLORD", "TAKE_WINGS") => "MIGHTY_WINGS",
+            _ => null
+        };
+        if (modernFixedProduct != null) return new("RELIC", modernFixedProduct);
+        if ((key, branch) == ("WATERFALL_OF_OBVIOUS_SECRETS", "BEAT_UP"))
+        {
+            var state = run.Working;
+            var rng = PredictorStreamState.Capture(PredictorStream.Niche, run._eventRng!).Restore();
+            return PredictorRewardGeneration.PullRelic(run.Context, ref state, rng);
+        }
         // Selected/observed products remain owned by this transaction.
         if (key == "HUNGRY_FOR_MUSHROOMS") return new("RELIC", branch);
         if (key == "DOLL_ROOM" && branch.StartsWith("DOLL_", StringComparison.Ordinal))
@@ -651,10 +696,15 @@ internal sealed partial class PredictorRun
             RequirePlan((step.Action == PredictorEventActionKind.CrystalTool) == (step.Tool != null));
             RequirePlan((step.Action == PredictorEventActionKind.CrystalCell) == (step.X != null && step.Y != null));
             if (step.ExpectedOption is { } option) RequirePlan(!string.IsNullOrWhiteSpace(option.Key) && option.CardTargetId is not < 1 && option.PotionId is not < 1 && option.RelicId is not < 1 &&
+                (option.TradedRelic == null || plan.ExpectedEvent.Entry == "RELIC_TRADER" && option.Key is ("TOP" or "MIDDLE" or "BOTTOM") &&
+                    option.RelicId == null && option.TradedRelic is { IsValid: true, Category: "RELIC" } &&
+                    option.OfferedRelic is { IsValid: true, Category: "RELIC" }) &&
                 option.LocalPotionOrdinal is not < 0 && (option.LocalPotionOrdinal.HasValue == option.LocalPotionKey.HasValue) &&
-                (!option.LocalPotionOrdinal.HasValue || plan.Potions is { OrderedSlots.IsDefault: false } input &&
-                    option.PotionId == null && option.LocalPotionOrdinal < input.OrderedSlots.Length &&
-                    input.OrderedSlots[option.LocalPotionOrdinal.Value] == option.LocalPotionKey));
+                (!option.LocalPotionOrdinal.HasValue || option.PotionId == null &&
+                    (plan.Potions is { OrderedSlots.IsDefault: false } input
+                        ? option.LocalPotionOrdinal < input.OrderedSlots.Length && input.OrderedSlots[option.LocalPotionOrdinal.Value] == option.LocalPotionKey
+                        : plan.ExpectedEvent.Entry == "THE_FUTURE_OF_POTIONS" && option.Key == "POTION:LOCAL:" + option.LocalPotionOrdinal &&
+                            option.LocalPotionKey is { Category: "POTION", IsValid: true })));
             if (step.Health is { } health) RequirePlan(health.CurrentHp > 0 && health.MaxHp >= health.CurrentHp);
             if (step.Obtain is { } obtain) ValidatePlannedObtainChild(obtain);
             if (step.RewardChoice is { } reward) ValidatePlannedNodes([new("event-reward-shape") { RewardChoices = [reward] }]);

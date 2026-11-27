@@ -47,6 +47,7 @@ internal sealed partial class PredictorRun
             return step.CardIndices.All(i => i >= 0 && i < count) && step.CardIndices.Distinct().Count() == step.CardIndices.Length;
         }
         var deckRead = RouteObtainDeckRead(run);
+        var curseDomain = StreamKnowledgeDomain(run.Context.NonCombatStream(PredictorStream.Niche));
         bool KnownTargets()
         {
             trace?.Input("deckTargets", System.Text.Json.JsonSerializer.Serialize(step.DeckCards));
@@ -120,8 +121,8 @@ internal sealed partial class PredictorRun
                 // Live drawing instead owns its unknown-identity tail at that
                 // boundary; this independent relic receipt need not read Niche.
                 if (source.Entry == "NEOWS_BONES" && run.Rewards.Count(r => r.Status == PredictorRewardStatus.Open) == 1 &&
-                    !run.CanProjectLiveBonesCurse() && !Reads(PredictorCombatDomain.NicheRng).IsEmpty)
-                    return Pending("PlannedObtainClosureDependent", CausesFor(dependencies, PredictorCombatDomain.NicheRng));
+                    !run.CanProjectLiveCurses() && !Reads(curseDomain).IsEmpty)
+                    return Pending("PlannedObtainClosureDependent", CausesFor(dependencies, curseDomain));
                 if (reward.Kind is PredictorRewardKind.Card or PredictorRewardKind.SpecialCard)
                 {
                     trace?.Input("rewardCardIndex", choice.CardIndex?.ToString() ?? "none");
@@ -141,8 +142,8 @@ internal sealed partial class PredictorRun
                 if (run.Phase != PredictorPhase.Rewards || run.Selection.CardRewardId != null ||
                     run.Rewards.Any(r => r.Status == PredictorRewardStatus.Open && (!r.CanSkip || r.Mandatory)))
                     return Pending("PlannedObtainClosurePending");
-                if (source.Entry == "NEOWS_BONES" && !run.CanProjectLiveBonesCurse() && !Reads(PredictorCombatDomain.NicheRng).IsEmpty)
-                    return Pending("PlannedObtainClosureDependent", CausesFor(dependencies, PredictorCombatDomain.NicheRng));
+                if (source.Entry == "NEOWS_BONES" && !run.CanProjectLiveCurses() && !Reads(curseDomain).IsEmpty)
+                    return Pending("PlannedObtainClosureDependent", CausesFor(dependencies, curseDomain));
                 return new LeaveRewards();
             case PredictorObtainChildAction.ChooseCard:
                 if (run.Phase != PredictorPhase.ObtainChooseCard || !CardsMatch(run.ObtainCardChoices, step.ExpectedCards) ||

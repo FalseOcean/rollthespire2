@@ -53,9 +53,9 @@ internal sealed partial class PredictorRun
         var source = Context.AncientAuthority;
         var immutable = source == null ? EventImmutableEligibilityContext.Unknown
             : EventImmutableEligibilityContext.From(source);
-        // Runtime initialization admits Beta111 only. Shared evaluates every
-        // audited act mask; RawEvents already owns act-local pool membership.
-        var result = EventStaticEligibilityCatalog.Evaluate(key, Working.Position.Act, RuntimeProfileId.Beta111,
+        // RawEvents owns pool membership. Evaluate its act and eligibility rules
+        // against the same version that produced the queue.
+        var result = EventStaticEligibilityCatalog.Evaluate(key, Working.Position.Act, Context.RuntimeProfile.ProfileId,
             EventPoolSourceKind.Shared, immutable);
         EventTrace()?.StaticEligibility(this, key, immutable,
             result.EligibilityKind + ":precision=" + result.Precision + ":reject=" + result.ShouldReject);
@@ -65,9 +65,7 @@ internal sealed partial class PredictorRun
     private PredictorInputResult SubmitEventOccurrence(ChooseEventOccurrence input)
     {
         var observation = ObserveEventOccurrence();
-        if (observation == null || input.ExpectedCursor != observation.Cursor) return PredictorInputResult.Invalid;
-        var selected = observation.Candidates.FirstOrDefault(c => c.Event == input.Event &&
-            c.QueueEvent == input.QueueEvent && c.RawOrdinal == input.RawOrdinal && c.Cursor == input.SelectedCursor);
+        var selected = observation?.Match(input);
         if (selected == null) return PredictorInputResult.Invalid;
         var trace = EventTrace();
         var traceReads = trace?.Action(this, input, PredictorCombatDomain.None, _preview.Partial?.EventTraceDependencies ?? []) ?? [];

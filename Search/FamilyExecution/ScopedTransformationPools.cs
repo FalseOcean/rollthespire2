@@ -1,6 +1,5 @@
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Effects;
-using RolltheSpire2.Core.Effects.Coverage;
 using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Events;
 using RolltheSpire2.Core.Identity;
@@ -27,16 +26,25 @@ internal static partial class ScopedTransformationPools
         model.Authority.VersionResolution.SemanticProfileId == RngSemanticProfileId.Modern113 &&
         condition.AncientOpportunityCount is >= 0 and <= TransformationRelicProjector.ProjectionDrawBudget;
 
-    internal static ModelKey[][]? Opening(SearchModel model, ModelKey? opening, NeowEffectAuthoritySnapshot effects)
+    internal static bool StartsAncientAtInitialCursor(SearchModel model, ModelKey? opening)
     {
+        if (!opening.HasValue) return true;
         if (opening == BaseGameModelKeys.Relics.LargeCapsule)
         {
             // The forced pair adds materials. Nested Whetstone and War Paint
             // upgrade via non_combat_generation, leaving transformations at zero.
-            return OpeningTransformationContinuation.HasNativeCapsuleCursor(model.Authority) ? [] : null;
+            return OpeningTransformationContinuation.HasNativeCapsuleCursor(model.Authority);
         }
-        if (opening.HasValue && NeowEffectCoverageRegistry.TryGet(opening.Value, out var entry) &&
-            entry.Family == NeowEffectFamily.DeterministicImmediate) return [];
+        // A pickup may consume Rewards or NonCombatGeneration and still leave
+        // the personal Transformations cursor untouched. The source count and
+        // pool for the later Ancient are bound separately.
+        return Beta110FastRelicCatalog.TryGetId(opening.Value, out byte id) &&
+            NeowBonesOrderReuse.PreservesTransformationStream(id);
+    }
+
+    internal static ModelKey[][]? Opening(SearchModel model, ModelKey? opening, NeowEffectAuthoritySnapshot effects)
+    {
+        if (StartsAncientAtInitialCursor(model, opening)) return [];
         if (opening != BaseGameModelKeys.Relics.NewLeaf && opening != BaseGameModelKeys.Relics.LeafyPoultice) return null;
         var catalog = Beta110FastEffectCatalogCompiler.Compile(effects, []);
         ushort[][] pools;

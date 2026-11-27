@@ -261,7 +261,7 @@ internal sealed partial class PredictorRun
             }
             outcomes.Add(new(option.Key, branch.Working, branch.Phase, local.ToImmutableArray(),
                 branchDependencies.ToImmutableArray(), branch._preview.Event.PendingHealthCommands,
-                branch._preview.Event.UnknownHealingAmount, branch._preview.Event.PendingCardEffect, branch._preview.Event.AssignedGold));
+                branch._preview.Event.UnknownNonlethalHealthAmount, branch._preview.Event.PendingCardEffect, branch._preview.Event.AssignedGold));
             return option with { ResultPreview = result with { TraceIdentity = branch._preview.EventTrace?.Identity } };
         }).ToImmutableArray();
         run._preview.Event.OptionOutcomes = outcomes.ToImmutable();
@@ -374,13 +374,17 @@ internal sealed partial class PredictorRun
         var readCauses = RouteEventActionReadCauses(run, option, dependencies, knownInstanceIds);
         if (!readCauses.IsEmpty)
         {
-            run._preview.Event.ProjectHealthIndependently = false;
             // The remainder belongs to the real non-health reader. Requiring
             // HP would not make its missing deck/inventory facts available.
             run.EventOptions = run._pendingHealthOptions;
             run._pendingHealthOption = null;
             run._pendingHealthOptions = [];
-            if (TryContinueRouteEventDeckAction(run, option, readCauses, dependencies, token)) return true;
+            if (TryContinueRouteEventDeckAction(run, option, readCauses, dependencies, knownInstanceIds, local, token))
+            {
+                PropagateRouteEventHealthPending(run, dependencies);
+                return true;
+            }
+            run._preview.Event.ProjectHealthIndependently = false;
             local.Add(RouteCause("EventNonHealthActionDependent", run.Working.Position.NodeId, PredictorCombatDomain.Continuation,
                 readCauses, PredictorRouteCauseEvidence.Key("event-branch", key.Serialized, branch)));
             return false;
@@ -404,11 +408,11 @@ internal sealed partial class PredictorRun
         Beta111EventOptionRules.FixedHealth(key, branch) is not null || (key, branch) is
         ("SLIPPERY_BRIDGE", "HOLD_ON") or ("ROUND_TEA_PARTY", "ENJOY_TEA") or
         ("ABYSSAL_BATHS", _) or ("COLOSSAL_FLOWER", "REACH_DEEPER" or "POLLINOUS_CORE") or
-        ("DENSE_VEGETATION", "REST") or ("SPIRALING_WHIRLPOOL", "DRINK");
+        ("DENSE_VEGETATION", "REST") or ("SPIRALING_WHIRLPOOL", "DRINK") or ("WUPPY_IN_TROUBLE", "BE_CAUTIOUS");
 
     private static void PropagateRouteEventHealthPending(PredictorRun run, List<RouteDependency> dependencies)
     {
-        if (run._preview.Event.PendingHealthCommands.IsEmpty && !run._preview.Event.UnknownHealingAmount &&
+        if (run._preview.Event.PendingHealthCommands.IsEmpty && !run._preview.Event.UnknownNonlethalHealthAmount &&
             !(run._preview.Event.ProjectHealthIndependently && run.Phase == PredictorPhase.EventCards)) return;
         var domains = PredictorCombatDomain.Health;
         bool mayLoseHp = run._preview.Event.PendingHealthCommands.Any(c => c.HpDelta < 0 || c.MaxHpDelta < 0) ||

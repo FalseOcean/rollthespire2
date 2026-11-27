@@ -156,13 +156,23 @@ internal static partial class UiSurfaceChecks
             var view = View()!;
             Check(ReferenceEquals(Field(view, "_preview"), preview), name + " renderer uses exact completed worker projection");
             if (preview.Notices.IsEmpty && preview.Branches.SelectMany(branch => branch.Sections)
-                .All(section => OperationDisplayPolicy.Resolve(preview, section).Text == OperationTextMode.None))
+                .All(section => section.Source == preview.Source && OperationDisplayPolicy.Resolve(preview, section).Text == OperationTextMode.None))
                 Check(view.GetNodeOrNull<Control>("Rt2NeowSummary") == null && view.SummaryDesiredSize == Vector2.Zero,
                     name + " successful D display has no text panel or reserved summary space");
             Check(view.VisibleRegions.Count > 0 && view.VisibleRegions.All(rect =>
                 view.GetViewportRect().Grow(.2f).Encloses(rect) && !rect.Intersects(hitbox.GetGlobalRect())),
                 name + " rendered surfaces preserve screen bounds and current native input surface;hitbox=" + hitbox.GetGlobalRect() +
                 ";regions=" + string.Join(";", view.VisibleRegions));
+            if (owner is NCardRewardAlternativeButton && NOverlayStack.Instance?.Peek() is NCardRewardSelectionScreen cardSelection)
+            {
+                var nativeCards = Descendants(cardSelection).OfType<NGridCardHolder>()
+                    .Where(holder => holder.IsVisibleInTree()).Select(holder => holder.Hitbox.GetGlobalRect()).ToArray();
+                var visibleButtons = Descendants(cardSelection).OfType<NCardRewardAlternativeButton>()
+                    .Where(button => button.IsVisibleInTree()).Select(button => button.GetGlobalRect());
+                Check(nativeCards.Length > 0 && nativeCards.Concat(visibleButtons).All(native =>
+                        view.VisibleRegions.All(region => !region.Intersects(native))),
+                    name + " leaves the current reward offers and alternative actions visible alongside predictions");
+            }
             Check(Descendants(view).OfType<NCard>().All(card => card.Model is { RunState: null, CombatState: null } &&
                 card.MouseFilter == Control.MouseFilterEnum.Ignore), name + " artwork remains detached and passive");
             await root.ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
@@ -310,53 +320,38 @@ internal static partial class UiSurfaceChecks
         viewport.Size = originalViewport; await Frames(4);
         philosopherLayout.Free(); philosophers.EnsureCleanup(); run.PopCurrentRoom();
 
-        // A known relic on a real native event option: four Coffer potion
-        // attempts must reach the actual icon renderer, including overflow.
-        var cofferCollateral = new[] { "ANCHOR", "BLOOD_VIAL", "HAPPY_FLOWER", "PEN_NIB", "ODDLY_SMOOTH_STONE" }
-            .Select(key => ModelDb.GetById<RelicModel>(new("RELIC", key)).ToMutable()).ToArray();
-        foreach (var relic in cofferCollateral) player.AddRelicInternal(relic, silent: true);
-        run.PushRoom(new EventRoom(ModelDb.Event<RelicTrader>()));
-        RunManager.Instance.EventSynchronizer.BeginEvent(ModelDb.Event<RelicTrader>());
-        var cofferEvent = RunManager.Instance.EventSynchronizer.GetLocalEvent();
-        await Until(() => cofferEvent.CurrentOptions.Count > 0, "native Trader initialization completes");
-        var cofferOffers = PredictorOperationCapture.Read<IReadOnlyList<RelicModel>>(cofferEvent, "_newRelics").ToArray();
-        cofferOffers[0] = ModelDb.Relic<AlchemicalCoffer>(); set(cofferEvent, "_newRelics", cofferOffers);
-        // Rebuild the original native option hover tips from those same
-        // initialized offers; neither stale tooltip identities nor a synthetic
-        // hover callback may stand in for this controlled current page.
-        set(cofferEvent, "_currentOptions", AccessTools.Method(typeof(RelicTrader), "GenerateInitialOptions").Invoke(cofferEvent, null));
-        cofferEvent.CalculateVars();
-        set(eventNode, "_event", cofferEvent);
-        var cofferLayout = PreloadManager.Cache.GetScene("res://scenes/events/default_event_layout.tscn").Instantiate<NEventLayout>();
-        set(layoutScenes, nameof(NSceneContainer.CurrentScene), cofferLayout);
-        game.AddChild(cofferLayout); game.MoveChild(cofferLayout, 0); cofferLayout.SetEvent(cofferEvent);
-        cofferLayout.SetTitle(cofferEvent.Title.GetFormattedText());
-        cofferEvent.DynamicVars.AddTo(cofferEvent.Description!);
-        cofferLayout.SetDescription(cofferEvent.Description!.GetFormattedText());
-        cofferLayout.AddOptions(cofferEvent.CurrentOptions);
-        foreach (var button in cofferLayout.OptionButtons) button.EnableButton();
+        // Hungry for Mushrooms always offers the named relic. Its two
+        // upgrade targets are hidden until pickup.
+        run.PushRoom(new EventRoom(ModelDb.Event<HungryForMushrooms>()));
+        RunManager.Instance.EventSynchronizer.BeginEvent(ModelDb.Event<HungryForMushrooms>());
+        var mushroomEvent = RunManager.Instance.EventSynchronizer.GetLocalEvent();
+        await Until(() => mushroomEvent.CurrentOptions.Count > 0, "native mushroom event initialization completes");
+        set(eventNode, "_event", mushroomEvent);
+        var mushroomLayout = PreloadManager.Cache.GetScene("res://scenes/events/default_event_layout.tscn").Instantiate<NEventLayout>();
+        set(layoutScenes, nameof(NSceneContainer.CurrentScene), mushroomLayout);
+        game.AddChild(mushroomLayout); game.MoveChild(mushroomLayout, 0); mushroomLayout.SetEvent(mushroomEvent);
+        mushroomLayout.SetTitle(mushroomEvent.Title.GetFormattedText());
+        mushroomEvent.DynamicVars.AddTo(mushroomEvent.Description!);
+        mushroomLayout.SetDescription(mushroomEvent.Description!.GetFormattedText());
+        mushroomLayout.AddOptions(mushroomEvent.CurrentOptions);
+        foreach (var button in mushroomLayout.OptionButtons) button.EnableButton();
         await Frames(2);
-        await Until(() => cofferLayout.OptionButtons.All(button => button.Modulate.A > .99f), "native coffer option animation settles");
-        var cofferButton = cofferLayout.OptionButtons.Single(button => PredictorOperationEventCapture.Option(cofferEvent, button.Option).Key == "TOP");
-        await Exercise("event-trader-alchemical-coffer", cofferButton, cofferButton, "RELIC_TRADER",
+        await Until(() => mushroomLayout.OptionButtons.All(button => button.Modulate.A > .99f), "native mushroom option animation settles");
+        var mushroomButton = mushroomLayout.OptionButtons.Single(button =>
+            PredictorOperationEventCapture.Option(mushroomEvent, button.Option).Key == "FRAGRANT_MUSHROOM");
+        await Exercise("event-fragrant-mushroom", mushroomButton, mushroomButton, "HUNGRY_FOR_MUSHROOMS",
             scene => scene is PredictorOperationEventScene,
-            preview => preview.Branches.SelectMany(b => b.Sections).SelectMany(s => s.Rows)
-                .Where(row => row.Action == OperationPreviewAction.GeneratePotion).Sum(row => row.Models.Length) == 4,
-            (view, preview) =>
+            preview => preview.Branches.SelectMany(b => b.Sections).Where(section => section.Source.Entry == "FRAGRANT_MUSHROOM")
+                .SelectMany(section => section.Rows).Where(row => row.Action == OperationPreviewAction.UpgradeCard)
+                .Sum(row => row.Cards.Length) == 2,
+            (view, _) =>
             {
-                var expected = preview.Branches.SelectMany(branch => branch.Sections).SelectMany(section => section.Rows)
-                    .Where(row => row.Action == OperationPreviewAction.GeneratePotion).SelectMany(row => row.Models)
-                    .Select(key => ModelDb.GetById<PotionModel>(new(key.Category, key.Entry)).Title.GetFormattedText()).ToArray();
-                var rendered = Descendants(view.GetNode<Control>("Rt2NeowSummary")).OfType<HBoxContainer>()
-                    .Where(row => row.GetChildren().OfType<TextureRect>().Any(icon =>
-                        icon.CustomMinimumSize.IsEqualApprox(new Vector2(24, 24))))
-                    .SelectMany(row => row.GetChildren().OfType<Label>()).Select(label => label.Text)
-                    .Where(expected.Contains).ToArray();
-                Check(expected.Length == 4 && rendered.OrderBy(name => name).SequenceEqual(expected.OrderBy(name => name)),
-                    "Alchemical Coffer native hover renders all four generated potion identities/icons with multiplicity");
+                var summary = view.GetNode<Control>("Rt2NeowSummary");
+                Check(summary.GetChildCount() == 1 && Descendants(summary).OfType<Label>().First().Text ==
+                    ModelDb.Relic<FragrantMushroom>().Title.GetFormattedText(), "native mushroom names its sole effect source");
+                Check(Descendants(view).OfType<NCard>().Count() == 2, "native mushroom option shows both hidden upgrade targets");
             });
-        cofferLayout.Free(); cofferEvent.EnsureCleanup(); run.PopCurrentRoom();
-        foreach (var relic in cofferCollateral) player.RemoveRelicInternal(relic, silent: true);
+        mushroomLayout.Free(); mushroomEvent.EnsureCleanup(); run.PopCurrentRoom();
 
         // The rest synchronizer generates the real current Heal option.
         player.AddRelicInternal(ModelDb.Relic<DreamCatcher>().ToMutable(), silent: true);
@@ -629,7 +624,7 @@ internal static partial class UiSurfaceChecks
         File.WriteAllText(receipt, JsonSerializer.Serialize(new { passed = true, checks, cases,
             nativeHoverCaptureWorkerRenderer = true, runAndRngUnchangedByHover = true,
             covered = new[] { "ordinary event", "Colorful Philosophers pink/orange/green/pink at two resolutions",
-                "Alchemical Coffer four native potion icons", "rest", "local potion holder", "Courier shop",
+                "Fragrant Mushroom native upgrade targets", "rest", "local potion holder", "Courier shop",
                 "relic reward obtain", "card reward reroll", "native New Leaf card target selector" },
             ownerRuntimeAcceptance = false }, new JsonSerializerOptions { WriteIndented = true }));
         GD.Print($"OPERATION_SURFACES_UI_PASS checks={checks};cases={cases.Count};actualNativeHover=true;actualCapture=true;actualWorker=true");

@@ -163,7 +163,7 @@ internal sealed partial class QueryWorkbenchFrame
         settings.TextOverrunBehavior = TextServer.OverrunBehavior.NoTrimming;
         settings.TooltipText = "";
         settings.SizeFlagsHorizontal = SizeFlags.ShrinkBegin;
-        settings.Pressed += () => Navigate?.Invoke("settings:features");
+        settings.Pressed += () => Navigate?.Invoke("settings:search");
         content.AddChild(settings);
 
         var names = RuntimeGameContentNameResolver.Create(_language);

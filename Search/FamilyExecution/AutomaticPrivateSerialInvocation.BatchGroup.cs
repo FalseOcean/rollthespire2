@@ -11,7 +11,7 @@ internal static partial class AutomaticPrivateSerialInvocation
         private int _prefixGroups;
         private int _lastDensePrefixCount = -1;
         bool IDenseFamilyBatchGrouping.CanGroupDenseBatches => !_disposed && !_faulted && !_verify && _families.Length > 1 &&
-            _families[0].SupportsDenseBatchGrouping;
+            Body.WindowCapacity <= PrivateOrdinalBuffer.Capacity && _families[0].SupportsDenseBatchGrouping;
         bool IDenseFamilyBatchGrouping.PreferDenseBatchGrouping =>
             ((IDenseFamilyBatchGrouping)this).CanGroupDenseBatches && _smallCandidateExact is not null &&
             _families[0].UsesSmallPrivateOutput &&

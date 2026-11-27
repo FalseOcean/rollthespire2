@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Text.Json.Serialization;
 using RolltheSpire2.Core.Identity;
 
 namespace RolltheSpire2.Core.PredictorRuntime;
@@ -28,6 +29,10 @@ internal sealed record PredictorPlannedObtainChild(PredictorObtainChildAction Ac
 internal sealed record PredictorPlannedAncient(ModelKey ExpectedAncient, PredictorAncientOffer ExpectedOffer)
 {
     public ImmutableArray<PredictorPlannedObtainChild> Children { get; init; } = [];
+    // A drawing can explicitly adopt the generated menu for its current deck
+    // eligibility premise. Actual capture and authored execution stay separate.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool AssumeProjectedOffer { get; init; }
 }
 
 // A null offered value means this slot's identity depends on a missing fact.
@@ -36,6 +41,7 @@ internal sealed record PredictorAncientOfferKnowledge(int Index, PredictorAncien
     ImmutableArray<PredictorCombatPendingCause> PendingCauses)
 {
     public ImmutableArray<PredictorCombatPendingCause> IdentityPendingCauses { get; init; } = [];
+    public PredictorAncientOffer? ConditionalValue { get; init; }
     public ImmutableArray<PredictorCombatPendingCause> PreparedCardPendingCauses { get; init; } = [];
     public ImmutableArray<PredictorCombatPendingCause> CharacterTargetPendingCauses { get; init; } = [];
     public ImmutableArray<PredictorCombatPendingCause> TargetPendingCauses { get; init; } = [];
@@ -65,6 +71,7 @@ internal sealed record PredictorAncientNodeKnowledge(ModelKey Ancient,
     ImmutableArray<PredictorCombatPendingCause> PendingCauses)
 {
     public bool Advanced { get; init; }
+    public bool ConditionalSelectionApplied { get; init; }
     public int AppliedChildren { get; init; }
     public PredictorAncientOptionalCards? OptionalCards { get; init; }
     public PredictorAncientBundleChoice? BundleChoice { get; init; }

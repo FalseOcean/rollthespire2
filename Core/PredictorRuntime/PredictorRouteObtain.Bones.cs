@@ -7,30 +7,42 @@ internal sealed partial class PredictorRun
 {
     // This capability splits the real mandatory receipt from its final curse.
     // It never permits an exact consumer to execute an unknown-cursor witness.
-    private bool CanProjectLiveBonesCurse() =>
+    private bool CanProjectLiveCurses() =>
         _preview.Settings.Policy == PredictorRoutePreviewPolicy.LiveMapDefaults && _preview.Partial != null;
 
     private sealed partial class RoutePartialState
     {
-        internal PredictorState RecordLiveBonesCurse(PredictorState state, long sourceId)
+        internal PredictorState RecordLiveCurseReceipts(PredictorRun run, long sourceId, bool cape)
         {
+            var state = run.Working;
             Synchronize(state);
             var catalog = _context.Catalog ?? throw new InvalidOperationException("PredictorCatalogMissing");
             var keys = catalog.UnlockedCurseCards;
             if (keys.IsDefaultOrEmpty) throw new InvalidOperationException("PredictorBonesCursePoolMissing");
             var possible = keys.Select(key => PredictorCardChanges.Definition(_context, key).Prototype).ToImmutableArray();
             string node = state.Position.NodeId;
-            var parents = StreamCauses(PredictorStream.Niche);
-            var cause = PredictorRouteCauseEvidence.CreateExplicit("BonesCurseIdentityPending", node,
-                PredictorCombatDomain.Deck | PredictorCombatDomain.InstanceIds, PredictorPendingReasonKind.FlowGate,
-                "Both Bones relics were acquired. Its mandatory final card is received without inventing its unknown Niche identity.",
-                ["deck.bones.curse"], parents, occurrenceKey: "bones-curse:" + sourceId);
+            int draws = cape ? 2 : 1;
+            if (keys.Length < draws) throw new InvalidOperationException("PredictorCursePoolDepleted");
+            var stream = _context.NonCombatStream(PredictorStream.Niche);
+            var parents = StreamCauses(stream);
+            string source = cape ? "cape" : "bones";
+            string code = cape ? "CapeCurseIdentitiesPending" : "BonesCurseIdentityPending";
+            var hookCauses = RouteLiveObtainRelicCauses(run, new("RELIC", cape ? "DISTINGUISHED_CAPE" : "NEOWS_BONES"), _dependencies);
+            bool hooksKnown = hookCauses.IsEmpty;
+            var cause = PredictorRouteCauseEvidence.CreateExplicit(code, node,
+                PredictorCombatDomain.Deck | (hooksKnown ? PredictorCombatDomain.None : PredictorCombatDomain.InstanceIds),
+                PredictorPendingReasonKind.FlowGate,
+                cape ? "The Cape adds two distinct curses sampled without replacement before its three Apparitions." :
+                    "Both Bones relics were acquired. The final curse is received with an unknown identity.",
+                ["deck." + source + ".curse"], parents, occurrenceKey: source + "-curse:" + sourceId);
             _choices[cause.Identity] = cause;
             _opaqueDeck.Add(cause.Identity);
-            bool hooksKnown = Domain(PredictorCombatDomain.Relics).IsEmpty;
-            int receipts = 1 + state.Relics.Count(relic => !relic.Melted && relic.Key.Entry == "BING_BONG") +
-                (_context.HasRunModifier("HOARDER") ? 2 : 0);
-            Deck = Deck.MarkUnknownAddition(node, "BonesCurseIdentityNotKnown", cause.Identity,
+            int receipts = draws * (1 + state.Relics.Count(relic => !relic.Melted && relic.Key.Entry == "BING_BONG") +
+                (_context.HasRunModifier("HOARDER") ? 2 : 0));
+            // Cape entry already checked receipt listeners. Every original and
+            // each copy occupies one id, independent of which curse was drawn.
+            state = state with { NextInstanceId = checked(state.NextInstanceId + (hooksKnown ? receipts : draws)) };
+            Deck = Deck.MarkUnknownAddition(node, code, cause.Identity,
                 possible.Select(card => card.Type).Distinct().ToImmutableArray(), receiptEffectsSettled: hooksKnown,
                 excludesBasicCards: possible.All(card => PredictorCardChanges.Definition(_context, card.Key).Rarity != "Basic"),
                 knownCount: hooksKnown ? receipts : null);
@@ -43,12 +55,12 @@ internal sealed partial class PredictorRun
             // NextItem consumes one draw regardless of which card it returns.
             // Record that real consumption without reading or advancing the
             // private numerical stream's unknown representative state.
-            _streamOffsets[PredictorStream.Niche] += 1;
-            Facts.RecordResult("bones.curse.Niche.consumed", node, 1,
-                operation: "BonesCurse: one NextItem draw; identity remains unknown");
-            Facts.RecordResult("bones.curse.receivedCount", node, receipts,
-                hooksKnown ? [] : Domain(PredictorCombatDomain.Relics),
-                operation: "BonesCurse: mandatory original plus nonrecursive Bing Bong/Hoarder copies");
+            _streamOffsets[stream] += draws;
+            Facts.RecordResult(source + ".curse." + stream + ".consumed", node, draws,
+                operation: "One NextItem draw per mandatory curse");
+            Facts.RecordResult(source + ".curse.receivedCount", node, receipts,
+                hookCauses,
+                operation: "Mandatory curse receipts including nonrecursive Bing Bong/Hoarder copies");
             bool allCurses = possible.All(card => card.Type == EffectCardType.Curse);
             int healthStart = state.CurrentHealthEffects.Length;
             if (hooksKnown)
@@ -75,8 +87,8 @@ internal sealed partial class PredictorRun
             { ChangedRelicEntries = [], ChangedRelicStateEntries = ["BOOK_OF_FIVE_RINGS", "BING_BONG"] });
             var healthCauses = hooksKnown && (allCurses || !PredictorSettlementEffects.Has(state, "DARKSTONE_PERIAPT"))
                 ? ImmutableArray<PredictorCombatPendingCause>.Empty : [cause];
-            Facts.RecordResult("bones.curse.maxHpDelta", node, state.CurrentHealthEffects.Skip(healthStart).Sum(effect => effect.MaxHpDelta),
-                healthCauses, operation: "BonesCurse: actual receipt health callbacks");
+            Facts.RecordResult(source + ".curse.maxHpDelta", node, state.CurrentHealthEffects.Skip(healthStart).Sum(effect => effect.MaxHpDelta),
+                healthCauses, operation: "Actual curse receipt health callbacks");
             Synchronize(state);
             return state;
         }

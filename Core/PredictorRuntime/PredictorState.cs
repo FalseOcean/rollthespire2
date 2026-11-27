@@ -25,7 +25,8 @@ internal sealed record PredictorContext(
     [JsonIgnore]
     internal bool UsesNonCombatGeneration => VersionResolution.SemanticProfileId == RngSemanticProfileId.Modern113;
 
-    internal bool Uses114RoomRules => Version.TryParse(GameVersion, out var detected) && detected >= Beta114RoomRulesSince;
+    internal bool Uses114RoomRules => Version.TryParse(VersionResolution.GameVersionIdentity.ExactVersion, out var detected) &&
+        detected >= Beta114RoomRulesSince;
     private static readonly Version Beta114RoomRulesSince = Version.Parse(RuntimeVersionCompatibility.Beta114Version);
 
     internal PredictorStream NonCombatStream(PredictorStream legacyStream) =>
@@ -47,6 +48,8 @@ internal sealed record PredictorContext(
     public PredictorCrystalContext? Crystal { get; init; }
     public PredictorOperationContext? Operation { get; init; }
     public PredictorLiveContext? Live { get; init; }
+    // A single drawing calculation owns this set. Exact runs and live state never receive it.
+    internal HashSet<ModelKey>? DrawingUnmodeledRelics { get; init; }
     internal bool HasRunModifier(string entry) => Modifiers.Any(m => m.Key.Entry == entry);
 }
 

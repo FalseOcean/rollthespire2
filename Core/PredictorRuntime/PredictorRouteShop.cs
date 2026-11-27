@@ -15,6 +15,14 @@ internal sealed partial class PredictorRun
         {
             var entry = run._shopEntries[slot];
             if (!entry.Stocked) return true;
+            // The private drawing already left these optional bottles behind.
+            // This merchant-local premise confirms that one pending history;
+            // other sources of unknown slots and explicit receipts still apply.
+            if (run._preview.Settings.Policy == PredictorRoutePreviewPolicy.LiveMapDefaults &&
+                run._preview.Settings.Plans.Any(p => p.NodeId == run.Working.Position.NodeId && p.AssumePriorPotionDropsSkippedAtShop) &&
+                dependencies.RemoveAll(d => d.Cause.Code == "MapPotionInventoryNotProjected") > 0)
+                run._preview.Partial?.Facts.RecordResult("shop.potions.priorUnplannedDropsSkipped", run.Working.Position.NodeId,
+                    true, origin: PredictorKnowledgeOrigin.PlayerInput, operation: "Merchant arrival with prior unplanned drops left behind");
             var domains = entry.Kind == PredictorShopEntryKind.CardRemoval ? PredictorCombatDomain.None : RouteShopOfferDomains(entry.Kind);
             ImmutableArray<PredictorCombatPendingCause> obtainCauses = [];
             if (entry.Kind == PredictorShopEntryKind.Relic && entry.Key is { } key)

@@ -50,16 +50,32 @@ internal static class TransformationAggregateFamily
         TransformationAggregateGpuPlan? gpu = null;
         FilterPreparationIssue[] issues = [];
         ScopedTransformationCountPlan? scopedCount = null;
+        ScopedTransformationGeneralPlan? joint = null;
+        string gpuCoverageReason = "";
         if (preferGpu)
         {
             try
             {
-                if (numerical is not null) gpu = new(numerical, numericalVariant);
-                else if ((scopedCount = ScopedTransformationCountPlan.TryCreate(model)) is not null)
-                    gpu = new(scopedCount, numericalVariant);
+                // An external opening previously used the scoped same-card GPU
+                // kernel. Keep its dispatch and cost history when a zero cursor
+                // also makes the general Ancient fixed-pool body available.
+                if (numerical is null || model.Evaluation.NeowRoute is not null)
+                    scopedCount = ScopedTransformationCountPlan.TryCreate(model);
+                if (numerical is not null && scopedCount is not { RequiresRareRemainder: false })
+                {
+                    scopedCount = null;
+                    gpu = new(numerical, numericalVariant);
+                }
+                else if (scopedCount is not null) gpu = new(scopedCount, numericalVariant);
+                else if ((joint = ScopedTransformationGeneralPlan.TryCreate(model, out gpuCoverageReason)) is not null)
+                    gpu = new(joint, numericalVariant);
             }
             catch (OperationCanceledException) { throw; }
-            catch (Exception error) { issues = [new("GpuPreparation", "GpuPlanConstructionFailed", error.ToString())]; }
+            catch (Exception error)
+            {
+                gpuCoverageReason = "T.GpuPlanConstructionFailed:" + error.GetType().Name;
+                issues = [new("GpuPreparation", "GpuPlanConstructionFailed", error.ToString())];
+            }
         }
         string revision = numerical is null ? "T.Cpu.ScopedTransformations.20261124.v2" :
             "T.Cpu.AncientInitialBasics.20261117.v1";
@@ -105,11 +121,21 @@ internal static class TransformationAggregateFamily
             CreateExecution = (selected, _) => new CpuFilterExecution(selected, profile, matches, packed, packed,
                 minimumPartitionInputs: numerical is null ? 32 : 1024)
         };
-        if (gpu is not { Supported: true } gpuPlan) return cpu;
-        Func<ulong, bool> gpuReference = scopedCount is null ? matches : scopedCount.Matches;
+        if (gpu is not { Supported: true } gpuPlan)
+        {
+            if (preferGpu) RuntimeLog.TryBackgroundInfo($"transformationGpuCoverage=CpuReplay;reason={gpuCoverageReason};fingerprint={model.SnapshotFingerprint}");
+            return cpu;
+        }
+        Func<ulong, bool> gpuReference = joint is not null ? joint.Matches : scopedCount is not null ? scopedCount.Matches : matches;
         var scopedWork = scopedCount is null ? null : FamilyAuxiliaryEvidence.Read<ScopedTransformationCountPlan.WorkEstimate?>(
             Id, "ScopedStreamCountEstimate", scopedCount.EstimateWork, null, model.SnapshotFingerprint);
-        var gpuPreparation = scopedWork is { } scoped ? prepared with
+        var jointEstimate = joint is null ? null : FamilyAuxiliaryEvidence.Read(nameof(TransformationAggregateFamily),
+            "ScopedJointProbability", () => Selectivity.ScopedTransformationDistribution.For(model, model.Evaluation.TransformationAggregate!),
+            new Selectivity.ScopedTransformationDistribution.Estimate(null, "T.ScopedJointEstimateUnavailable"), model.SnapshotFingerprint);
+        var gpuPreparation = jointEstimate is { Probability: { } rate } ? prepared with
+        {
+            Survival = FamilySurvivalProjection.Resolved(Id, rate, jointEstimate.Evidence)
+        } : scopedWork is { } scoped ? prepared with
         {
             Survival = FamilySurvivalProjection.Resolved(Id, scoped.Survival, ScopedTransformationCountPlan.WorkEstimate.Evidence)
         } : prepared;
@@ -117,15 +143,18 @@ internal static class TransformationAggregateFamily
             UsesGpu = true, NumericRequirements = gpuPlan.NumericRequirements,
             InputIdentity = model.SnapshotFingerprint, PlayersCount = model.Authority.PlayersCount, CpuWorkers = workers,
             WindowCapacity = gpuPlan.Capacity, CpuAlternatives = [cpu],
-            PerformanceProjection = compact => new(Id, gpuPlan.Revision(compact), (gpuPlan.ScopedCount ? "T.Gpu.ScopedStreamCount" : "T.Gpu.AncientFixedPool") + gpuPlan.NumericalRevision,
-                1, gpuPlan.ScopedCount ? "OrderedSourceStreams;ScopedCount;ExactOwnsJointRoute" :
+            PerformanceProjection = compact => new(Id, gpuPlan.Revision(compact), (gpuPlan.ScopedJoint ? "T.Gpu.ScopedJoint" : gpuPlan.ScopedCount ? "T.Gpu.ScopedStreamCount" : "T.Gpu.AncientFixedPool") + gpuPlan.NumericalRevision,
+                1, gpuPlan.ScopedJoint ? "OrderedSourceStreams;JointScopedCounters;ExactOwnsJointRoute" :
+                    gpuPlan.ScopedCount ? "OrderedSourceStreams;ScopedCount;ExactOwnsJointRoute" :
                     "FamilyOwned;OneAncientFixedPool;ExactOwnsAncientOfferAndFinalDisposition", true),
             Cost = new() {
                 CanonicalScope = false, PrivateCanonicalScope = false,
                 MinimumComparableInput = _ => gpuPlan.Capacity,
-                Quote = (_, geometry, _) => TransformationAncientGpuQuote(gpuPlan, estimate, geometry, scopedWork)
+                Quote = (_, geometry, _) => TransformationAncientGpuQuote(gpuPlan, estimate, geometry, scopedWork, joint, jointEstimate?.Probability)
             },
             CreateExecution = (selected, _) => CreateGpuExecution(selected, gpuPlan, gpuReference, profile),
+            SupportsStandaloneLargeWindow = true,
+            LargeWindowRole = GpuLargeWindowRole.Dense | GpuLargeWindowRole.Compact,
             BindPrivate = gpuPlan.NumericalVariant == GpuNumericalVariant.NativeFloat64
                 ? (device, input, output) => BindPrivateGpu(gpuPlan, device, input, output) : null
         };
@@ -219,6 +248,8 @@ internal static class TransformationAggregateFamily
                 }
             },
             CreateExecution = (selected, _) => CreateGpuExecution(selected, gpuPlan, plan.Matches, profile),
+            SupportsStandaloneLargeWindow = true,
+            LargeWindowRole = GpuLargeWindowRole.Dense | GpuLargeWindowRole.Compact,
             BindPrivate = gpuPlan.NumericalVariant == GpuNumericalVariant.NativeFloat64
                 ? (device, input, output) => BindPrivateGpu(gpuPlan, device, input, output) : null
         };
@@ -249,7 +280,8 @@ internal static class TransformationAggregateFamily
 
     private static FamilyPhysicalQuote? TransformationAncientGpuQuote(TransformationAggregateGpuPlan gpuPlan,
         TransformationAncientNumericalPlan.WorkEstimate? estimate, FamilyPhysicalQuoteRequest geometry,
-        ScopedTransformationCountPlan.WorkEstimate? scoped = null)
+        ScopedTransformationCountPlan.WorkEstimate? scoped = null, ScopedTransformationGeneralPlan? joint = null,
+        double? jointSurvival = null)
     {
         if (gpuPlan.NumericalVariant == GpuNumericalVariant.IntegerRne && (geometry.PrivateInput || geometry.PrivateOutput)) return null;
         // Rounded coefficients from independent fixed-pool Dense dispatch
@@ -257,6 +289,14 @@ internal static class TransformationAggregateFamily
         // populations. Compact input has no fitted coefficients of its own.
         var (fixedWork, drawWork, emitWork) = gpuPlan.NumericalVariant == GpuNumericalVariant.IntegerRne
             ? (0.09, 0.035, 0.45) : (0.12, 0.06, 0.22);
+        if (joint is not null)
+        {
+            // Existing numerical anchors, with a full-draw upper work estimate
+            // until the generic kernel has its own stopping-time calibration.
+            double ns = fixedWork * joint.StreamCount + drawWork * (joint.Draws + joint.CounterUpdates) + emitWork * (jointSurvival ?? 1);
+            return FamilyCoarsePricing.Gpu(Id, "T.ScopedJoint", ns, gpuPlan.Capacity, geometry,
+                FormattableString.Invariant($"FullDraws={joint.Draws};Streams={joint.StreamCount};MeanFullDrawCounterUpdates={joint.CounterUpdates:G9};UncalibratedJointKernel;Reference=T.AncientFixedPool.DenseDispatchSlope.20261121;NoPayloadTransport"));
+        }
         if (scoped is { } count)
         {
             // Rounded dense D3D12 dispatch slopes for scoped draw blocks.

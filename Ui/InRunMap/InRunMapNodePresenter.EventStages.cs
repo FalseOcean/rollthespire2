@@ -274,7 +274,7 @@ internal sealed partial class InRunMapNodePresenter
         PredictorEventOptionKnowledge option, int actionIndex)
     {
         if (node.Event is not { } key || option.Value == null || actionIndex < 0 || actionIndex > node.AppliedActions) return null;
-        var plan = EventPlanApplies(c, node) ? c.Plan.Event! : new PredictorPlannedEvent(key);
+        var plan = PlanForEventOption(c, node, key);
         if (actionIndex > plan.Actions.Length) return null;
         var actions = plan.Actions.Take(actionIndex).ToImmutableArray()
             .Add(new(PredictorEventActionKind.Option) { ExpectedOption = option.Value });
@@ -382,13 +382,14 @@ internal sealed partial class InRunMapNodePresenter
             parts.Sections.AddRange(RewardSections(c, combat.Rewards, EventCombatRewardWriter(c), detailed)
                 .Select(section => section with { CombatPanel = true }));
         }
-        if (node.NeededInput == PredictorEventNeededInput.Crystal && node.Crystal is { } crystal)
+        if (node.Crystal is { } crystal)
         {
             var choices = Enum.GetValues<PredictorCrystalTool>().Select(tool => Choice(c, R("crystal." + tool), context => AddEvent(context,
                 new(PredictorEventActionKind.CrystalTool) { ExpectedCrystal = crystal, Tool = tool }), enabled: crystal.Remaining > 0, selected: crystal.Tool == tool)).ToList();
             choices.AddRange(crystal.Cells.Where(cell => cell.Hidden).Select(cell => Choice(c, (cell.X + 1) + ", " + (cell.Y + 1), context => AddEvent(context,
                 new(PredictorEventActionKind.CrystalCell) { ExpectedCrystal = crystal, X = cell.X, Y = cell.Y }), enabled: crystal.Remaining > 0)));
-            parts.Sections.Add(new(_text.Format("predictor.runtime.crystal_remaining", crystal.Remaining), "", [], choices));
+            parts.Sections.Add(new(_text.Format("predictor.runtime.crystal_remaining", crystal.Remaining),
+                node.CrystalDefaultApplied ? R("crystal.no_more_items") : "", [], choices));
         }
         return node.NeededInput == PredictorEventNeededInput.Obtain;
     }

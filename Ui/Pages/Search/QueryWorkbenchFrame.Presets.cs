@@ -64,7 +64,7 @@ internal sealed partial class QueryWorkbenchFrame
     internal void SetSearchMode(bool multiplayer, bool render = true)
     {
         if (_persistence.Runtime.Receiving) return;
-        if (multiplayer && !_partyConfigured) UseManualPartyUnlocks();
+        if (multiplayer && (!_partyConfigured || (!_multiplayer && _useFullUnlocks))) UseManualPartyUnlocks();
         _multiplayer = multiplayer;
         _seat = Math.Min(_seat, multiplayer ? _playerCount - 1 : 0);
         if (render) Refresh(_language, _text); else RefreshEditorContexts(false);
@@ -229,7 +229,7 @@ internal sealed partial class QueryWorkbenchFrame
             var interpretation = environment.Interpretation;
             // The environment's unlock coverage describes the local profile,
             // not a whole party. Per-seat unlock snapshots remain in the draft.
-            string unlock = draft.Players.Count > 0 ? SearchPresetUnlockKinds.Unknown : interpretation.VanillaUnlockStatus switch
+            string unlock = draft.UseFullUnlocks ? SearchPresetUnlockKinds.Full : draft.Players.Count > 0 ? SearchPresetUnlockKinds.Unknown : interpretation.VanillaUnlockStatus switch
             {
                 VanillaUnlockOverallStatus.Full => SearchPresetUnlockKinds.Full,
                 VanillaUnlockOverallStatus.Partial => SearchPresetUnlockKinds.Partial,
@@ -289,6 +289,8 @@ internal sealed partial class QueryWorkbenchFrame
 
     private WorkbenchSearchDraft BindPresetEnvironment(WorkbenchSearchDraft draft)
     {
+        if (draft.UseFullUnlocks)
+            return draft.BindPresetIntent(_runtime, slot => ManualSeatUnlocks(slot, true));
         var lobby = IsInsideTree() ? LobbyUnlockReadout.Find(GetTree().Root) : null;
         var players = lobby?.Players.OrderBy(p => p.slotId).ToArray();
         bool matches = players is not null && players.Length == draft.Players.Count &&
@@ -297,13 +299,40 @@ internal sealed partial class QueryWorkbenchFrame
             ? ReadSeatUnlocks(players![slot].unlockState) : ManualSeatUnlocks(slot));
     }
 
-    internal void ApplyPreset(SearchPresetDefinition preset, bool render = true)
+    internal void ApplyPreset(SearchPresetDefinition preset, bool render = true) => RestorePreset(preset, render);
+
+    private WorkbenchSearchDraft RestorePreset(SearchPresetDefinition preset, bool render)
     {
         if (_persistence.Runtime.Receiving) throw new InvalidOperationException("Stop the current search before applying a preset.");
         if (_loadFailed) throw new InvalidOperationException("integration.load_shape");
         using var observation = _editorInputs.Observe(_runtime);
         var draft = ResolvePresetDraft(preset);
         var expected = _editorInputs.Compile(draft, _runtime);
+        bool rebuilt = preset.Workbench?.HasEditorSnapshots == true && !draft.HasEditorSnapshots;
+        try { VerifyPresetRestore(draft, expected); }
+        catch (InvalidOperationException) when (draft.HasEditorSnapshots)
+        {
+            // Optional editor state can refer to a retired mode even when every active
+            // condition still exists. Prove the current editor can represent that query.
+            draft = draft.WithoutEditorSnapshots();
+            VerifyPresetRestore(draft, expected);
+            rebuilt = true;
+        }
+        _persistence.SaveWorkbench(draft); _lastSaved = JsonSerializer.Serialize(draft);
+        RestoreDraft(draft, render: false);
+        if (draft.Players.Any(p => p.UnlockSource == "CapturedLobbySlot"))
+        {
+            _readLobby = LobbyUnlockReadout.Find(GetTree().Root);
+            _readRoster = _readLobby is null ? "" : LobbyUnlockReadout.Roster(_readLobby);
+        }
+        _showResults = false; _analysisKey = "";
+        if (render) Refresh(_language, _text);
+        if (rebuilt) ReceiptText(_language == "zh" ? "已按生效条件重建旧预设的编辑页。" : "Rebuilt the preset editor from its active conditions.");
+        return draft;
+    }
+
+    private void VerifyPresetRestore(WorkbenchSearchDraft draft, CompiledSearch expected)
+    {
         // A disposable editor transaction proves the entire roster and grammar can
         // survive current editor legality checks before touching the user's drafts.
         var probe = new QueryWorkbenchFrame(_runtime, _persistence) { _editorInputs = _editorInputs };
@@ -325,15 +354,6 @@ internal sealed partial class QueryWorkbenchFrame
                 throw new InvalidOperationException("integration.load_shape");
         }
         finally { probe._characterIcons.Dispose(); probe.Free(); }
-        _persistence.SaveWorkbench(draft); _lastSaved = JsonSerializer.Serialize(draft);
-        RestoreDraft(draft, render: false);
-        if (draft.Players.Any(p => p.UnlockSource == "CapturedLobbySlot"))
-        {
-            _readLobby = LobbyUnlockReadout.Find(GetTree().Root);
-            _readRoster = _readLobby is null ? "" : LobbyUnlockReadout.Roster(_readLobby);
-        }
-        _showResults = false; _analysisKey = "";
-        if (render) Refresh(_language, _text);
     }
 
     private static bool SameEventEditorState(EventEditorStateSnapshot? expected, EventEditorStateSnapshot? actual, SearchQuery query)

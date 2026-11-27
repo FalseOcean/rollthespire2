@@ -12,7 +12,7 @@ internal sealed partial class PredictorRun
         var ancient = run.Working.Visits.LastOrDefault()?.Room == PredictorRoomKind.Opening
             ? new ModelKey("EVENT", "NEOW") : run.CurrentAncient ??
                 run.Working.Acts.Single(a => a.Act == run.Working.Position.Act).Ancient;
-        var offers = ObserveRouteAncientOffers(run, ancient, dependencies);
+        var offers = ObserveRouteAncientOffers(run, ancient, dependencies, knownInstanceIds);
         var bindingTrace = run._preview.Partial?.BeginAncientBinding(run, ancient, plan, offers);
         int bindingCauseStart = local.Count;
         ImmutableArray<PredictorCombatPendingCause> EntryCauses()
@@ -22,6 +22,7 @@ internal sealed partial class PredictorRun
             return causes;
         }
         int applied = 0;
+        PredictorCombatPendingCause? conditionalSelection = null;
         if (plan != null && plan.ExpectedAncient != ancient)
             local.Add(RouteCause("PlannedAncientChanged", run.Working.Position.NodeId, PredictorCombatDomain.Continuation));
         else if (run.Phase is PredictorPhase.OpeningChoice or PredictorPhase.AncientChoice)
@@ -30,10 +31,15 @@ internal sealed partial class PredictorRun
                 local.Add(RouteCause("AncientChoice", run.Working.Position.NodeId, PredictorCombatDomain.Continuation));
             else
             {
-                var matches = offers.Where(o => o.Value != null && SameAncientOffer(o.Value, plan.ExpectedOffer)).ToArray();
-                if (matches.Length != 1 || !matches[0].IsKnown || !matches[0].Value!.Selectable)
+                bool allowsConditional = run._preview.Settings.Policy == PredictorRoutePreviewPolicy.LiveMapDefaults &&
+                    plan.AssumeProjectedOffer;
+                var matches = offers.Where(o => o.Value != null && SameAncientOffer(o.Value, plan.ExpectedOffer) ||
+                    allowsConditional && o.ConditionalValue != null && SameAncientOffer(o.ConditionalValue, plan.ExpectedOffer)).ToArray();
+                var match = matches.Length == 1 ? matches[0] : null;
+                bool bindConditional = allowsConditional && match?.ConditionalValue is { Selectable: true };
+                if (match == null || !(match.IsKnown && match.Value!.Selectable || bindConditional))
                     local.Add(RouteCause("PlannedAncientOfferPending", run.Working.Position.NodeId, PredictorCombatDomain.Continuation,
-                        matches.Length == 1 ? matches[0].PendingCauses : offers.Where(o => o.Value == null ||
+                        match != null ? match.PendingCauses : offers.Where(o => o.Value == null ||
                                 o.Value.Relic == plan.ExpectedOffer.Relic)
                             .SelectMany(o => o.Value == null ? o.IdentityPendingCauses : o.PendingCauses).ToImmutableArray()));
                 else if (!EntryCauses().IsEmpty)
@@ -43,9 +49,19 @@ internal sealed partial class PredictorRun
                 {
                     PredictorInput input = run.Phase == PredictorPhase.OpeningChoice
                         ? new ChooseOpeningRelic(plan.ExpectedOffer.Relic)
-                        : new ChooseAncientOffer(run.AncientOffers[matches[0].Index].Id);
+                        : new ChooseAncientOffer(run.AncientOffers[match.Index].Id);
                     if (run.Submit(run.Request!, input, token) != PredictorInputResult.Accepted)
                         local.Add(RouteCause("PlannedAncientOfferPending", run.Working.Position.NodeId, PredictorCombatDomain.Continuation));
+                    else if (bindConditional)
+                    {
+                        run._preview.Partial?.Facts.RecordResult("ancient.selection.assumedProjectedPool", run.Working.Position.NodeId,
+                            plan.ExpectedOffer.Relic.Serialized, origin: PredictorKnowledgeOrigin.PlayerInput,
+                            operation: "Explicit drawing choice under the projected Ancient pool eligibility premise");
+                        conditionalSelection = PredictorRouteCauseEvidence.CreateExplicit("AncientPoolConditionAssumed", run.Working.Position.NodeId,
+                            PredictorCombatDomain.None, PredictorPendingReasonKind.UserChoice,
+                            "The chosen gift is the offer under the drawing's projected deck eligibility; that eligibility has not been established for the actual run.",
+                            ["choice.ancient.projectedPool"], match.IdentityPendingCauses, occurrenceKey: plan.ExpectedOffer.Relic.Serialized);
+                    }
                 }
             }
         }
@@ -147,11 +163,13 @@ internal sealed partial class PredictorRun
         }
         if (run.Phase != PredictorPhase.Complete && local.Count == 0)
             local.Add(RouteCause("AncientChildChoice", run.Working.Position.NodeId, PredictorCombatDomain.Continuation));
+        if (conditionalSelection != null) local.Add(conditionalSelection);
         var rewards = ObserveRouteRewards(run, dependencies);
         var required = ObserveRouteObtainChoice(run, dependencies, knownInstanceIds);
         return new(ancient, offers, required == null ? [] : [required], rewards,
             dependencies.Select(d => d.Cause).Concat(local).Distinct().ToImmutableArray())
         { Advanced = run.Phase == PredictorPhase.Complete, AppliedChildren = applied, OptionalCards = optionalCards,
+            ConditionalSelectionApplied = conditionalSelection != null,
             BundleChoice = run.ObserveAncientBundle(actualOffer, dependencies), Outcome = run.ObserveAncientOutcome(dependencies, rewards) };
     }
 
@@ -189,7 +207,7 @@ internal sealed partial class PredictorRun
     }
 
     private static ImmutableArray<PredictorAncientOfferKnowledge> ObserveRouteAncientOffers(PredictorRun run,
-        ModelKey ancient, List<RouteDependency> dependencies)
+        ModelKey ancient, List<RouteDependency> dependencies, HashSet<long> knownInstanceIds)
     {
         var offers = ancient.Entry == "NEOW"
             ? run.Working.OpeningOptions.Select(k => new PredictorAncientOffer(0, k, true, null, null, null, null, null)).ToImmutableArray()
@@ -209,12 +227,15 @@ internal sealed partial class PredictorRun
                 "NONUPEIPE" or "TANX" => PredictorCombatDomain.Deck,
                 _ => PredictorCombatDomain.None
             };
-            var identity = CausesFor(dependencies, identityDomains);
+            var generatedCauses = run._preview.Partial?.AncientGeneratedOfferCauses(run.Working.Position.NodeId, index);
+            var identity = generatedCauses ?? CausesFor(dependencies, identityDomains);
             var prepared = offer.Relic.Entry == "DUSTY_TOME" ? CausesFor(dependencies, PredictorCombatDomain.RewardsRng) : [];
             ImmutableArray<PredictorCombatPendingCause> character = offer.CharacterTargetKnown ? [] :
                 [AncientCharacterTargetCause(run.Working.Position.NodeId, offer)];
             var target = offer.Relic.Entry == "ARCHAIC_TOOTH" ? CausesFor(dependencies, PredictorCombatDomain.Deck | PredictorCombatDomain.InstanceIds) :
-                offer.Relic.Entry == "TOUCH_OF_OROBAS" ? CausesFor(dependencies, PredictorCombatDomain.Relics | PredictorCombatDomain.InstanceIds) : [];
+                offer.Relic.Entry == "TOUCH_OF_OROBAS" ? ObtainCauses(run, offer.Relic, dependencies, entryOnly: true) : [];
+            if (offer.Relic.Entry == "TOUCH_OF_OROBAS" && offer.StarterRelicId is { } starterId && !knownInstanceIds.Contains(starterId))
+                target = target.AddRange(CausesFor(dependencies, PredictorCombatDomain.InstanceIds));
             var entry = run._ancientOutcomeBefore?.Position.NodeId == run.Working.Position.NodeId
                 ? run._ancientOutcomeBefore : run.Working;
             var starterCard = target.IsEmpty && offer.StarterCardId is { } cardId
@@ -222,6 +243,9 @@ internal sealed partial class PredictorRun
             var starterRelic = target.IsEmpty && offer.StarterRelicId is { } relicId
                 ? entry.Relics.FirstOrDefault(relic => relic.Id == relicId) : null;
             var replacementPending = starterCard == null ? [] : CausesFor(dependencies, PredictorCombatDomain.Relics);
+            bool conditional = run._preview.Settings.Policy == PredictorRoutePreviewPolicy.LiveMapDefaults &&
+                generatedCauses.HasValue && !identity.IsEmpty && !identity.Any(cause => cause.Code == "AncientProfileWitnessMismatch") &&
+                offer.Selectable && prepared.IsEmpty && character.IsEmpty && target.IsEmpty;
             return new PredictorAncientOfferKnowledge(index, identity.IsEmpty ? offer with
             { Id = 0, PreparedCard = prepared.IsEmpty ? offer.PreparedCard : null,
                 CharacterTarget = character.IsEmpty ? offer.CharacterTarget : null,
@@ -229,6 +253,7 @@ internal sealed partial class PredictorRun
                 StarterRelicId = target.IsEmpty ? offer.StarterRelicId : null } : null,
                 identity.AddRange(prepared).AddRange(character).AddRange(target).Distinct().ToImmutableArray())
             { IdentityPendingCauses = identity, PreparedCardPendingCauses = prepared, CharacterTargetPendingCauses = character,
+                ConditionalValue = conditional ? offer with { Id = 0 } : null,
                 TargetPendingCauses = target,
                 StarterCard = starterCard == null ? null : DisplayObtainCard(starterCard),
                 ReplacementCard = starterCard == null || !replacementPending.IsEmpty ? null :

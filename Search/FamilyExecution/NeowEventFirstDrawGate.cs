@@ -125,6 +125,7 @@ internal sealed record NeowEventFirstDrawGate(FamilyFirstDraw Event, FamilyFirst
             },
             PerformanceProjection = _ => new(prep.FamilyId, revision,
                 "SharedRoot.NeowThen" + draw.Group, 1, variant is null ? "CombinedDispatch" : "CombinedDispatchWithVariant", true),
+            LargeWindowRole = n.LargeWindowRole & (compactInput ? GpuLargeWindowRole.Compact : GpuLargeWindowRole.Dense),
             BindPrivate = (rd, input, output) => NeowPrivateGpuBinding.Bind(combined, options, rd, input, output),
             BindPrivateShared = compactInput ? null :
                 (rd, input, output, scratch) => NeowPrivateGpuBinding.Bind(combined, options, rd, input, output, scratch),

@@ -1,6 +1,5 @@
 using Godot;
 using RolltheSpire2.Bootstrap;
-using RolltheSpire2.Compatibility;
 using RolltheSpire2.Presentation.Localization;
 using RolltheSpire2.Ui.Workspace;
 
@@ -12,18 +11,17 @@ internal sealed partial class WorkspaceShell
     private Workspace _settingsReturn = Workspace.Search;
     private OptionButton _language = null!;
     private CheckButton? _mainMenuEntry;
+    private CheckButton? _persistentSearch;
     private Button? _launcherShortcut;
     private bool _listeningForLauncherShortcut;
     private CheckButton _runPredictionEntry = null!;
-    private LineEdit _originInput = null!;
     private LineEdit _logPath = null!;
-    private Label _originStatus = null!, _originFeedback = null!, _logFeedback = null!;
-    private Button _originApply = null!, _originRandom = null!, _settingsBack = null!;
+    private Label _logFeedback = null!;
+    private Button _settingsBack = null!;
     private readonly List<(Label Label, string Key)> _settingsLabels = [];
     private readonly List<(Button Button, string Key)> _settingsButtons = [];
     private IUiTextProvider? _settingsText;
-    private string _originReceiptKey = "", _logReceiptKey = "";
-    private bool _bindingSettings;
+    private string _logReceiptKey = "";
     private CheckButton _skipExact = null!;
     private CheckButton _gpuPowerDiagnostics = null!;
     private SpinBox _queryHistoryLimit = null!;
@@ -35,12 +33,9 @@ internal sealed partial class WorkspaceShell
     private CheckButton _operationPrediction = null!;
     private CheckButton _mapPrediction = null!;
     private CheckButton _deadSeedResearch = null!;
-    private SpinBox _workerBudget = null!;
-    private Label _workerStatus = null!;
     private readonly List<(Button Button, ScrollContainer? Page)> _settingsCategories = [];
     private VBoxContainer _settingsPages = null!;
     private int _settingsCategory;
-    private bool _settingsOriginInitialized;
 
     private void EnsureSettings()
     {
@@ -66,7 +61,7 @@ internal sealed partial class WorkspaceShell
         var divider = new ColorRect { Color = _palette.Color(_palette.Line), CustomMinimumSize = new(1, 0),
             MouseFilter = MouseFilterEnum.Ignore }; workspace.AddChild(divider);
         _settingsPages = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill }; workspace.AddChild(_settingsPages);
-        foreach (string key in new[] { "settings.group.features", "settings.group.general", "settings.group.advanced", "settings.group.diagnostics" })
+        foreach (string key in new[] { "settings.group.features", "settings.group.general", "settings.group.search", "settings.group.diagnostics" })
         {
             int index = _settingsCategories.Count;
             var button = SettingsButton(key, () => SelectSettingsCategory(index));
@@ -78,12 +73,26 @@ internal sealed partial class WorkspaceShell
 
     private VBoxContainer SettingsSection(VBoxContainer parent, string titleKey, string helpKey)
     {
+        return SettingsRow(CreateSettingsPanel(parent), titleKey, helpKey);
+    }
+
+    private VBoxContainer CreateSettingsPanel(VBoxContainer parent)
+    {
         var panel = new PanelContainer();
         var style = _palette.Box(_palette.Surface);
         style.ContentMarginLeft = style.ContentMarginRight = 24;
         style.ContentMarginTop = style.ContentMarginBottom = 22;
         panel.AddThemeStyleboxOverride("panel", style); AttachPageBuildGroup(parent, panel);
-        var row = new HBoxContainer(); row.AddThemeConstantOverride("separation", 32); panel.AddChild(row);
+        var rows = new VBoxContainer();
+        rows.AddThemeConstantOverride("separation", 16);
+        panel.AddChild(rows);
+        return rows;
+    }
+
+    private VBoxContainer SettingsRow(VBoxContainer rows, string titleKey, string helpKey)
+    {
+        if (rows.GetChildCount() > 0) rows.AddChild(new HSeparator());
+        var row = new HBoxContainer(); row.AddThemeConstantOverride("separation", 32); AttachPageBuildGroup(rows, row);
         var intro = new VBoxContainer { CustomMinimumSize = new(350, 0) }; intro.AddThemeConstantOverride("separation", 10); row.AddChild(intro);
         intro.AddChild(SettingsLabel(titleKey, 22, wrap: true));
         var help = SettingsLabel(helpKey, 17, true, wrap: true); help.CustomMinimumSize = new(350, 0); intro.AddChild(help);
@@ -91,41 +100,32 @@ internal sealed partial class WorkspaceShell
         return controls;
     }
 
+    private void BindSettingsToggle(VBoxContainer controls, CheckButton toggle, string label, Action<bool> change)
+    {
+        toggle.AddThemeFontSizeOverride("font_size", 20);
+        toggle.CustomMinimumSize = new(360, 44);
+        toggle.SizeFlagsHorizontal = SizeFlags.ShrinkBegin;
+        controls.AddChild(toggle); _settingsButtons.Add((toggle, label));
+        toggle.Toggled += enabled => change(enabled);
+    }
+
     private IEnumerable<object?> BuildSettingsFeatures(VBoxContainer features)
     {
         _operationPrediction = new() { Name = "SettingsOperationPrediction" };
         _mapPrediction = new() { Name = "SettingsMapPrediction" };
-        _deadSeedResearch = new() { Name = "SettingsDeadSeedResearch" };
         _runPredictionEntry = new() { Name = "SettingsRunPredictionEntry", CustomMinimumSize = new(360, 44),
             SizeFlagsHorizontal = SizeFlags.ShrinkBegin };
         _consoleEnabled = new() { Name = "SettingsConsoleEnabled" };
         _consolePosition = new() { Name = "SettingsConsolePosition", MinValue = 10, MaxValue = 90, Step = 5, Suffix = "%", CustomMinimumSize = new(180, 42) };
         _consoleScale = new() { Name = "SettingsConsoleScale", MinValue = 75, MaxValue = 125, Step = 5, Suffix = "%", CustomMinimumSize = new(180, 42) };
-        VBoxContainer Feature(VBoxContainer parent, string title, string help, CheckButton toggle, string label, Action<bool> change)
-        {
-            var controls = SettingsSection(parent, title, help);
-            toggle.AddThemeFontSizeOverride("font_size", 20);
-            toggle.CustomMinimumSize = new(360, 44);
-            toggle.SizeFlagsHorizontal = SizeFlags.ShrinkBegin;
-            controls.AddChild(toggle); _settingsButtons.Add((toggle, label));
-            toggle.Toggled += enabled => { if (!_bindingSettings) change(enabled); };
-            return controls;
-        }
-        var operation = Feature(features, "settings.operation.title", "settings.operation.help", _operationPrediction,
+        var operation = SettingsSection(features, "settings.operation.title", "settings.operation.help");
+        BindSettingsToggle(operation, _operationPrediction,
             "settings.operation.enable", enabled => _persistence!.SetOperationPredictionEnabled(enabled));
         BuildOperationPredictionSettings(operation);
         yield return null;
-        Feature(features, "settings.map.title", "settings.map.help", _mapPrediction,
+        BindSettingsToggle(SettingsSection(features, "settings.map.title", "settings.map.help"), _mapPrediction,
             "settings.map.enable", enabled => _persistence!.SetMapPredictionEnabled(enabled));
         yield return null;
-        Feature(features, "settings.dead_seed.title", "settings.dead_seed.help", _deadSeedResearch,
-            "settings.dead_seed.show", enabled =>
-            {
-                _persistence!.SetShowDeadSeedResearch(enabled);
-                _references?.RefreshResearchVisibility();
-            });
-        yield return null;
-
         var prediction = SettingsSection(features, "settings.run_prediction.title", "settings.run_prediction.help");
         _runPredictionEntry.AddThemeFontSizeOverride("font_size", 20);
         _runPredictionEntry.AddThemeColorOverride("font_color", _palette.Color(_palette.Text));
@@ -133,7 +133,7 @@ internal sealed partial class WorkspaceShell
         _runPredictionEntry.Toggled += enabled =>
         {
             _persistence!.SetShowInRunPredictionEntry(enabled);
-            InRunPredictionLauncher.ApplyPreference(GetTree(), enabled);
+            InRunPredictionLauncher.ApplyPreference(GetTree(), enabled || _persistence.Preferences.PersistentSearch);
         };
         yield return null;
 
@@ -158,7 +158,6 @@ internal sealed partial class WorkspaceShell
     private IEnumerable<object?> BuildSettingsGeneral(VBoxContainer general)
     {
         _language = new() { Name = "SettingsLanguage", CustomMinimumSize = new(360, 44), FitToLongestItem = false };
-        _queryHistoryLimit = new() { Name = "SettingsQueryHistoryLimit", MinValue = 1, MaxValue = SearchWorkspace.MaximumQueryHistoryLimit, Step = 1, CustomMinimumSize = new(180, 42) };
         var language = SettingsSection(general, "settings.language", "settings.language.help");
         for (int i = 0; i < 3; i++) _language.AddItem("");
         _language.SizeFlagsHorizontal = SizeFlags.ShrinkBegin;
@@ -207,38 +206,16 @@ internal sealed partial class WorkspaceShell
         reset.Name = "SettingsLauncherShortcutReset";
         shortcuts.AddChild(reset);
         yield return null;
-        var history = SettingsSection(general, "settings.history.title", "settings.history.help");
-        history.AddChild(_queryHistoryLimit);
-        _queryHistoryLimit.ValueChanged += value =>
-        {
-            if (_bindingSettings) return;
-            _persistence!.SetQueryHistoryLimit((int)value);
-        };
-        yield return null;
     }
 
-    private IEnumerable<object?> BuildSettingsAdvanced(VBoxContainer advanced)
+    private IEnumerable<object?> BuildSettingsSearch(VBoxContainer search)
     {
-        _workerBudget = new() { Name = "SettingsWorkerBudget", MinValue = 1, MaxValue = 64,
-            Step = 1, CustomMinimumSize = new(180, 42) };
+        var rows = CreateSettingsPanel(search);
+        BuildMapLossySettings(rows);
+        yield return null;
+
+        var experimental = SettingsRow(rows, "settings.candidates.title", "settings.candidates.help");
         _skipExact = new() { Name = "SettingsSkipExact", CustomMinimumSize = new(360, 44), SizeFlagsHorizontal = SizeFlags.ShrinkBegin };
-        _originInput = new() { Name = "SettingsOrigin", MaxLength = Beta110Profile.Instance.SeedLength,
-            CustomMinimumSize = new(340, 44), PlaceholderText = "000000000000" };
-        var workers = SettingsSection(advanced, "settings.workers.title", "settings.workers.help");
-        var workerActions = new HFlowContainer(); workerActions.AddThemeConstantOverride("h_separation", 12);
-        workerActions.AddThemeConstantOverride("v_separation", 8); workers.AddChild(workerActions);
-        workerActions.AddChild(_workerBudget);
-        var workerReset = SettingsButton("settings.workers.reset", () => SetSettingsWorkerBudget(null));
-        workerReset.Name = "SettingsWorkerReset"; workerActions.AddChild(workerReset);
-        _workerStatus = _palette.Label("", 17, true); _workerStatus.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-        workers.AddChild(_workerStatus);
-        _workerBudget.ValueChanged += value => { if (!_bindingSettings) SetSettingsWorkerBudget((int)value); };
-        yield return null;
-
-        BuildMapLossySettings(advanced);
-        yield return null;
-
-        var experimental = SettingsSection(advanced, "settings.candidates.title", "settings.candidates.help");
         _skipExact.AddThemeFontSizeOverride("font_size", 20); experimental.AddChild(_skipExact);
         _skipExact.Toggled += enabled =>
         {
@@ -248,18 +225,44 @@ internal sealed partial class WorkspaceShell
         };
         yield return null;
 
-        var origin = SettingsSection(advanced, "settings.origin.title", "settings.origin.help");
-        var originActions = new HFlowContainer(); originActions.AddThemeConstantOverride("h_separation", 12);
-        originActions.AddThemeConstantOverride("v_separation", 8); origin.AddChild(originActions);
-        StyleSettingsInput(_originInput); originActions.AddChild(_originInput);
-        _originApply = SettingsButton("settings.origin.apply", () => ApplySettingsOrigin(false), true);
-        _originApply.Name = "SettingsOriginApply"; originActions.AddChild(_originApply);
-        _originRandom = SettingsButton("settings.origin.random", () => ApplySettingsOrigin(true));
-        _originRandom.Name = "SettingsOriginRandom"; originActions.AddChild(_originRandom);
-        _originStatus = _palette.Label("", 18); origin.AddChild(_originStatus);
-        _originFeedback = _palette.Label("", 17, true); _originFeedback.AutowrapMode = TextServer.AutowrapMode.WordSmart; origin.AddChild(_originFeedback);
-        _originInput.TextChanged += _ => { if (!_bindingSettings) { _originReceiptKey = ""; RefreshSettings(); } };
-        _originInput.TextSubmitted += _ => ApplySettingsOrigin(false);
+        _queryHistoryLimit = new() { Name = "SettingsQueryHistoryLimit", MinValue = 1, MaxValue = SearchWorkspace.MaximumQueryHistoryLimit, Step = 1, CustomMinimumSize = new(180, 42) };
+        var history = SettingsRow(rows, "settings.history.title", "settings.history.help");
+        history.AddChild(_queryHistoryLimit);
+        _queryHistoryLimit.ValueChanged += value =>
+        {
+            _persistence!.SetQueryHistoryLimit((int)value);
+        };
+        yield return null;
+
+        _deadSeedResearch = new() { Name = "SettingsDeadSeedResearch" };
+        BindSettingsToggle(SettingsRow(rows, "settings.dead_seed.title", "settings.dead_seed.help"), _deadSeedResearch,
+            "settings.dead_seed.show", enabled =>
+            {
+                _persistence!.SetShowDeadSeedResearch(enabled);
+                _references?.RefreshResearchVisibility();
+            });
+        yield return null;
+
+        _persistentSearch = new CheckButton { Name = "SettingsPersistentSearch" };
+        BindSettingsToggle(SettingsRow(rows, "settings.persistent_search.title", "settings.persistent_search.help"), _persistentSearch,
+            "settings.persistent_search.enable", enabled =>
+            {
+                _persistence!.SetPersistentSearch(enabled);
+                InRunPredictionLauncher.ApplyPreference(GetTree(), enabled || _persistence.Preferences.ShowInRunPredictionEntry);
+                if (_liveRun is not null) _search.Visible = enabled || _persistence.Runtime.Receiving;
+            });
+        yield return null;
+
+        var gpuPower = SettingsRow(rows, "settings.gpu_power.title", "settings.gpu_power.help");
+        _gpuPowerDiagnostics = new() { Name = "SettingsGpuPowerDiagnostics", CustomMinimumSize = new(360, 44),
+            SizeFlagsHorizontal = SizeFlags.ShrinkBegin };
+        _gpuPowerDiagnostics.AddThemeFontSizeOverride("font_size", 20);
+        gpuPower.AddChild(_gpuPowerDiagnostics);
+        _settingsButtons.Add((_gpuPowerDiagnostics, "settings.gpu_power.enable"));
+        _gpuPowerDiagnostics.Toggled += enabled =>
+        {
+            _persistence!.SetGpuPowerDiagnosticsEnabled(enabled);
+        };
         yield return null;
     }
 
@@ -279,16 +282,6 @@ internal sealed partial class WorkspaceShell
         }));
         _logFeedback = _palette.Label("", 17, true); _logFeedback.AutowrapMode = TextServer.AutowrapMode.WordSmart; logs.AddChild(_logFeedback);
         yield return null;
-        var gpuPower = SettingsSection(diagnostics, "settings.gpu_power.title", "settings.gpu_power.help");
-        _gpuPowerDiagnostics = new() { Name = "SettingsGpuPowerDiagnostics", CustomMinimumSize = new(360, 44),
-            SizeFlagsHorizontal = SizeFlags.ShrinkBegin };
-        _gpuPowerDiagnostics.AddThemeFontSizeOverride("font_size", 20);
-        gpuPower.AddChild(_gpuPowerDiagnostics);
-        _settingsButtons.Add((_gpuPowerDiagnostics, "settings.gpu_power.enable"));
-        _gpuPowerDiagnostics.Toggled += enabled =>
-        {
-            if (!_bindingSettings) _persistence!.SetGpuPowerDiagnosticsEnabled(enabled);
-        };
         if (_liveRun is null)
             diagnostics.AddChild(SettingsButton("settings.diagnostics.status", () => SelectTask(Workspace.Status)));
         yield return null;
@@ -306,7 +299,7 @@ internal sealed partial class WorkspaceShell
         IEnumerable<object?> steps = index switch
         {
             0 => BuildSettingsFeatures(content), 1 => BuildSettingsGeneral(content),
-            2 => BuildSettingsAdvanced(content), 3 => BuildSettingsDiagnostics(content),
+            2 => BuildSettingsSearch(content), 3 => BuildSettingsDiagnostics(content),
             _ => throw new ArgumentOutOfRangeException(nameof(index))
         };
         foreach (var step in steps) yield return step;
@@ -325,18 +318,6 @@ internal sealed partial class WorkspaceShell
             _settingsCategories[i].Button.SetPressedNoSignal(i == index);
         }
         LocalizeSettings(JsonUiTextProvider.CreateUi13(_languageCode));
-        if (index == 2 && !_settingsOriginInitialized)
-        {
-            RefreshSettings(resetInput: true);
-            _settingsOriginInitialized = true;
-        }
-    }
-
-    private void SetSettingsWorkerBudget(int? budget)
-    {
-        _persistence!.SetSearchWorkerBudget(budget);
-        _references?.SyncSearchPreferences();
-        RefreshSettings();
     }
 
     private bool CaptureLauncherShortcut(InputEvent input)
@@ -392,7 +373,7 @@ internal sealed partial class WorkspaceShell
 
     private void SaveConsoleSettings()
     {
-        if (_bindingSettings || _persistence is null) return;
+        if (_persistence is null) return;
         _persistence.SetInRunConsole(_consoleEnabled.ButtonPressed, _consolePosition.Value, _consoleScale.Value);
         InRunConsole.InRunConsoleLauncher.ApplyPreferences(GetTree(), _consoleEnabled.ButtonPressed,
             _consolePosition.Value, _consoleScale.Value);
@@ -433,7 +414,7 @@ internal sealed partial class WorkspaceShell
         RefreshSettings();
     }
 
-    private void RefreshSettings(bool resetInput = false)
+    private void RefreshSettings()
     {
         if (_settingsText is not { } text || _persistence is not { } persistence) return;
         if (_builtPageViews.Contains(0))
@@ -441,7 +422,6 @@ internal sealed partial class WorkspaceShell
             persistence.SyncFeaturePreferences();
             _operationPrediction.SetPressedNoSignal(persistence.Preferences.OperationPredictionEnabled);
             _mapPrediction.SetPressedNoSignal(persistence.Preferences.MapPredictionEnabled);
-            _deadSeedResearch.SetPressedNoSignal(persistence.Preferences.ShowDeadSeedResearch);
             _runPredictionEntry.SetPressedNoSignal(persistence.Preferences.ShowInRunPredictionEntry);
             _consoleEnabled.SetPressedNoSignal(persistence.Preferences.ShowInRunConsole);
             _consolePosition.Editable = _consoleScale.Editable = persistence.Preferences.ShowInRunConsole;
@@ -451,40 +431,17 @@ internal sealed partial class WorkspaceShell
         }
         if (_builtPageViews.Contains(2))
         {
-            int workers = SearchWorkspace.ResolveSearchWorkers(persistence.Preferences.SearchWorkerBudget, System.Environment.ProcessorCount);
-            _workerBudget.SetValueNoSignal(workers);
-            _workerStatus.Text = text.Format(persistence.Preferences.SearchWorkerBudget.HasValue
-                ? "settings.workers.custom" : "settings.workers.auto", System.Environment.ProcessorCount, workers);
+            _deadSeedResearch.SetPressedNoSignal(persistence.Preferences.ShowDeadSeedResearch);
+            _gpuPowerDiagnostics.SetPressedNoSignal(persistence.Preferences.EnableGpuPowerDiagnostics);
             _skipExact.SetPressedNoSignal(persistence.Preferences.SkipExactValidation);
             _skipExact.Disabled = SettingsSearchBusy;
             RefreshMapLossySettings(persistence);
         }
         _queryHistoryLimit?.SetValueNoSignal(persistence.Preferences.QueryHistoryLimit);
+        _persistentSearch?.SetPressedNoSignal(persistence.Preferences.PersistentSearch);
         _mainMenuEntry?.SetPressedNoSignal(!persistence.Preferences.MainMenuLauncherHidden);
         RefreshLauncherShortcut();
-        if (_builtPageViews.Contains(2))
-        {
-            if (resetInput)
-            {
-                _bindingSettings = true;
-                _originInput.Text = persistence.Cursor.Initialized ? persistence.CurrentPersistentOriginSeed : "";
-                _bindingSettings = false; _originReceiptKey = _logReceiptKey = "";
-            }
-            bool busy = SettingsSearchBusy;
-            bool valid = Beta110Profile.Instance.TryCanonicalizeSeed(_originInput.Text, out _, out _);
-            _originInput.Editable = !busy; _originApply.Disabled = busy || !valid; _originRandom.Disabled = busy;
-            _originStatus.Text = persistence.Cursor.Initialized
-                ? text.Format("settings.origin.status", persistence.CurrentPersistentOriginSeed, persistence.CurrentNextCursorSeed)
-                : text.Get("settings.origin.unset");
-            _originFeedback.Text = busy ? text.Get("settings.origin.busy")
-                : _originReceiptKey.Length > 0 ? text.Get(_originReceiptKey)
-                : string.IsNullOrWhiteSpace(_originInput.Text) ? ""
-                : !valid ? text.Get("settings.origin.invalid")
-                : _originInput.Text.Trim() != persistence.CurrentPersistentOriginSeed ? text.Get("settings.origin.pending") : "";
-            _originFeedback.AddThemeColorOverride("font_color", _palette.Color(!busy && valid ? _palette.Secondary : _palette.Active));
-        }
         if (!_builtPageViews.Contains(3)) return;
-        _gpuPowerDiagnostics.SetPressedNoSignal(persistence.Preferences.EnableGpuPowerDiagnostics);
         string path = RuntimeLog.CurrentLogPath;
         if (string.IsNullOrWhiteSpace(path)) path = RuntimeLog.LogDirectory;
         if (_logPath.Text != path) _logPath.Text = path;
@@ -492,17 +449,6 @@ internal sealed partial class WorkspaceShell
         _logFeedback.Text = RuntimeLog.LastFailureCode.Length > 0 ? text.Get("settings.logs.unavailable")
             : _logReceiptKey.Length > 0 ? text.Get(_logReceiptKey)
             : text.Get(RuntimeLog.DetailEnabled ? "settings.logs.detail" : "settings.logs.standard");
-    }
-
-    private void ApplySettingsOrigin(bool random)
-    {
-        if (SettingsSearchBusy) { RefreshSettings(); return; }
-        string canonical;
-        if (random) canonical = _persistence!.RandomizePersistentOrigin();
-        else if (!_persistence!.TrySetPersistentOrigin(_originInput.Text, out canonical, out _))
-        { _originReceiptKey = "settings.origin.invalid"; RefreshSettings(); return; }
-        _originInput.Text = canonical;
-        _originReceiptKey = "settings.origin.saved"; RefreshSettings();
     }
 
     private void OpenSettingsLogDirectory()

@@ -162,6 +162,18 @@ internal sealed partial class PredictorRun
         internal PredictorCombatDomain RefineObtainReads(ModelKey relic, PredictorCombatDomain reads, bool entryOnly)
         {
             if (CanProjectUpgrade(relic)) return PredictorCombatDomain.None;
+            if (relic.Entry == "NUTRITIOUS_SOUP")
+            {
+                var strikes = Deck.Project(PredictorDeckProjectionScope.BasicStrike);
+                if (strikes.OrderedCandidatesKnown && strikes.KnownCandidates.All(card =>
+                {
+                    var definition = PredictorCardChanges.Definition(_context, card.Key);
+                    var fields = PredictorDeckUncertainFact.Type | PredictorDeckUncertainFact.Enchantment;
+                    if (definition.Levels.Select(level => level.Unplayable).Distinct().Count() > 1)
+                        fields |= PredictorDeckUncertainFact.Upgrade;
+                    return Deck.ReadTarget(card.Id, strikes.Scope, fields) != null;
+                })) reads &= ~PredictorCombatDomain.Deck;
+            }
             int targets = relic.Entry switch { "EMPTY_CAGE" => 2, "ASTROLABE" => 3, "NEW_LEAF" => 1, _ => 0 };
             if (targets > 0)
             {
@@ -339,6 +351,19 @@ internal sealed partial class PredictorRun
         List<RouteDependency> dependencies, bool entryOnly = false)
     {
         run._preview.Partial?.Synchronize(run.Working);
+        if (key.Entry == "TOUCH_OF_OROBAS")
+        {
+            // Its native replacement is the first starter relic's fixed
+            // upgrade. Those vanilla upgrades have no AfterObtained draw or
+            // deck-target effect, and the old starters have no removal effect.
+            return PredictorRouteCauseEvidence.Normalize(run.Context.Catalog!.StarterRelics
+                .SelectMany(starter => RouteRelicMembershipCauses(run, dependencies, starter.Entry)));
+        }
+        if (key.Entry == "DISTINGUISHED_CAPE")
+            return run.CanProjectLiveCurses() ? RouteLiveObtainRelicCauses(run, key, dependencies) :
+                CausesFor(dependencies, StreamKnowledgeDomain(run.Context.NonCombatStream(PredictorStream.Niche)));
+        if (key.Entry == "NEOWS_BONES")
+            return CausesFor(dependencies, StreamKnowledgeDomain(run.Context.NonCombatStream(PredictorStream.Rewards)));
         if (HasLiveDeckRandomObtainBoundary(run, key) || run._preview.Settings.Policy == PredictorRoutePreviewPolicy.LiveMapDefaults &&
             key.Entry == "LEAFY_POULTICE")
             return RouteLiveObtainRelicCauses(run, key, dependencies);

@@ -956,25 +956,20 @@ internal static partial class UiSurfaceChecks
                 await Frames(4);
                 var bridgeGroups = NeowOperationOverlay.DisplaySections(bridge, bridge.Branches.Single()).SelectMany(section => section.CardGroups).ToArray();
                 var bridgeHosts = Descendants(failureView).OfType<Control>().Where(node => node.Name.ToString().StartsWith("Rt2NeowCardStack_", StringComparison.Ordinal)).ToArray();
-                // Owner's later complete-sequence correction (e103273f)
-                // supersedes the old 15-face cap. Placement may wrap stacks.
+                var visibleProposals = proposals.Take(8).ToArray();
                 Check(failureView.SummaryDesiredSize == Vector2.Zero &&
-                    bridgeGroups.SelectMany(group => group.Cards).SequenceEqual(proposals) &&
-                    bridgeHosts.Length == (proposalCount <= 8 ? 1 : (proposalCount + 4) / 5) &&
-                    bridgeHosts.All(host => host.GetMeta("rt2_stacked").AsBool() == (proposalCount > 8)) &&
-                    bridgeHosts.Zip(bridgeHosts.Skip(1)).All(pair => pair.Second.GlobalPosition.Y > pair.First.GlobalPosition.Y ||
-                        Math.Abs(pair.Second.GlobalPosition.Y - pair.First.GlobalPosition.Y) < .1f &&
-                        pair.Second.GlobalPosition.X >= pair.First.GetGlobalRect().End.X) &&
+                    bridgeGroups.Single().Cards.SequenceEqual(visibleProposals) &&
+                    bridgeHosts.Length == 1 && !bridgeHosts[0].GetMeta("rt2_stacked").AsBool() &&
                     failureView.VisibleRegions.All(region => failureView.GetViewportRect().Encloses(region) &&
                         !region.Intersects(buttons[0].GetGlobalRect())),
-                    "Bridge preserves the full proposal order, shows a single row through eight, then ordered five-card stacks without a generic panel");
+                    "Bridge hover shows up to eight proposals in one unstacked row");
                 var bridgeFaces = Descendants(failureView).OfType<NCard>().ToArray();
-                Check(bridgeFaces.Length == proposalCount &&
-                    bridgeFaces.Select(card => card.Model!.Id.Entry).SequenceEqual(proposals.Select(card => card.Key.Entry)) &&
+                Check(bridgeFaces.Length == visibleProposals.Length &&
+                    bridgeFaces.Select(card => card.Model!.Id.Entry).SequenceEqual(visibleProposals.Select(card => card.Key.Entry)) &&
                     bridgeFaces.All(card => Math.Abs(card.GetParent<Control>().Scale.X - failureView.CardDisplayScale) < .001f) &&
-                    (proposalCount > 8 || bridgeFaces.Select(card => card.GetParent<Control>().GlobalPosition.Y).Distinct().Count() == 1) &&
+                    bridgeFaces.Select(card => card.GetParent<Control>().GlobalPosition.Y).Distinct().Count() == 1 &&
                     bridge.Branches.Single().Sections.Length == proposalCount,
-                    "Bridge renders every native face in the complete original projection at a fixed card scale");
+                    "Bridge renders the visible prefix at native preview scale and retains the full forecast");
                 await Screenshot($"operation-bridge-{proposalCount}-proposals-projection-zh.png");
             }
             foreach (int rewardGroups in new[] { 1, 2 })

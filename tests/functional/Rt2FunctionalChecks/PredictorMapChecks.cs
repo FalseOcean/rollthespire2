@@ -89,7 +89,7 @@ internal static class PredictorMapChecks
             ascensionProperty.SetValue(RunManager.Instance, oldAscension);
         }
         var spoilsPrediction = Beta111StandardMapGenerator.GenerateSpoilsMap(context.Seed,
-            state.Acts[1].Key, context.Ascension);
+            state.Acts[1].Key, context.Ascension, semantics: context.VersionResolution.SemanticProfileId);
         var nativeRng = (MegaCrit.Sts2.Core.Random.Rng)typeof(SpoilsActMap)
             .GetField("_rng", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
             .GetValue(nativeSpoils)!;
@@ -102,8 +102,7 @@ internal static class PredictorMapChecks
         {
             if (!sourcePoints.TryGetValue(p.Position, out var sourcePoint))
                 throw new InvalidOperationException($"MAP_RUNTIME Spoils missing native point {p.Position}");
-            var nativeChildren = sourcePoint.Children.Select(c => new MapPosition(c.coord.col, c.coord.row))
-                .OrderBy(c => c.Column).ThenBy(c => c.Row).ToArray();
+            var nativeChildren = sourcePoint.Children.Select(c => new MapPosition(c.coord.col, c.coord.row)).ToArray();
             if (!nativeChildren.SequenceEqual(p.Children))
                 throw new InvalidOperationException($"MAP_RUNTIME Spoils {p.Position} type {sourcePoint.PointType}/{p.Type} " +
                     $"children [{string.Join(',', nativeChildren)}]/[{string.Join(',', p.Children)}] " +
@@ -144,8 +143,8 @@ internal static class PredictorMapChecks
         Check(nativeBigPoints.Count == bigMap.Points.Count && bigMap.Points.All(p =>
             nativeBigPoints.TryGetValue(p.Position, out var sourcePoint) &&
             sourcePoint.PointType.ToString() == p.Type.ToString() &&
-            sourcePoint.Children.Select(c => new MapPosition(c.coord.col, c.coord.row)).OrderBy(c => c.Column)
-                .ThenBy(c => c.Row).SequenceEqual(p.Children)), "native BigGameHunter on Spoils map");
+            sourcePoint.Children.Select(c => new MapPosition(c.coord.col, c.coord.row)).SequenceEqual(p.Children)),
+            "native BigGameHunter on Spoils map");
 
         var furRelic = (FurCoat)ModelDb.Relic<FurCoat>().ToMutable();
         var furState = spoilState with
@@ -286,14 +285,15 @@ internal static class PredictorMapChecks
                 // its provider counter describes the original Standard generation.
                 int nativeCalls = MapRngCalls(variant.Golden ? standard : oracle);
                 var key = new ModelKey(native.Act.Id.Category, native.Act.Id.Entry);
+                var semantics = baseline.Context.VersionResolution.SemanticProfileId;
                 var projection = PredictorMapProjection.Generate(seed, key, 1, ascension, playersCount,
-                    native.Act.HasSecondBoss, variant.Golden, variant.Spoils, variant.BigGame);
+                    native.Act.HasSecondBoss, variant.Golden, variant.Spoils, variant.BigGame, CancellationToken.None, semantics);
                 Check(PredictedGeometry(projection) == graph, "shared provider native full graph " + label);
                 Check(projection.RngCalls == nativeCalls,
                     $"shared provider map RNG {label}: native={nativeCalls} predicted={projection.RngCalls}");
                 var actualCapture = InRunMapSnapshot.Actual(native);
-                var projectedCapture = InRunMapSnapshot.Projected(native, 1);
-                var repeatedCapture = InRunMapSnapshot.Projected(native, 1);
+                var projectedCapture = InRunMapSnapshot.Projected(native, 1, semantics);
+                var repeatedCapture = InRunMapSnapshot.Projected(native, 1, semantics);
                 Check(PredictedGeometry(actualCapture) == graph && PredictedGeometry(projectedCapture) == graph &&
                     PredictedGeometry(repeatedCapture) == graph && projectedCapture.RngCalls == nativeCalls &&
                     repeatedCapture.RngCalls == nativeCalls, "UI actual/projected capture geometry and repeatability " + label);

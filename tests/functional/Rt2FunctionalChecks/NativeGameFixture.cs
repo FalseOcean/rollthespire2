@@ -10,11 +10,21 @@ using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.TestSupport;
+using RolltheSpire2.Compatibility;
 
 // The supported game builds expose different setup and test-support APIs.
 // Keep the fixtures running the native implementation belonging to the loaded game.
 internal static class NativeGameFixture
 {
+    public static string GameVersionOr(string fixtureVersion)
+    {
+        if (Environment.GetEnvironmentVariable("RT2_NATIVE_GAME_PCK") is not { Length: > 0 } pack)
+            return fixtureVersion;
+        string releaseInfo = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(pack))!, "release_info.json");
+        var detected = GameVersionDetector.DetectFromCandidates([releaseInfo]);
+        return detected.IsExact ? detected.NormalizedVersion : fixtureVersion;
+    }
+
     public static AscensionManager StandardAscension(int level)
     {
         var current = typeof(AscensionManager).GetConstructor([typeof(GameMode), typeof(int)]);

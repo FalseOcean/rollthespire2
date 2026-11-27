@@ -135,8 +135,7 @@ internal static partial class UiSurfaceChecks
                         !labels.Any(text => text.Contains("尚未确定", StringComparison.Ordinal)),
                         "Mirror native hover names the priced Courier row as restock without copy cards or generic awaiting-choice text");
                 }, false);
-            // The non-Courier projection keeps its ordinary copy preview; the
-            // conditional shortcut must neither promise restock nor consume RNG.
+            // The buyer chooses the copy. Only Courier adds a hidden result.
             // Removing/re-adding a native relic permanently sets its
             // HasBeenRemovedFromState hook flag. Use a detached absence variant
             // so this negative case cannot disable Courier in later native work.
@@ -144,11 +143,9 @@ internal static partial class UiSurfaceChecks
                 Relics = snapshot.State.Relics.Where(relic => relic.Key.Entry != "THE_COURIER").ToImmutableArray() } };
             string beforeWithoutCourier = signature();
             var ordinary = SurfaceOperationPreview.BuildShop(withoutCourier, entryId);
-            var normalRelic = RelicOperationPreview.Build(withoutCourier,
-                [new BuyShopEntry(entryId, ((PredictorOperationShopScene)withoutCourier.Scene).Revision)], new("RELIC", "DOLLYS_MIRROR"));
-            check(JsonSerializer.Serialize(ordinary) == JsonSerializer.Serialize(normalRelic) && signature() == beforeWithoutCourier &&
-                ordinary.Branches.SelectMany(branch => branch.Sections).All(section => section.Source.Entry != "THE_COURIER"),
-                "without Courier Mirror preserves its existing relic preview and does not invent restock");
+            check(ordinary.Branches.IsEmpty && ordinary.Notices.IsEmpty && ordinary.PendingReasons.IsEmpty &&
+                ordinary.Faults.IsEmpty && signature() == beforeWithoutCourier,
+                "without Courier a player-chosen Mirror copy has no purchase forecast");
             player.Gold = mirror.Cost - 1;
             var unaffordableSnapshot = Capture();
             var unaffordableScene = (PredictorOperationShopScene)unaffordableSnapshot.Scene;
@@ -158,7 +155,7 @@ internal static partial class UiSurfaceChecks
             check(!courier.HasBeenRemovedFromState && !mirror.EnoughGold && !currentQuote.Affordable && currentQuote.Cost == mirror.Cost,
                 "Mirror insufficient-gold fixture uses the same active-Courier native/model quote;gold=" + player.Gold +
                 ";nativeCost=" + mirror.Cost + ";modelCost=" + currentQuote.Cost + ";disposition=" + unaffordableResult.Disposition);
-            await exercise("shop-mirror-insufficient-gold", slot, slot.Hitbox, "DOLLYS_MIRROR",
+            await exercise("shop-mirror-insufficient-gold", slot, slot.Hitbox, "THE_COURIER",
                 captured => captured is PredictorOperationShopScene,
                 preview => preview.Notices.SequenceEqual(["Purchase:InsufficientGold"]) && preview.Branches.IsEmpty,
                 (view, _) => check(Descendants(view).OfType<Label>().Any(label => label.Text == "金币不足"),

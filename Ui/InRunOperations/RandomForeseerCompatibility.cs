@@ -3,19 +3,18 @@ using RolltheSpire2.Bootstrap;
 
 namespace RolltheSpire2.Ui.InRunOperations;
 
-// Known means RF is loaded. The Owner's coexistence policy treats its base
-// predictions as enabled without inspecting RF configuration or implementation.
+// Loading and effective feature coverage are separate observations.
 internal enum RandomForeseerStatus { NotLoaded, Known, Unknown }
 
 internal sealed record RandomForeseerSnapshot(
     RandomForeseerStatus Status, string Version, string Reason)
 {
-    internal string Signature => $"{Status}:{Version}:{Reason}";
+    internal RfFeatures Features { get; init; }
+    internal string Signature => $"{Status}:{Version}:{Reason}:{Features.Known}:{Features.Enabled}:{Features.Net}";
     internal bool IsLoaded => Status == RandomForeseerStatus.Known;
 }
 
-// Reads only the game's loaded-mod registry. RT2 owns supplemental output and
-// keeps its own display whenever RF loading cannot be confirmed.
+// An installed but inactive package supplies no coverage.
 internal static class RandomForeseerCompatibility
 {
     private static string? _lastFailure;
@@ -30,7 +29,7 @@ internal static class RandomForeseerCompatibility
             {
                 if (mod.state != ModLoadState.Loaded || mod.manifest?.id != "RandomForeseer") continue;
                 _lastFailure = null;
-                return new(RandomForeseerStatus.Known, mod.manifest.version ?? "", "Loaded");
+                return new(RandomForeseerStatus.Known, mod.manifest.version ?? "", "Loaded") { Features = RandomForeseerSettings.Read() };
             }
             _lastFailure = null;
             return new(RandomForeseerStatus.NotLoaded, "", "NotLoaded");

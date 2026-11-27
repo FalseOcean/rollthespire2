@@ -10,6 +10,7 @@ internal static class OperationPreviewEligibility
         bool modern = false, bool hiddenObtain = false) =>
         !PublicOnly(eventEntry, optionKey) &&
         !(modern && (eventEntry, optionKey) == ("DOORS_OF_LIGHT_AND_DARK", "LIGHT")) &&
+        !(eventEntry == "RELIC_TRADER" && offeredRelic && !hiddenObtain) &&
         !(eventEntry == "THERMAE_NONUPEIPE" && (optionKey != "DRINK_WATERS" || !hiddenObtain)) &&
         !(eventEntry == "TRIAL" && optionKey is not
             ("MERCHANT_GUILTY" or "NONDESCRIPT_GUILTY" or "NONDESCRIPT_INNOCENT")) &&

@@ -11,11 +11,13 @@ internal sealed record PredictorEventOccurrenceCandidate(ModelKey Event, ModelKe
     int RawOrdinal, int Cursor, EventCandidateEligibilityKind EligibilityKind,
     bool IsUnconditional, bool IsCycleFallback)
 {
+    internal bool CanExclude => !IsUnconditional && !IsCycleFallback;
     // Assumed admission never supplies a concrete health/inventory fact.
     public bool HealthEligibilityAssumed { get; init; }
     public bool DeckEligibilityAssumed { get; init; }
     public bool EligibilityAssumed { get; init; }
     public bool ExcludedByPlayer { get; init; }
+    public bool OmittedByPotionDefault { get; init; }
     public ImmutableArray<PredictorCombatPendingCause> EligibilityPendingCauses { get; init; } = [];
 }
 
@@ -24,7 +26,13 @@ internal sealed record PredictorEventOccurrenceCandidate(ModelKey Event, ModelKe
 internal sealed record PredictorEventOccurrenceExclusion(ModelKey QueueEvent, int Cursor);
 
 internal sealed record PredictorEventOccurrenceObservation(string NodeId, int Act, int Cursor,
-    ImmutableArray<PredictorEventOccurrenceCandidate> Candidates, bool ExhaustionFallbackAvailable);
+    ImmutableArray<PredictorEventOccurrenceCandidate> Candidates, bool ExhaustionFallbackAvailable)
+{
+    internal PredictorEventOccurrenceCandidate? Match(ChooseEventOccurrence selection) =>
+        selection.ExpectedCursor != Cursor ? null : Candidates.FirstOrDefault(candidate => !candidate.ExcludedByPlayer &&
+            candidate.Event == selection.Event && candidate.QueueEvent == selection.QueueEvent &&
+            candidate.RawOrdinal == selection.RawOrdinal && candidate.Cursor == selection.SelectedCursor);
+}
 
 // Bind the authored hypothesis to the displayed identity and queue boundary.
 // A raw ordinal alone cannot distinguish a first pass from exhausted repetition.

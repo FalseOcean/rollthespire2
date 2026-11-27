@@ -92,6 +92,7 @@ public static partial class FamilyExecutionCoordinator
         var execution = plan with { Model = Compilation.SearchRuleRemainders.ForExecution(plan.Model, rules) };
         if (plan.Model.CompiledSearch.Context.Party is not null) selected = PlanParty(execution, registered);
         else selected = PlanSingleplayer(execution, registered, gpu, allowFloat64Allocations: !numericRestriction);
+        selected = WithGpuRootBatchSize(selected, plan.RunOptions.GpuRootBatchSize);
         if (numericRestriction && selected.OrderedFamilies.Any(f => !CanRunWithoutFloat64(f)))
             throw new InvalidOperationException("GpuNumericRequirementsViolation:RestrictedPlannerSelectedUnavailableBody");
         if (numericRestriction)
@@ -419,7 +420,8 @@ public static partial class FamilyExecutionCoordinator
         var session = new ProductionSearchSession(
             plan, executionPlan, eta, executionWindowSize, queueCapacity, diagnosticSink, traceSingleCandidateSeed, failOnPhysicalRecovery,
             continuation: continuation, allowInitialGpuCreationFallback: !HasExplicitPhysicalControl(),
-            enableGpuPowerDiagnostics: enableGpuPowerDiagnostics, logWorkload: true);
+            enableGpuPowerDiagnostics: enableGpuPowerDiagnostics, logWorkload: true,
+            enableAdaptiveGpuBatch: plan.RunOptions.GpuRootBatchSize == 0 && !HasExplicitPhysicalControl());
         RuntimeLog.TryBackgroundInfo($"searchStartup=true;phase=CoordinatorReturned;planningMs={planningMs:F4};allocationEvidenceMs={Stopwatch.GetElapsedTime(started, etaStarted).TotalMilliseconds - planningMs:F4};etaMs={Stopwatch.GetElapsedTime(etaStarted, sessionStarted).TotalMilliseconds:F4};sessionConstructionMs={Stopwatch.GetElapsedTime(sessionStarted).TotalMilliseconds:F4}");
         return session;
     }
@@ -430,6 +432,14 @@ public static partial class FamilyExecutionCoordinator
             return plan.Model.CompiledSearch.Context.Party is not null ? CpuFilterExecution.Capacity :
                 Math.Min(ProductionSearchSession.ExactOnlyMaximumBatchSize, Math.Max(256, plan.WorkerCount * 128));
         bool gpu = families.Any(f => f.UsesGpu);
+        if (plan.RunOptions.GpuRootBatchSize > PrivateOrdinalBuffer.Capacity &&
+            families[0].MaximumGpuRootWindow > PrivateOrdinalBuffer.Capacity &&
+            (families.Count == 1 || CanExpandPublicOrder(families)))
+        {
+            int ceiling = families.Count == 1 ? families[0].MaximumGpuRootWindow :
+                Math.Min(families[0].MaximumGpuRootWindow, 1 << 25);
+            return Math.Min(plan.RunOptions.GpuRootBatchSize, ceiling);
+        }
         // A public root preference is distinct from private CPU chunks and GPU
         // groups. CPU-only bodies may use their own declared window when no
         // smaller public boundary was selected.
@@ -437,6 +447,28 @@ public static partial class FamilyExecutionCoordinator
         return families.Where(f => !gpu || f.UsesGpu).Select(f => f.PreferredRootWindowSize).Where(size => size.HasValue)
             .Select(size => size!.Value).Append(Math.Min(fallback, families[0].MaximumEntryRootWindowSize ?? fallback))
             .Concat(families.Where(f => f.MaximumRootWindowSize.HasValue).Select(f => f.MaximumRootWindowSize!.Value)).Min();
+    }
+
+    private static bool CanExpandPublicOrder(IReadOnlyList<FilterBodyDescription> families) =>
+        families[0].UsesGpu && families.All(body => !body.Coverage.Contains(StandardMapFamily.Id) &&
+            body.MaximumRootWindowSize is null && body.MaximumEntryRootWindowSize is null &&
+            (!body.UsesGpu || (body.PreferredRootWindowSize ?? PrivateOrdinalBuffer.Capacity) >= PrivateOrdinalBuffer.Capacity));
+
+    internal static FamilyExecutionPlan WithGpuRootBatchSize(FamilyExecutionPlan selected, int requested)
+    {
+        if (requested <= PrivateOrdinalBuffer.Capacity || selected.Stages.Count == 0 ||
+            selected.Stages.Count > 1 && !CanExpandPublicOrder(selected.OrderedFamilies)) return selected;
+        var stage = selected.Stages[0];
+        int limit = selected.Stages.Count == 1 ? requested : Math.Min(requested, 1 << 25);
+        var body = stage.Family;
+        if (body.IsPrivateTransport && body.MaximumGpuRootWindow > PrivateOrdinalBuffer.Capacity)
+        {
+            int capacity = Math.Min(body.MaximumGpuRootWindow, limit);
+            if (capacity != body.WindowCapacity) body = body with { WindowCapacity = capacity };
+        }
+        else body = GpuRootWindow.PrepareStandalone(body, limit);
+        return ReferenceEquals(body, stage.Family) ? selected :
+            selected with { Stages = [stage with { Family = body }, ..selected.Stages.Skip(1)] };
     }
 
     internal static IReadOnlyList<FilterBodyDescription> CreateRegisteredFamilies(PreparedSearch plan, bool? gpuAvailable = null,

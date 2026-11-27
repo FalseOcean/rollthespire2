@@ -8,9 +8,9 @@ internal sealed partial class WorkspaceShell
 {
     private OptionButton? _mapLossyBatchSize;
 
-    private void BuildMapLossySettings(VBoxContainer advanced)
+    private void BuildMapLossySettings(VBoxContainer rows)
     {
-        var map = SettingsSection(advanced, "settings.map_lossy.title", "settings.map_lossy.help");
+        var map = SettingsRow(rows, "settings.map_lossy.title", "settings.map_lossy.help");
         map.AddChild(SettingsLabel("settings.map_lossy.batch", 17));
         var actions = new HFlowContainer();
         actions.AddThemeConstantOverride("h_separation", 12);
@@ -22,7 +22,6 @@ internal sealed partial class WorkspaceShell
         actions.AddChild(_mapLossyBatchSize);
         _mapLossyBatchSize.ItemSelected += index =>
         {
-            if (_bindingSettings) return;
             _persistence!.SetMapLossyGpuBatchSize(MapLossyOptions.SupportedGpuBatchSizes[(int)index]);
             _references?.SyncSearchPreferences();
             RefreshSettings();

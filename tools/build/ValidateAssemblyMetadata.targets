@@ -1,0 +1,35 @@
+<Project>
+  <UsingTask TaskName="Rt2ValidateMethodLists" TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <AssemblyPath ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Reference Include="$(MSBuildSDKsPath)/Microsoft.NET.Sdk/tools/net472/System.Reflection.Metadata.dll" />
+      <Reference Include="$(MSBuildSDKsPath)/Microsoft.NET.Sdk/tools/net472/System.Collections.Immutable.dll" />
+      <Using Namespace="System.IO" />
+      <Using Namespace="System.Reflection.Metadata" />
+      <Using Namespace="System.Reflection.PortableExecutable" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        using (var stream = File.OpenRead(AssemblyPath))
+        using (var pe = new PEReader(stream))
+        {
+            var metadata = pe.GetMetadataReader();
+            // A 16-bit MethodList may overflow its one-past-the-end value.
+            // Inspect emitted ranges themselves so valid wide tables pass.
+            foreach (var handle in metadata.TypeDefinitions)
+            {
+                var type = metadata.GetTypeDefinition(handle);
+                if (type.GetMethods().Count >= 0) continue;
+                Log.LogError("RT2 invalid MethodList for {0} in {1} ({2} MethodDef rows). Rebuild with a corrected metadata writer or change the compiled method count.",
+                    metadata.GetString(type.Name), AssemblyPath, metadata.MethodDefinitions.Count);
+                break;
+            }
+        }
+      ]]></Code>
+    </Task>
+  </UsingTask>
+  <Target Name="ValidateRt2MethodLists" BeforeTargets="CopyFilesToOutputDirectory">
+    <Rt2ValidateMethodLists AssemblyPath="@(IntermediateAssembly)" />
+  </Target>
+</Project>

@@ -69,6 +69,9 @@ internal static partial class AutomaticPrivateSerialInvocation
             string role = neowIndex == 0 ? "denseBody" : "compactBody";
             RuntimeLog.TryBackgroundInfo($"sharedRootNeow{fusion.EventGroup}=true;logicalOrder={order};{role}={sharedRoot.PhysicalRevision};coverage={string.Join(',', sharedRoot.Coverage)};independentEventStream=true");
         }
+        int maximumWindow = verify ? PrivateOrdinalBuffer.Capacity : GpuRootWindow.MaximumFor(dispatches);
+        int requestedWindow = preferences.GpuRootBatchSize > PrivateOrdinalBuffer.Capacity
+            ? Math.Min(preferences.GpuRootBatchSize, maximumWindow) : PrivateOrdinalBuffer.Capacity;
         var preparation = new PreparedFilter(id) {
             Coverage = families.SelectMany(f => f.Coverage).ToArray(),
             Obligations = families.SelectMany(f => f.Preparation.EffectiveObligations).ToArray(),
@@ -79,7 +82,7 @@ internal static partial class AutomaticPrivateSerialInvocation
         return new(preparation, revision, model.ProfileId) {
             UsesGpu = true, InputModes = FilterInputModes.Dense, InputIdentity = model.SnapshotFingerprint,
             PlayersCount = model.Authority.PlayersCount, CpuWorkers = preferences.WorkerCount,
-            WindowCapacity = PrivateOrdinalBuffer.Capacity,
+            WindowCapacity = requestedWindow, MaximumGpuRootWindow = maximumWindow > PrivateOrdinalBuffer.Capacity ? maximumWindow : 0,
             NumericRequirements = families.Aggregate(GpuNumericRequirements.None, (requirements, family) => requirements | family.NumericRequirements),
             PhysicalBodies = families, IsPrivateTransport = true, EstimationStages = estimates,
             RequiresBonesCapsuleDiagnostics = families.Any(f => f.RequiresBonesCapsuleDiagnostics),
@@ -108,7 +111,7 @@ internal static partial class AutomaticPrivateSerialInvocation
             bool smallExact, string[] followingCoverage, FilterRuntimeServices services)
         {
             Body = body; _families = families; _verify = verify; FollowingCoverage = followingCoverage;
-            _smallCandidateExact = smallExact ? new SmallCandidateExactPolicy() : null;
+            _smallCandidateExact = smallExact ? new SmallCandidateExactPolicy(coverage => services.SmallCandidateExact?.ObserveSkippedCoverage(coverage)) : null;
             if (verify) _references = body.PhysicalBodies.Select(f =>
                 (f.CreateExecution ?? throw new InvalidOperationException("AutomaticPrivateSerial.ReferenceFactoryMissing"))(f, services)).ToArray();
         }
@@ -117,9 +120,26 @@ internal static partial class AutomaticPrivateSerialInvocation
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (_faulted || !input.IsDense) throw new InvalidOperationException("AutomaticPrivateSerial.InvocationInvariant");
             try {
-                _gpu ??= await services.ExecuteGpuAsync(rd => new Gpu(rd, _families, services.Costs), token).ConfigureAwait(false);
-                var run = await services.ExecuteGpuAsync(_ => _gpu.Execute(input, Order, _verify, _smallCandidateExact, FollowingCoverage, token), token).ConfigureAwait(false);
-                Volatile.Write(ref _lastDensePrefixCount, _gpu.LastDensePrefixCount);
+                var run = await services.ExecuteGpuAsync(rd => {
+                    int capacity = PrivateOrdinalBuffer.Capacity;
+                    if (input.Count > capacity && input.Count <= Body.WindowCapacity)
+                        capacity = (int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)input.Count);
+                    if (_gpu is not null && _gpu.RootCapacity != capacity)
+                    {
+                        _gpu.Dispose();
+                        _gpu = null;
+                    }
+                    _gpu ??= new Gpu(rd, _families, services.Costs, rootCapacity: capacity);
+                    try { return _gpu.Execute(input, Order, _verify, _smallCandidateExact, FollowingCoverage, token); }
+                    catch (GpuRootWindowBindingRefused failure)
+                    {
+                        var rejected = _gpu;
+                        _gpu = null;
+                        FamilyGpuComputeUtility.CleanupAfterFailure(failure, rejected.Dispose, "LargeWindow.RejectedBinding");
+                        throw;
+                    }
+                }, token).ConfigureAwait(false);
+                Volatile.Write(ref _lastDensePrefixCount, _gpu!.LastDensePrefixCount);
                 if (_verify) {
                     var expected = input;
                     int nextReference = 0;
@@ -142,6 +162,7 @@ internal static partial class AutomaticPrivateSerialInvocation
                     1, run.Ms, includeLive: _batches > 1);
                 return run.Output;
             }
+            catch (GpuRootWindowBindingRefused) { throw; }
             catch (OperationCanceledException) { throw; }
             catch { _faulted = true; throw; }
         }
@@ -163,6 +184,9 @@ internal static partial class AutomaticPrivateSerialInvocation
     private sealed partial class Gpu : IDisposable
     {
         private readonly RenderingDevice _rd;
+        private readonly int _rootCapacity;
+        internal int RootCapacity => _rootCapacity;
+        private readonly GpuRootStorageBudget? _storageBudget;
         private readonly PrivateOrdinalBuffer?[] _buffers;
         private readonly FamilyPrivateGpuExecution?[] _executors;
         private readonly FilterBodyDescription[] _families;
@@ -172,11 +196,18 @@ internal static partial class AutomaticPrivateSerialInvocation
         private bool _disposed;
         internal string Device { get; }
         internal double SetupMs { get; private set; }
-        internal Gpu(RenderingDevice rd, FilterBodyDescription[] families, FilterCostObserver observer, IPrivateGpuScratchLease? denseScratchDonor = null)
+        internal Gpu(RenderingDevice rd, FilterBodyDescription[] families, FilterCostObserver observer, IPrivateGpuScratchLease? denseScratchDonor = null, int rootCapacity = PrivateOrdinalBuffer.Capacity)
         {
             _denseScratchDonor = denseScratchDonor;
             _rd = rd;
             _families = families; _observer = observer;
+            _rootCapacity = rootCapacity;
+            if (rootCapacity > PrivateOrdinalBuffer.Capacity)
+            {
+                if (rootCapacity > GpuRootWindow.MaximumFor(families) || denseScratchDonor is not null)
+                    throw new ArgumentOutOfRangeException(nameof(rootCapacity));
+                _storageBudget = new(rootCapacity);
+            }
             _buffers = new PrivateOrdinalBuffer?[Math.Min(2, families.Length - 1)];
             _executors = new FamilyPrivateGpuExecution?[families.Length];
             Device = rd.GetDeviceName();
@@ -186,8 +217,9 @@ internal static partial class AutomaticPrivateSerialInvocation
             IReadOnlyList<string> followingCoverage, CancellationToken token, FamilyPrivateGpuOutcome? preparedPrefix = null)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (input.Batch.BatchCandidateCount > PrivateOrdinalBuffer.Capacity)
+            if (input.Batch.BatchCandidateCount > _rootCapacity)
                 throw new InvalidDataException("AutomaticPrivateSerial.InputOutsideCapacity");
+            using var budgetScope = _storageBudget?.Enter();
             int count = input.Count;
             var snapshots = verify ? new FamilyCandidateSet[_executors.Length] : [];
             FamilyCandidateSet? final = input, smallOutput = null;
@@ -209,7 +241,12 @@ internal static partial class AutomaticPrivateSerialInvocation
                     break;
                 }
                 timer.Stop();
-                var executor = EnsureExecutor(i);
+                FamilyPrivateGpuExecution executor;
+                try { executor = EnsureExecutor(i, count); }
+                catch (Exception error) when (_storageBudget is not null && GpuRootWindow.IsStorageRefusal(error))
+                {
+                    throw new GpuRootWindowBindingRefused(_families[i].FamilyId, error);
+                }
                 timer.Start();
                 var result = i == 0 && preparedPrefix is { } prefix
                     ? executor.CompletePrepared(input.Batch, count, prefix) : executor.Execute(input.Batch, count, token);
@@ -230,8 +267,13 @@ internal static partial class AutomaticPrivateSerialInvocation
             return (final, timer.Elapsed.TotalMilliseconds, snapshots);
         }
 
-        internal FamilyPrivateGpuExecution EnsureExecutor(int index)
+        internal FamilyPrivateGpuExecution EnsureExecutor(int index, int inputCount = PrivateOrdinalBuffer.Capacity)
         {
+            // The first producer of buffer 1 sees at least as many candidates
+            // as every later producer in this batch. Grow before this first write.
+            if (index == 1 && _families.Length >= 3 && (_storageBudget is not null ||
+                _families.Length <= 4 && _families[index].FamilyId == TransformationAggregateFamily.Id))
+                EnsureSecondBuffer(inputCount);
             if (_executors[index] is { } existing) return existing;
             long started = Stopwatch.GetTimestamp();
             try
@@ -239,7 +281,7 @@ internal static partial class AutomaticPrivateSerialInvocation
                 PrivateOrdinalBuffer? incoming = index == 0 ? null : (_buffers[(index - 1) % 2]
                     ?? throw new InvalidDataException("AutomaticPrivateSerial.InputBufferMissing"));
                 PrivateOrdinalBuffer? outgoing = index == _families.Length - 1 ? null :
-                    (_buffers[index % 2] ??= new PrivateOrdinalBuffer(_rd));
+                    (_buffers[index % 2] ??= new PrivateOrdinalBuffer(_rd, _rootCapacity));
                 var executor = index == 0 && _denseScratchDonor is not null
                     ? (_families[index].BindPrivateShared ?? throw new InvalidOperationException("AutomaticPrivateSerial.SharedScratchBindingUnavailable"))(_rd, incoming, outgoing, _denseScratchDonor)
                     : _families[index].BindPrivate!(_rd, incoming, outgoing);
@@ -249,6 +291,26 @@ internal static partial class AutomaticPrivateSerialInvocation
             }
             finally { SetupMs += Stopwatch.GetElapsedTime(started).TotalMilliseconds; }
         }
+        private void EnsureSecondBuffer(int inputCount)
+        {
+            var previous = _buffers[1];
+            if (previous is not null && inputCount <= previous.ElementCapacity) return;
+            if (inputCount <= 0 || inputCount > _rootCapacity)
+                throw new InvalidDataException("AutomaticPrivateSerial.SecondBufferInputOutsideCapacity");
+            long started = Stopwatch.GetTimestamp();
+            int capacity = (int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)inputCount);
+            if (previous is not null)
+            {
+                // Release all downstream bindings that might borrow this ping-pong slot.
+                PrivateOrdinalBuffer.DisposeAll([.._executors.Skip(1).Reverse(), previous]);
+                Array.Clear(_executors, 1, _executors.Length - 1);
+                _buffers[1] = null;
+            }
+            _buffers[1] = new PrivateOrdinalBuffer(_rd, capacity);
+            SetupMs += Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            RuntimeLog.TryBackgroundInfo($"privateOrdinalAllocation=true;producer={_families[1].FamilyId};input={inputCount};capacity={capacity};previousCapacity={previous?.ElementCapacity ?? 0}");
+        }
+
         public void Dispose()
         {
             if (_disposed) return;

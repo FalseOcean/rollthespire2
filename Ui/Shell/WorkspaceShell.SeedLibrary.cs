@@ -89,7 +89,7 @@ internal sealed partial class WorkspaceShell
                 if (_predictor is null) CreatePredictor();
                 _predictorController!.OpenSeedLibraryEntry(entry);
                 SelectTask(Workspace.Analysis);
-                _predictor!.ShowLibraryReceipt(entry.Source == SeedLibrarySource.Developer
+                _predictor!.ShowLibraryReceipt(_predictorController.ReopenedWithoutHistoricalOpening ? HistoricalOpeningNotice() : entry.Source == SeedLibrarySource.Developer
                     ? (_languageCode == "zh" ? "已按推荐配置重新预测；游玩说明见资料库。" : "Predicted using the recommended configuration. See the library for play instructions.")
                     : (_languageCode == "zh" ? "已按保存的上下文重新预测；收藏备注仅供参考。" : "Predicted again using the saved context. Saved notes are historical."));
             }
@@ -98,6 +98,7 @@ internal sealed partial class WorkspaceShell
         if (_references is not null)
         {
             _seedLibrary.SearchBusy = () => _references.HasActiveSearch;
+            _seedLibrary.RecheckHistory = _references.RecheckHistory;
             _seedLibrary.PresetUseRequested += preset =>
             {
                 try { _references.ApplyPreset(preset); SelectTask(Workspace.Search); }

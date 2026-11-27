@@ -1449,12 +1449,12 @@ internal static partial class UiSurfaceChecks
                     await AwaitPageReady(root, shell);
                     ((Button)shell.FindChild("SettingsCategory2", true, false)).EmitSignal(Button.SignalName.Pressed);
                     await AwaitPageReady(root, shell);
-                    var origin = Field<LineEdit>(shell, "_originInput"); origin.Text = "000000000321"; origin.GrabFocus();
+                    var history = Field<SpinBox>(shell, "_queryHistoryLimit"); history.Value = 7; history.GetLineEdit().GrabFocus();
                     string cursor = store.CurrentPersistentOriginSeed; Control settings = Field<Control>(shell, "_settingsPage");
                     await RefreshPreserved("settings");
-                    Check(settings.IsVisibleInTree() && origin.Text == "000000000321" && store.CurrentPersistentOriginSeed == cursor,
-                        "unsubmitted settings text and cursor preserved");
-                    Check(root.GetViewport().GuiGetFocusOwner() == origin, "input focus survives appearance changes");
+                    Check(settings.IsVisibleInTree() && history.Value == 7 && store.CurrentPersistentOriginSeed == cursor,
+                        "history limit and cursor preserved");
+                    Check(root.GetViewport().GuiGetFocusOwner() == history.GetLineEdit(), "input focus survives appearance changes");
                     await Snapshot($"mainpanel-{locale}-{size.X}-settings", settings);
                     Call(shell, "CloseSettings");
                     Navigate("Encyclopedia"); await Snapshot($"mainpanel-{locale}-{size.X}-encyclopedia", Field<Control>(shell, "_encyclopediaCanvas"));

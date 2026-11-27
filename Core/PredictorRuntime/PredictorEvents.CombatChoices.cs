@@ -26,7 +26,7 @@ internal sealed partial class PredictorRun
                 {
                     // HP only determines the healing amount. The mimicked
                     // rest's reward plans and fight successor are independent.
-                    _preview.Event.UnknownHealingAmount = true;
+                    _preview.Event.UnknownNonlethalHealthAmount = true;
                     int maxHpGain = 5 * Working.Relics.Count(r => !r.Melted && r.Key.Entry == "STONE_HUMIDIFIER");
                     if (maxHpGain != 0) ApplyEventHealth(maxHpGain, maxHpGain);
                     if (BeginEventMimicRestHeal(21)) ResumeEventAfterMimicRestHeal(21);

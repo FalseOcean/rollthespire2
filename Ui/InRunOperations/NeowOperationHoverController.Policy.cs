@@ -1,10 +1,14 @@
 using System.Collections.Immutable;
 using Godot;
 using MegaCrit.Sts2.Core.Context;
+using MegaCrit.Sts2.Core.Combat;
+using MegaCrit.Sts2.Core.Entities.Merchant;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Relics;
 using MegaCrit.Sts2.Core.Nodes;
+using MegaCrit.Sts2.Core.Nodes.Events;
+using MegaCrit.Sts2.Core.Nodes.Rewards;
 using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
 using MegaCrit.Sts2.Core.Nodes.Screens.Overlays;
 using MegaCrit.Sts2.Core.Nodes.Screens.Shops;
@@ -43,7 +47,23 @@ internal sealed partial class NeowOperationHoverController
         var preferences = InRunFeaturePreferences.CaptureOperationModes();
         var visible = ImmutableHashSet.CreateBuilder<string>(StringComparer.Ordinal);
         bool Enabled(string id) => preferences.Get(id) != OperationPredictionMode.Off;
-        bool Basic(string id) => OperationPredictionPolicy.Wants(preferences.Get(id), rf.IsLoaded, false);
+        bool Basic(string id)
+        {
+            if (preferences.Get(id) != OperationPredictionMode.Auto) return Enabled(id);
+            if (!rf.Features.Active) return true;
+            bool duplicate = (request.Kind, _owner) switch
+            {
+                (Kind.Ancient, NEventOptionButton button) => rf.Features.Pickup(button.Option?.Relic),
+                (Kind.Event, NEventOptionButton button) => rf.Features.Event(button),
+                (Kind.Reward, NRewardButton { Reward: RelicReward reward }) => rf.Features.Pickup(reward.Relic),
+                (Kind.Shop, NMerchantRelic { Entry: MerchantRelicEntry entry }) when id.StartsWith("relic:", StringComparison.Ordinal)
+                    => rf.Features.Pickup(entry.Model),
+                (Kind.CardTarget, _) => rf.Features.Transform(NOverlayStack.Instance?.Peek() as NDeckTransformSelectScreen),
+                (Kind.Potion, _) => rf.Features.Covers(id, CombatManager.Instance.IsInProgress && player.Creature.CombatState != null),
+                _ => rf.Features.Covers(id)
+            };
+            return !duplicate;
+        }
         bool Extra(string id) => Enabled(id);
         void Show(string id, bool enabled) { if (enabled) visible.Add(id); }
         string primary = OperationPredictionPolicy.SourceFeature(request.Source);
@@ -100,7 +120,10 @@ internal sealed partial class NeowOperationHoverController
                 transformSource = transformRoot;
                 bool composite = request.Source.Entry is "NEOWS_BONES" or "LARGE_CAPSULE";
                 bool transformExtra = transformRoot && transformEffects && HasTransformExtras(player);
-                origin = relicSlot && sourceEnabled && (Basic(primary) || composite && chain || transformExtra);
+                origin = _owner is NMerchantRelic { Entry: MerchantRelicEntry { Model: { } item } } &&
+                    SurfaceOperationForecast.MayShowShopObtain(item.Id.Entry) &&
+                    OperationSurfaceHoverCapture.MayDisplayRelicObtain(item) && sourceEnabled &&
+                    (Basic(primary) || composite && chain || transformExtra);
                 chainOnly = origin && !Basic(primary) && composite && chain && !transformExtra;
                 showPrimary = origin; transforms = origin;
                 bool hasRestock = courier || request.Source.Entry == "THE_COURIER";
@@ -202,10 +225,13 @@ internal sealed partial class NeowOperationHoverController
             IncludeRewardAlternative: alternative, IncludeCardTransforms: transforms, IncludeRewardSequence: sequence,
             IncludeSacrificeProgress: progress, IncludeConditionalRestock: conditional, IncludeRestockWhetstone: whetstone,
             IncludeObtainContinuation: chain);
+        bool autoBones = request.Source.Entry == "NEOWS_BONES" && preferences.Get(primary) == OperationPredictionMode.Auto &&
+            rf.Features.Active && rf.Features.On(RfSwitch.AncientRelicPickupPredictionEnabled);
         return new(preferences, primary, may, surface, rf.Signature)
         {
             VisibleFeatures = visible.ToImmutable(), Potion = potionDemand, ShowPrimary = showPrimary,
-            ChainOnly = chainOnly, IncludeChain = chain, IncludeTransformEffects = transformEffects,
+            ChainOnly = chainOnly, HideBonesRelics = autoBones, HideSharedBonesCurse = autoBones && rf.Features.SoloHiddenAllowed,
+            IncludeChain = chain, IncludeTransformEffects = transformEffects,
             IncludeEventContinuation = eventContinuation, IncludeEventCombat = eventCombat,
             TransformSource = transformSource, HasParentChain = parentChain, PublicSacrificeProgress = publicProgress
         };

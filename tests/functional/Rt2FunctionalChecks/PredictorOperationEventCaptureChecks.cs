@@ -4,9 +4,11 @@ using System.Text.Json;
 using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Players;
+using MegaCrit.Sts2.Core.Entities.Relics;
 using MegaCrit.Sts2.Core.Events;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Events;
+using MegaCrit.Sts2.Core.Models.RelicPools;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.TestSupport;
@@ -67,16 +69,10 @@ internal static class PredictorOperationEventCaptureChecks
                 var synchronizer = new EventCombatSynchronizer(native, native);
                 // Setup belongs to this isolated native fixture. Capture itself
                 // must never invoke this lifecycle or consume any native RNG.
-                ev.BeginEvent(player, synchronizer, false).GetAwaiter().GetResult();
+                if (ev is RelicTrader) BeginTrader(player, ev, synchronizer);
+                else ev.BeginEvent(player, synchronizer, false).GetAwaiter().GetResult();
                 try
                 {
-                    if (parts[0] == "RELIC_TRADER")
-                        Set(ev, "_newRelics", new RelicModel[]
-                        {
-                            ModelDb.GetById<RelicModel>(new("RELIC", "ALCHEMICAL_COFFER")),
-                            ModelDb.GetById<RelicModel>(new("RELIC", "WHETSTONE")),
-                            ModelDb.GetById<RelicModel>(new("RELIC", "WAR_PAINT"))
-                        });
                     string before = Stamp(native, ev);
                     var scene = (PredictorOperationEventScene)PredictorOperationEventCapture.Capture(native, ev, catalog);
                     Require(Stamp(native, ev) == before, parts[0] + " capture mutated native state");
@@ -116,6 +112,23 @@ internal static class PredictorOperationEventCaptureChecks
         Console.WriteLine("OPERATION_EVENT_CAPTURE original 34 initial pages + Ranwid/Trader/Mushroom/Lantern projection + Bridge/Tablet/Conveyor/Tinker/Trial/Future stages PASS (isolated native fixtures)");
     }
 
+    private static void BeginTrader(Player player, EventModel ev, EventCombatSynchronizer synchronizer)
+    {
+        // Exercise the native offer generator with a controlled legal front
+        // of the Common queue. The event builds the displayed options itself.
+        var common = ModelDb.RelicPool<SharedRelicPool>().GetUnlockedRelics(player.UnlockState)
+            .Where(relic => relic.Rarity == RelicRarity.Common).ToDictionary(relic => relic.Id.Entry);
+        var offers = new[] { "WHETSTONE", "WAR_PAINT", "STRAWBERRY" }.Select(key => common[key].Id).ToList();
+        var bag = player.RelicGrabBag.ToSerializable();
+        var queue = bag.RelicIdLists[RelicRarity.Common];
+        queue.RemoveAll(offers.Contains);
+        queue.InsertRange(0, offers);
+        player.RelicGrabBag.LoadFromSerializable(bag);
+        TestRngInjector.SetRelicRarityOverride(RelicRarity.Common);
+        try { ev.BeginEvent(player, synchronizer, false).GetAwaiter().GetResult(); }
+        finally { TestRngInjector.Cleanup(); }
+    }
+
     private static void CheckLiveProjection(PredictorOperationSnapshot snapshot, EventModel ev)
     {
         static OperationPreviewRow[] Rows(OperationPreview preview) => preview.Branches.SelectMany(b => b.Sections)
@@ -136,16 +149,21 @@ internal static class PredictorOperationEventCaptureChecks
                 Preview("RELIC");
                 break;
             case "RELIC_TRADER":
-                var coffer = Preview("TOP");
-                Require(Rows(coffer).Where(r => r.Action == OperationPreviewAction.GeneratePotion).Sum(r => r.Models.Length) == 4,
-                    "Alchemical Coffer actual event projection must retain all four generated potions including overflow");
-                foreach (string option in new[] { "TOP", "MIDDLE", "BOTTOM" })
+                foreach (var (option, relic) in new[] { ("TOP", "WHETSTONE"), ("MIDDLE", "WAR_PAINT"), ("BOTTOM", "STRAWBERRY") })
                 {
+                    var captured = ((PredictorOperationEventScene)snapshot.Scene).Options.Single(o => o.Key == option);
+                    Require(captured.OfferedRelic?.Entry == relic &&
+                        OperationSurfaceHoverCapture.EventMayDisplay(ev, captured) == (relic != "STRAWBERRY"),
+                        "Trader native offer and hover eligibility: " + relic);
                     var preview = Preview(option);
                     Require(!Rows(preview).Any(r => r.Action == OperationPreviewAction.ObtainRelic),
                         "Trader repeated public relic identity");
-                    if (option != "TOP") Require(Rows(preview).Any(r => r.Action == OperationPreviewAction.UpgradeCard && !r.Cards.IsEmpty),
-                        "Trader Whetstone/WarPaint downstream upgrades missing");
+                    if (relic == "STRAWBERRY")
+                        Require(!NeowOperationOverlay.HasVisibleContent(preview), "Trader public-only offer opened a prediction");
+                    else
+                        Require(preview.Branches.SelectMany(b => b.Sections).Any(s => s.Source.Entry == relic &&
+                            s.Rows.Any(r => r.Action == OperationPreviewAction.UpgradeCard && !r.Cards.IsEmpty)),
+                            "Trader random upgrades lost their source: " + relic);
                 }
                 break;
             case "HUNGRY_FOR_MUSHROOMS":

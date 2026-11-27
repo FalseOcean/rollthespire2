@@ -238,7 +238,8 @@ internal static partial class UiSurfaceChecks
                 overlay.SetLayout(new(new(40, 30), new(0, 0)), new(new(120, 100), new(1360, 700)));
                 await Frames();
                 var captions = ((IEnumerable)Field(overlay, "_stacks")).Cast<object>().Select(s => (string)Field(s, "Caption")).ToArray();
-                Check(captions.SequenceEqual(new[] { text.Get("operation.label.sameRewardRerolls"), "", "" }),
+                Check(captions.SequenceEqual(new[] { text.Get("operation.label.sameRewardRerolls") + " · " + text.Get("operation.rerollNow"),
+                    text.Format("operation.rerollStep", 2), text.Format("operation.rerollStep", 3) }),
                     "reroll retains all three groups and explains the same-recipe restriction once " + locale);
                 await Snapshot("owner-content-" + locale + "-reroll-groups");
                 overlay.QueueFree(); await Frames(); shell.Show();

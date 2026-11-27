@@ -28,7 +28,8 @@ internal static class VerifiedVanillaBaselineRegistry
             GameVersion = "0.111.1",
             VerificationEvidence = "Stable111Schema1:2026-11-20:captured-seven-domains-and-unlock-universe-match-0.111.0"
         },
-        VerifiedVanillaBaselineBeta113Schema1.Value
+        VerifiedVanillaBaselineBeta113Schema1.Value,
+        VerifiedVanillaBaselineBeta114Schema1.Value
     };
 
     public static IReadOnlyList<VerifiedVanillaBaseline> GetAll() => Entries;

@@ -242,8 +242,10 @@ internal sealed partial class PredictorRun
         }
         _traderOffers = offers.ToImmutable();
         var names = new[] { "TOP", "MIDDLE", "BOTTOM" };
+        bool bindModels = Context.UsesNonCombatGeneration && _preview.Settings.Policy == PredictorRoutePreviewPolicy.LiveMapDefaults;
         return Enumerable.Range(0, _traderOwned.Length)
-            .Select(i => new PredictorEventOption(names[i], RelicId: _traderOwned[i], OfferedRelic: _traderOffers[i]))
+            .Select(i => new PredictorEventOption(names[i], RelicId: _traderOwned[i], OfferedRelic: _traderOffers[i])
+            { TradedRelic = bindModels ? owned[i].Key : null })
             .ToImmutableArray();
     }
 

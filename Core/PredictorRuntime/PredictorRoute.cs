@@ -266,7 +266,8 @@ internal sealed partial class PredictorRun
             if (card.Key.Entry != "DOWSING") continue;
             card = card with { RoomsEntered = card.RoomsEntered + 1 };
             Working = Working.WithCard(card);
-            if (card.RoomsEntered >= 5) Working = PredictorCardChanges.TransformTo(Context, Working, id, new ModelKey("CARD", "ABUNDANCE")).State;
+            if (card.RoomsEntered >= (Context.UsesNonCombatGeneration ? 4 : 5))
+                Working = PredictorCardChanges.TransformTo(Context, Working, id, new ModelKey("CARD", "ABUNDANCE")).State;
         }
     }
 
@@ -321,15 +322,19 @@ internal sealed partial class PredictorRun
         }
         bool blockShop = Working.Visits.LastOrDefault()?.Room == PredictorRoomKind.Shop ||
             point.Children.Count > 0 && point.Children.All(c => map.Map.Points.Single(p => p.Position == c).Type == MapPointType.Shop);
-        bool blockMonster = PredictorSettlementEffects.Has(Working, "JUZU_BRACELET");
+        bool juzu = PredictorSettlementEffects.Has(Working, "JUZU_BRACELET");
+        bool dowsing = Context.UsesNonCombatGeneration &&
+            Working.Deck.Select(Working.Card).Any(c => c.Key.Entry == "DOWSING" && c.RoomsEntered >= 3);
+        bool blockMonster = juzu || dowsing;
+        bool blockElite = Context.UsesNonCombatGeneration && blockMonster;
         var odds = Working.UnknownOdds;
-        trace?.ReadRandom(blockShop, blockMonster, odds);
+        trace?.ReadRandom(blockShop, juzu, dowsing, odds);
         trace?.ReadCursor();
         var rng = Working.Streams.Single(s => s.Stream == PredictorStream.UnknownMapPoint).Restore();
         float roll = rng.NextFloat();
         float cumulative = 0;
         var selected = PredictorRoomKind.Event;
-        foreach (var entry in new[] { (PredictorRoomKind.Monster, odds.Monster, blockMonster), (PredictorRoomKind.Elite, odds.Elite, false),
+        foreach (var entry in new[] { (PredictorRoomKind.Monster, odds.Monster, blockMonster), (PredictorRoomKind.Elite, odds.Elite, blockElite),
             (PredictorRoomKind.Treasure, odds.Treasure, false), (PredictorRoomKind.Shop, odds.Shop, blockShop) })
         {
             if (entry.Item3 || entry.Item2 < 0) continue;
@@ -339,7 +344,7 @@ internal sealed partial class PredictorRun
         Working = Working.WithRng(PredictorStream.UnknownMapPoint, rng) with { UnknownOdds = new(
             selected == PredictorRoomKind.Monster ? .1f : odds.Monster + (blockMonster ? 0 : .1f),
             selected == PredictorRoomKind.Elite ? (Context.HasRunModifier("DEADLY_EVENTS") ? .1f : -1f) :
-                odds.Elite + (Context.HasRunModifier("DEADLY_EVENTS") ? .1f : -1f),
+                odds.Elite + (blockElite ? 0 : Context.HasRunModifier("DEADLY_EVENTS") ? .1f : -1f),
             selected == PredictorRoomKind.Treasure ? .02f : odds.Treasure +
                 (Context.HasRunModifier("DEADLY_EVENTS") ? .04f : .02f),
             selected == PredictorRoomKind.Shop ? .03f : odds.Shop + (blockShop ? 0 : .03f)) };

@@ -23,6 +23,20 @@ internal static class PredictorRouteLivePolicyChecks
         FragrantEvent(captured);
         UnaffectedRelics(captured);
         PickupOrder(captured);
+        var held = R("DRAWING_UNMODELED_FIXTURE");
+        var template = Route(captured, "GORGET");
+        var boundary = template.Checkpoints[0].State;
+        var unknown = new PredictorCombatPendingCause("LiveSourceHooksPending:" + held.Serialized,
+            "Unmodeled fixture relic", PredictorCombatDomain.CardRewards | PredictorCombatDomain.RewardsRng)
+            { UnmodeledRelic = held };
+        var drawing = new PredictorRun(template.Context with { Live = new(2, true, [unknown]) },
+            boundary with { Relics = [new(boundary.NextInstanceId, held, 1)], NextInstanceId = boundary.NextInstanceId + 1 });
+        drawing.SetRoute(2, template.Routes.Single(r => r.Act == 2).Points);
+        var result = Preview(drawing, [], count: 2);
+        Check(result.Nodes.Length == 2 && result.Nodes.All(n => n.UnmodeledRelics.Contains(held)) &&
+            result.Nodes[1].Rewards.Any(r => r.Kind == PredictorRewardKind.Card && r.IsKnown) &&
+            drawing.Context.Live!.PendingCauses.Single() == unknown && drawing.Context.DrawingUnmodeledRelics == null,
+            "An unmodeled held relic is named alongside subsequent card offers in drawing only");
         Console.WriteLine($"RUNTIME_ROUTE_LIVE_POLICY_PASS checks={_checks}; actual W/WP receipts; independent rewards/bags; fresh facts; exact/operation scope; Fragrant event; preserved pickup tiers; no blanket RandomDeck cutoff");
         return 0;
     }

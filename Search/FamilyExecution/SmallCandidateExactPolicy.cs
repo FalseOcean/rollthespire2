@@ -10,10 +10,18 @@ internal sealed class SmallCandidateExactPolicy
     private readonly object _gate = new();
     private readonly Dictionary<(string Prefix, string Tail, int Candidates), long> _stops = new();
 
+    private readonly Action<IReadOnlyList<string>>? _onSmallHandoff;
+
+    internal SmallCandidateExactPolicy(Action<IReadOnlyList<string>>? onSmallHandoff = null) =>
+        _onSmallHandoff = onSmallHandoff;
+
+    internal void ObserveSkippedCoverage(IReadOnlyList<string> coverage) => _onSmallHandoff?.Invoke(coverage);
+
     internal static bool ShouldHandoff(int count) => count is > 0 and <= MaximumCandidates;
 
     internal void Observe(string completedPrefix, IReadOnlyList<string> unexecutedCoverage, int count)
     {
+        if (ShouldHandoff(count)) ObserveSkippedCoverage(unexecutedCoverage);
         FamilyAuxiliaryEvidence.Read(nameof(SmallCandidateExactPolicy), "ObserveHandoff", () =>
         {
             if (count is < 0 or > MaximumCandidates) throw new ArgumentOutOfRangeException(nameof(count));

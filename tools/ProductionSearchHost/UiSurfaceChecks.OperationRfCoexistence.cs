@@ -200,8 +200,16 @@ internal static partial class UiSurfaceChecks
                 name + " has no detached capture, worker or RT2 display");
             evidence.Add(new { name, capture = false, worker = false, displayed = false });
         }
+        var rfSettings = AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("RandomForeseer.Data.ModData"))
+            .First(t => t != null)!.GetProperty("Settings")!.GetValue(null)!;
+        var fair = rfSettings.GetType().GetProperty("FairModeEnabled")!;
+        var eventSetting = rfSettings.GetType().GetProperty("EventOptionPredictionEnabled")!;
+        var originalFair = fair.GetValue(rfSettings);
+        var originalEvent = eventSetting.GetValue(rfSettings);
         try
         {
+            fair.SetValue(rfSettings, false); // This fixture exercises RF's outside-combat potion-card preview.
+            eventSetting.SetValue(rfSettings, true);
             File.WriteAllText(receipt, "{\"passed\":false,\"stage\":\"running\"}");
             check(RandomForeseerCompatibility.Capture().IsLoaded && ModManager.Mods.Count == 2 && ModManager.Mods
                 .Where(m => m.manifest?.id is "RandomForeseer" or "STS2-RitsuLib")
@@ -210,6 +218,10 @@ internal static partial class UiSurfaceChecks
             preferences.SetOperationPredictionEnabled(true);
             preferences.SetOperationPredictionMode("event:POTION_COURIER", OperationPredictionMode.Auto);
             await Focus(ransack); await Frames(4); NoCapture("loaded-RF Ransack Auto");
+            eventSetting.SetValue(rfSettings, false);
+            await Until(() => Preview() is { } restored && restored.Source.Entry == "POTION_COURIER", "RF event setting off restores same-hover RT2 Auto");
+            eventSetting.SetValue(rfSettings, true);
+            await Until(() => Preview() == null, "RF event setting on yields again");
             string before = signature();
             preferences.SetOperationPredictionMode("event:POTION_COURIER", OperationPredictionMode.On);
             await Until(() => Preview() is { } p && p.Source.Entry == "POTION_COURIER" && p.Faults.IsEmpty &&
@@ -289,6 +301,8 @@ internal static partial class UiSurfaceChecks
         catch (Exception error) { failure = error.ToString(); throw; }
         finally
         {
+            fair.SetValue(rfSettings, originalFair);
+            eventSetting.SetValue(rfSettings, originalEvent);
             NeowOperationHoverController.Leave(ransack);
             if (holder != null) { NeowOperationHoverController.Leave(holder); holder.Free(); }
             foreach (var potion in bottles) if (player.PotionSlots.Contains(potion)) player.DiscardPotionInternal(potion, silent: true);

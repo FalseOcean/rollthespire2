@@ -142,6 +142,7 @@ internal sealed partial class AnalysisPageController
                     correlationId: $"request={request!.RequestId.Serialized};seed={canonical};slot={slot}");
             }
             var selection = _partySelections.GetValueOrDefault(slot);
+            _checkingOpeningSlot = slot;
             bool identitiesKnown = choices.Count > 0 && choices.All(c => c.IdentityPrecision is PredictionPrecision.Exact or PredictionPrecision.Partial);
             if (_strictLibrarySeed == canonical && (selection.Choice.HasValue || !string.IsNullOrWhiteSpace(selection.Route)))
                 ValidateLibrarySelection(choices, selection.Choice, selection.Route);

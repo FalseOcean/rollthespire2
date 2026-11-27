@@ -14,6 +14,9 @@ internal sealed record FamilyGpuCreationFailure(Exception Error, long Attempt, s
 public sealed class FilterRuntimeServices : IAsyncDisposable
 {
     private readonly FamilyGpuExecutionOwner? _gpuOwner;
+    private GpuRootStorageBudget? _tailStorageBudget;
+    internal bool BoundPublicGpuTail { get; set; }
+    internal bool BudgetPublicTailBindings { get; set; }
     internal FilterCostObserver Costs { get; } = new();
     internal string CorrelationId { get; init; } = "";
     internal bool SkipExactValidation { get; init; }
@@ -23,6 +26,7 @@ public sealed class FilterRuntimeServices : IAsyncDisposable
     internal void BindCoverage(FilterBodyDescription body,IReadOnlySet<string> passed) => _passedCoverage.TryAdd(body,new HashSet<string>(passed,StringComparer.Ordinal));
     internal IReadOnlySet<string> CoverageFor(FilterBodyDescription body) => _passedCoverage.GetValueOrDefault(body) ?? EmptyCoverage;
     private readonly SemaphoreSlim? _cpuWorkers;
+    internal volatile bool PlayingBudget;
     private int _activeCpuWorkers, _peakCpuWorkers;
     private readonly FamilyPipelineBoundaryAudit? _pipelineBoundaryAudit = FamilyPipelineBoundaryAudit.TryCreate();
     private readonly ConcurrentDictionary<IFilterExecution, Exception> _isolatedCpuFamilies = new(ReferenceEqualityComparer.Instance);
@@ -130,10 +134,15 @@ public sealed class FilterRuntimeServices : IAsyncDisposable
 
     internal ValueTask<T> ExecuteGpuAsync<T>(
         Func<RenderingDevice, T> action,
-        CancellationToken cancellationToken) =>
-        _gpuOwner is not null
-            ? _gpuOwner.ExecuteAsync(action, cancellationToken)
-            : ValueTask.FromException<T>(new InvalidOperationException("FamilyGpuOwnerUnavailable"));
+        CancellationToken cancellationToken)
+    {
+        if (_gpuOwner is null) return ValueTask.FromException<T>(new InvalidOperationException("FamilyGpuOwnerUnavailable"));
+        if (!BudgetPublicTailBindings) return _gpuOwner.ExecuteAsync(action, cancellationToken);
+        return _gpuOwner.ExecuteAsync(rd => {
+            using var scope = (_tailStorageBudget ??= new(PrivateOrdinalBuffer.Capacity)).Enter();
+            return action(rd);
+        }, cancellationToken);
+    }
 
     internal void RecordPipelineBoundarySource(
         SearchBatch batch,

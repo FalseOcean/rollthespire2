@@ -398,6 +398,33 @@ internal static class ExactBoundaryChecks
         CheckDomainAndRouteUncertainty(context, corpus, Check);
         CheckPartyUnverifiedAuthority(context, Check);
         CheckPartyIndependentMismatch(context, Check);
+        // Two four-root windows exercise the public cutoff, concurrent consumer
+        // ownership, failure retention and final Exact authority without a GPU.
+        var tailRequest = SearchPreparationCompiler.Compile(plan.Model.CompiledSearch, plan.RunOptions with {
+            ScanCount = 8, TargetMatchCount = 8, WorkerCount = 1 }).Plan!;
+        var tailRoots = Enumerable.Range(0, 8).Select(i => Input(Beta110SeedCodec.FormatOrdinal(start + (ulong)i)).RootHash).ToArray();
+        int tailCalls = 0, exactCalls = 0;
+        var tailBody = SelectedWorldFault.Describe(plan.Model.ProfileId) with { SmallTailCpuMatcher = root => {
+            Interlocked.Increment(ref tailCalls);
+            if (root == tailRoots[1]) throw new InvalidOperationException("InjectedTailCheckFailure");
+            return root == tailRoots[2];
+        }};
+        var tailExecution = FamilyPlanner.InOrder([tailBody]) with { AllowSmallCandidateExact = true };
+        var tailSession = new ProductionSearchSession(tailRequest, tailExecution,
+            FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(tailRequest, tailExecution), tailExecution),
+            4, 8, null, "", exactEvaluator: (_, _) => { Interlocked.Increment(ref exactCalls); return unknown; });
+        try
+        {
+            Check(tailSession.Completion.Wait(10000) && tailSession.GetProgress().State == SearchRunState.Completed,
+                "Small-tail filtering keeps independent candidates after a matcher failure");
+            Check(tailCalls == 8 && exactCalls == 1 && tailSession.GetSafeNextOrdinal() == start + 8 &&
+                tailSession.TryReadCandidate(out var kept) && kept!.ValidationDisposition == SearchDisposition.Unknown &&
+                !tailSession.TryReadCandidate(out _) && tailSession.GetProgress().MatchCount == 0,
+                "Only a surviving root reaches Exact and keeps its unknown result across two ordered batches");
+            Check(tailSession.CaptureContinuation()!.PendingCandidates.Any(candidate => candidate.Ordinal == start + 1),
+                "A failing root remains pending behind the committed cursor");
+        }
+        finally { tailSession.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
         var bypassPlan = plan with { RunOptions = plan.RunOptions with { SkipExactValidation = true, TargetMatchCount = 3, WorkerCount = 1 } };
         // This low-level session fixture bypasses Coordinator's plan metadata.
         // Its authored predicates have no selected filtering stage and no Exact.

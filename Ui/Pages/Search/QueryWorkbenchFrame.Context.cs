@@ -106,9 +106,9 @@ internal sealed partial class QueryWorkbenchFrame
             else _soloAscension = value;
             RefreshEditorContexts();
         };
-        if (_multiplayer)
+        if (_multiplayer || _useFullUnlocks)
         {
-            _currentUnlockStatus = Text(SeatCaption(_seat), 14, ColumnInset, characterTop + 80, true);
+            _currentUnlockStatus = Text(_multiplayer ? SeatCaption(_seat) : _text.Get("query.context.assumed_full"), 14, ColumnInset, characterTop + 80, true);
             _currentUnlockStatus.Name = "SearchCurrentUnlockStatus";
             _currentUnlockStatus.Size = new(RailContentWidth, 24);
             _currentUnlockStatus.ClipText = true;
@@ -153,7 +153,7 @@ internal sealed partial class QueryWorkbenchFrame
                 UseManualPartyUnlocks();
                 return _text.Get("query.context.lobby_character_unavailable");
             }
-            var progress = players.Select(p => ReadSeatUnlocks(p.unlockState)).ToArray();
+            var progress = players.Select(p => _useFullUnlocks ? ManualSeatUnlocks(p.slotId, true) : ReadSeatUnlocks(p.unlockState)).ToArray();
             int ascension = lobby.Ascension;
             string roster = LobbyUnlockReadout.Roster(lobby);
             for (int slot = 0; slot < players.Length; slot++)
@@ -161,10 +161,11 @@ internal sealed partial class QueryWorkbenchFrame
                 _seatCharacters[slot] = characters[slot];
                 (_lobbyUnlocks[slot], _partyUnlockSources[slot]) = progress[slot];
             }
-            _readLobby = lobby;
+            _readLobby = _useFullUnlocks ? null : lobby;
             _readRoster = roster;
             ResizeParty(players.Length);
             _partyAscension = ascension;
+            if (_useFullUnlocks) return _text.Get("query.context.assumed_full");
             var assumed = players.Where(p => _partyUnlockSources[p.slotId] == "AssumedFullyUnlocked")
                 .Select(p => $"P{p.slotId + 1}").ToArray();
             return assumed.Length == 0 ? _text.Format("query.context.lobby_read_success", players.Length)
@@ -188,7 +189,7 @@ internal sealed partial class QueryWorkbenchFrame
                 button.Icon = _characterIcons.Resolve(_seatCharacters[seat]).Texture;
             }
         if (_currentUnlockStatus is not null && GodotObject.IsInstanceValid(_currentUnlockStatus))
-            _currentUnlockStatus.Text = SeatCaption(_seat);
+            _currentUnlockStatus.Text = _multiplayer ? SeatCaption(_seat) : _text.Get("query.context.assumed_full");
     }
 
     private Button ContextButton(string title, float x, float y, float width)

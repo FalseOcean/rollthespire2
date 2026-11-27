@@ -1,6 +1,8 @@
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Effects.Snapshots;
+using RolltheSpire2.Core.Neow;
+using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Core.Transformation;
 using RolltheSpire2.Infrastructure.Snapshots;
 using RolltheSpire2.Search.Contracts;
@@ -21,8 +23,9 @@ internal static class TransformationAncientPrefilterChecks
         const string pandora = "A.PANDORAS_BOX";
         const string astrolabe = "A.ASTROLABE";
         var hero = BaseGameModelKeys.Characters.Ironclad;
-        var capture = ProductionSearchReplay.Read<ProductionSearchReplayContext>(
-            "tools/ProductionSearchHost/Corpus/v1/context.json").Context.Authority.EffectAuthority!;
+        var captured = ProductionSearchReplay.Read<ProductionSearchReplayContext>(
+            "tools/ProductionSearchHost/Corpus/v1/context.json").Context.Authority;
+        var capture = captured.EffectAuthority!;
         var basic = capture.OrderedDeck!.First();
         var banshee = new ModelKey("CARD", "BANSHEES_CRY");
         var rare = new ModelKey("CARD", "CHECK_RARE");
@@ -210,6 +213,52 @@ internal static class TransformationAncientPrefilterChecks
         };
         Check(TransformationAncientNumericalPlan.TryCreate(withOpening) is null,
             "an unowned but selected Leafy Poultice still changes the Ancient cursor");
+
+        var capsule = BaseGameModelKeys.Relics.LargeCapsule;
+        var nativeEffects = effects with
+        {
+            CapturedProfileId = RuntimeProfileId.Beta111,
+            SharedRelicPoolSource = effects.SharedRelicPoolSource!.Select(r => r with { SourceAssembly = "sts2", SourceModId = null }).ToArray(),
+            CharacterRelicPoolSource = []
+        };
+        var native = Model(box).Authority.WithEffectAuthority(nativeEffects).WithWorldAuthority(captured.WorldAuthority);
+        var nativeContext = request.CompiledSearch.Context with { Authority = native };
+        var nativeQuery = SearchQuery.Empty with
+        {
+            OpeningRoute = new(capsule),
+            AncientBranches = [new(2, new("EVENT", "DARV"), [new("RELIC", "PANDORAS_BOX")], [])],
+            TransformationAggregate = box with { ResultRequirements = [new([pandora], Predicate.RareCountAtLeast, 3, [])] }
+        };
+        var compiled = SearchCompiler.Compile(nativeQuery, nativeContext);
+        var nativeModel = new SearchModel(compiled, CompiledSearchEvaluationProjector.Project(compiled).Evaluation,
+            CombatRewardRoutePolicyContract.None, compiled.SemanticFingerprint);
+        var fixedPool = TransformationAncientNumericalPlan.TryCreate(nativeModel) ??
+            throw new InvalidOperationException("A native Capsule precedes Pandora at cursor zero");
+        var kaleido = nativeModel with { Evaluation = nativeModel.Evaluation with { NeowRoute = new(BaseGameModelKeys.Relics.Kaleidoscope) } };
+        var afterKaleido = TransformationAncientNumericalPlan.TryCreate(kaleido) ??
+            throw new InvalidOperationException("Kaleidoscope consumes other streams and leaves Pandora at cursor zero");
+        var projector = TransformationRelicProjector.Capture(nativeEffects)!;
+        bool sawLocalOnly = false, sawFullHit = false;
+        for (ulong ordinal = 0; ordinal < 4096; ordinal++)
+        {
+            var seed = TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, Beta110SeedCodec.FormatOrdinal(ordinal));
+            bool localHit = projector.Project(Beta111Profile.Instance, seed.RootHash, 0, RngSemanticProfileId.Modern113,
+                0, box.AncientOpportunityCount, false).Count(card => card.Rarity == EffectCardRarity.Rare) >= 3;
+            Check(fixedPool.Matches(seed.RootHash) == localHit && afterKaleido.Matches(seed.RootHash) == localHit,
+                "Capsule and Kaleidoscope T both test only Pandora replacements at " + ordinal);
+            checkedSeeds++;
+            if (!localHit || sawFullHit && sawLocalOnly) continue;
+            bool offered = ModernNeowIdentityPredictor.PredictModernCore(seed.RootHash, native, Beta111Profile.Instance, true).RelicKeys.Contains(capsule);
+            if (offered && !sawFullHit)
+                sawFullHit = ProductionExactSearchEvaluator.Evaluate(nativeModel, seed).IsMatch;
+            if (!offered && !sawLocalOnly)
+            {
+                Check(ProductionExactSearchEvaluator.Evaluate(nativeModel, seed).Evaluation.Disposition == SearchDisposition.NoMatch,
+                    "a T match cannot waive the missing Capsule offer");
+                sawLocalOnly = true;
+            }
+        }
+        Check(sawFullHit && sawLocalOnly, "native Capsule, Act 2 Darv and Pandora have both complete hits and T-only hits");
 
         var grove = new ModelKey("EVENT", "MORPHIC_GROVE");
         var withEarlierEvent = request with

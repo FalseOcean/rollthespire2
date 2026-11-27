@@ -31,7 +31,7 @@ internal sealed class FamilyPrivateGpuExecution(
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         token.ThrowIfCancellationRequested();
-        if (count < 0 || count > batch.BatchCandidateCount || batch.BatchCandidateCount > PrivateOrdinalBuffer.Capacity ||
+        if (count < 0 || count > batch.BatchCandidateCount || batch.BatchCandidateCount > GpuRootWindow.Maximum ||
             (input is null && count != batch.BatchCandidateCount)) throw new InvalidDataException("FamilyPrivate.InputBounds");
         input?.CheckPopulation(batch, count);
         output?.CheckPopulation(batch, count);
@@ -42,7 +42,7 @@ internal sealed class FamilyPrivateGpuExecution(
     internal FamilyPrivateGpuOutcome CompletePrepared(SearchBatch batch, int count, FamilyPrivateGpuOutcome result)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (count < 0 || count > batch.BatchCandidateCount || batch.BatchCandidateCount > PrivateOrdinalBuffer.Capacity ||
+        if (count < 0 || count > batch.BatchCandidateCount || batch.BatchCandidateCount > GpuRootWindow.Maximum ||
             (input is null && count != batch.BatchCandidateCount))
             throw new InvalidDataException("FamilyPrivate.PreparedInputBounds");
         input?.CheckPopulation(batch, count);

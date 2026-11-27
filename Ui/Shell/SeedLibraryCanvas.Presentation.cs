@@ -197,6 +197,14 @@ internal sealed partial class SeedLibraryCanvas
             if (preset.Source != SearchPresetSource.Temporary && Matches(preset.SearchText + " " + PresetContext(preset))) presets.Add(preset);
             yield return false;
         }
+        if (_sharePreview is { } preview && Matches(preview.SearchText + " " + PresetContext(preview)))
+        {
+            presets.Insert(0, preview);
+            _entries.AddChild(Text(T("分享预览", "Shared preset preview"), 16, true));
+            AddListItem(preview.Id, preview.Title, PresetContext(preview), _selectedPreset == preview.Id,
+                () => { _selectedPreset = preview.Id; SelectDetail(); }, preview.VisualIcons);
+            yield return true;
+        }
         _visiblePresets = presets.ToArray();
         if (!presets.Any(p => p.Id == _selectedPreset))
             _selectedPreset = presets.FirstOrDefault(p => p.Source == SearchPresetSource.User)?.Id ?? presets.FirstOrDefault()?.Id ?? "";
@@ -280,6 +288,7 @@ internal sealed partial class SeedLibraryCanvas
     public override void _ExitTree()
     {
         _retired = true;
+        _recheckCancel.Cancel(); _recheckCancel.Dispose(); RecheckHistory = null;
         _presentation?.Dispose(); _presentation = null;
         _idleActions.Clear(); _listButtons.Clear(); _activeListButton = null;
         _visibleBookmarks = []; _visiblePresets = []; _visibleQueries = []; _visibleLegacyQueries = [];

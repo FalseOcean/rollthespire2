@@ -440,8 +440,12 @@ internal sealed partial class NeowFamily
             };
             var stages = _gpuStages.ToArray();
             bool usesGpu = stages.Any(s => s.Family.UsesGpu);
+            bool wide = stages.Length > 0 && stages[0].Family.SupportsStandaloneLargeWindow &&
+                stages.All(stage => stage.Gpu is not null);
             return new(prepared, ResolveConditionPerformance(false).PhysicalImplementationRevision, _profile.ProfileId)
             {
+                SupportsStandaloneLargeWindow = wide,
+                LargeWindowRole = wide ? GpuLargeWindowRole.Dense : GpuLargeWindowRole.None,
                 UsesGpu = usesGpu, WindowCapacity = stages.Length == 0 ? CpuCapacity : FamilyPhysicalExecutionDefaults.DefaultCandidateBatchSize,
                 PreferredRootWindowSize = usesGpu ? null : CpuCapacity,
                 CpuWorkers = _workers, PlayersCount = _playersCount, InputIdentity = _identity,

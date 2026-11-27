@@ -149,7 +149,7 @@ internal sealed class CpuFilterExecution : IFilterExecution
         int length = inputLength ?? input.Count;
         // Pure, batch-local CPU work. All partitions join before publishing ABI1;
         // the existing producer, Exact pipeline and safe cursor remain owners.
-        int count = Math.Min(_workers, Math.Max(1, length / _minimumPartitionInputs));
+        int count = Math.Min(context?.PlayingBudget == true ? 1 : _workers, Math.Max(1, length / _minimumPartitionInputs));
         parts = count;
         var populations = new List<ulong>[count];
         void Partition(int part)

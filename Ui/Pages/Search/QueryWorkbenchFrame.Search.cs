@@ -40,6 +40,7 @@ internal sealed partial class QueryWorkbenchFrame
     private string _savedUiDomain = "";
     private bool _restored, _showResults;
     private bool _loadFailed;
+    private bool _useFullUnlocks;
     private string _restoreFailure = "";
     private bool _restoreAdjusted;
     private string? _restoredCaptureStamp;
@@ -64,7 +65,7 @@ internal sealed partial class QueryWorkbenchFrame
             FishingRodDrawRequirements = _fishingRodDrawRequirements
         };
         return new(_soloCharacter, _soloAscension, q, _ancientEditor.OptionConditions)
-        { ManualFamilyOrder = _manualFamilyOrder?.ToArray(), AncientEditor = _ancientEditor.ExportEditorState(), NeowEditor = _neowEditor.ExportEditorState(),
+        { UseFullUnlocks = _useFullUnlocks, ManualFamilyOrder = _manualFamilyOrder?.ToArray(), AncientEditor = _ancientEditor.ExportEditorState(), NeowEditor = _neowEditor.ExportEditorState(),
             EventEditor = _eventEditor.ExportEditorState(), TransformationEditor = _transformationEditor.ExportEditorState(),
             CombatRewardEditor = _combatEditor.ExportEditorState(), MapEditor = _actInformationEditor.ExportMapState() };
     }
@@ -73,6 +74,7 @@ internal sealed partial class QueryWorkbenchFrame
     {
         using var observation = _editorInputs.Observe(_runtime);
         if (draft.Version is not (1 or 2 or 3 or 4)) throw new InvalidOperationException("integration.load_version");
+        _useFullUnlocks = draft.UseFullUnlocks;
         _manualFamilyOrder = draft.ManualFamilyOrder?.ToArray();
         if (draft.Players.Count > 0) { RestorePartyDraft(draft, render); return; }
         if (draft.RequiresLobbyRead) throw new InvalidOperationException("Party.DraftModeMismatch");
@@ -404,6 +406,7 @@ internal sealed partial class QueryWorkbenchFrame
 
     private void LockForRun(bool running)
     {
+        if (running && _sidebarSettingsEntry is { ButtonPressed: true }) _sidebarSettingsEntry.ButtonPressed = false;
         if (_currentDomain is not null) _currentDomain.Visible = !_showResults;
         if (!running)
         {
@@ -454,6 +457,11 @@ internal sealed partial class QueryWorkbenchFrame
             }
             catch (Exception ex) { ReceiptText(Explain(ex)); return; }
         }
+        ShowCurrentSessionResults();
+    }
+
+    internal void ShowCurrentSessionResults()
+    {
         SyncSavedResults();
         _showResults = true;
         _expectationContext = "";

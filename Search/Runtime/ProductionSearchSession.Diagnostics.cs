@@ -159,7 +159,7 @@ public sealed partial class ProductionSearchSession
             $"familyExecutionStarted=true;spine=FamilyExecution;families={_families.Count};" +
             $"familyIds={string.Join(",", _families.Select(family => family.Body.FamilyId))};abi=ABI1-BatchLocalLogicalOrdinal;" +
             $"start={_plan.CanonicalStartSeed};count={_plan.ScanCount};workers={_plan.WorkerCount};" +
-            $"executionWindowSize={_executionWindowSize};skipExactValidation={_plan.RunOptions.SkipExactValidation}");
+            $"executionWindowSize={_executionWindowSize};requestedGpuRootBatchSize={_plan.RunOptions.GpuRootBatchSize};skipExactValidation={_plan.RunOptions.SkipExactValidation}");
         RuntimeLog.TryBackgroundInfo("familyPlannerDecision=true;" + _executionPlan.FormatSummary());
         RuntimeLog.TryBackgroundInfo("searchSupportScopeJson=" + RuntimeLog.SafeJson(_model.Authority.SupportScope));
         RuntimeLog.TryBackgroundInfo(_etaProjection.FormatSummary() + ";phase=SelectedProductionPlan");
@@ -210,6 +210,7 @@ public sealed partial class ProductionSearchSession
         RuntimeLog.TryBackgroundInfo(
             $"familyAsyncSummary=true;gpuOwnerStable={_executionContext.GpuOwnerStable};" +
             $"activePlan={ExecutionPlan.PlanId};activeExecutionWindowSize={ExecutionWindowSize};gpuCreationCpuRecovery={Volatile.Read(ref _gpuCreationCpuRecovery) is not null};" +
+            $"adaptiveGpuWindowState={_adaptiveWindow?.State ?? "Inactive"};adaptiveGpuWindowSelected={_adaptiveWindow?.Selected ?? 0};" +
             $"gpuOwnerThreadId={_executionContext.GpuOwnerThreadId};" +
             $"orderedExactConsumption={Volatile.Read(ref _orderedConsumptionViolationCount) == 0};" +
             $"orderedCursorCommit={Volatile.Read(ref _cursorContinuityViolationCount) == 0};" +

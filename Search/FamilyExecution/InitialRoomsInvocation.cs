@@ -83,6 +83,9 @@ internal static class InitialRoomsInvocation
         return new(prepared, revision, model.ProfileId)
         {
             UsesGpu = preferGpu || child?.UsesGpu == true,
+            SupportsStandaloneLargeWindow = preferGpu && (child is null || child.SupportsStandaloneLargeWindow),
+            LargeWindowRole = preferGpu && (child is null || child.SupportsStandaloneLargeWindow)
+                ? GpuLargeWindowRole.Dense | GpuLargeWindowRole.Compact : GpuLargeWindowRole.None,
             WindowCapacity = preferGpu ? InitialRoomsPlan.Capacity : 65536,
             CpuWorkers = count, PlayersCount = model.Authority.PlayersCount, InputIdentity = model.SnapshotFingerprint,
             NumericRequirements = (preferGpu ? plan.NumericRequirements : GpuNumericRequirements.None) |
@@ -202,6 +205,11 @@ internal static class InitialRoomsInvocation
             FilterBodyDescription local, FilterRuntimeServices services)
         {
             Body = body;
+            if (body.MaximumGpuRootWindow > PrivateOrdinalBuffer.Capacity)
+            {
+                local = local with { WindowCapacity = body.WindowCapacity, MaximumGpuRootWindow = body.MaximumGpuRootWindow };
+                if (ordinary is not null) ordinary = GpuRootWindow.PrepareStandalone(ordinary, body.WindowCapacity);
+            }
             var passed = services.CoverageFor(body);
             if (ordinary is not null) services.BindCoverage(ordinary, passed);
             services.BindCoverage(local, passed);
@@ -221,6 +229,7 @@ internal static class InitialRoomsInvocation
                 services.Costs.ObserveCompleted(Body, input, output.Count, timer.Elapsed.TotalMilliseconds, passedCoverage: services.CoverageFor(Body));
                 return output;
             }
+            catch (GpuRootWindowBindingRefused) { throw; }
             catch (OperationCanceledException) { throw; }
             catch (Exception error)
             {
@@ -233,9 +242,7 @@ internal static class InitialRoomsInvocation
         public async ValueTask DisposeAsync(FilterRuntimeServices services)
         {
             _ = ResourceInfo;
-            try { await _local.DisposeAsync(services).ConfigureAwait(false); }
-            catch (Exception error) { services.RecordGpuCleanupFailure(error, Body.FamilyId, "InitialRooms.Dispose", services.CorrelationId); }
-            if (_ordinary is not null) await _ordinary.DisposeAsync(services).ConfigureAwait(false);
+            await FilterExecutionCleanup.DisposeChildrenAsync(services, Body.FamilyId, [_local, _ordinary]).ConfigureAwait(false);
         }
     }
 }

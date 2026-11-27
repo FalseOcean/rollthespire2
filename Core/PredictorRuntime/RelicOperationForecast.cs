@@ -8,7 +8,8 @@ namespace RolltheSpire2.Core.PredictorRuntime;
 // Capture, display admission and native model access belong to consumers.
 internal static class RelicOperationForecast
 {
-    private const int MaximumEvaluations = 512, MaximumDepth = 32;
+    internal const int MaximumEvaluations = 512;
+    private const int MaximumDepth = 32;
     private sealed record Observation(ModelKey Source, OperationOutcome? Row = null, OperationOutcomeChoices? Group = null);
     private sealed record Path(ImmutableArray<Observation> Observations, ImmutableArray<string> Pending, bool Faulted = false);
     private sealed record Choice(ImmutableArray<PredictorInput> Inputs, ModelKey Source);
@@ -521,7 +522,7 @@ internal static class RelicOperationForecast
         if (!open.Any(r => r.Mandatory)) yield return new([new LeaveRewards()], source);
     }
 
-    private static IEnumerable<ImmutableArray<long>> Combinations(ImmutableArray<long> candidates, int minimum, int maximum)
+    internal static IEnumerable<ImmutableArray<long>> Combinations(ImmutableArray<long> candidates, int minimum, int maximum)
     {
         // Generation is bounded as well as evaluation: a large Sea Glass set
         // cannot allocate its power set before the caller enforces its budget.

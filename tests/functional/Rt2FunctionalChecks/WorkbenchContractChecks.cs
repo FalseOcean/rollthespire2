@@ -980,18 +980,15 @@ internal static class WorkbenchContractChecks
                 check(store.ContinuationFor(draft, priorPlan)?.NextOrdinal == oldFrontier,
                     label + ": same-query history has a compatible continuation before Settings changes the origin");
 
-                // Build the production Settings controls with the same persistence
-                // owner as the real Workbench. Emit their signals, not the helper.
-                Set(shell, "_languageCode", "en");
-                Call(shell, "EnsurePageViewSynchronously", 2); Call(shell, "LocalizeSettings", text);
-                var input = (Godot.LineEdit)Field(shell, "_originInput")!;
+                ((Godot.Button)frame.FindChild("OpenSearchSettings", true, false)).ButtonPressed = true;
+                var input = (Godot.LineEdit)frame.FindChild("RunOrigin", true, false);
                 input.Text = "0000000000AB";
                 // Assigning LineEdit.Text does not represent native text entry's
                 // TextChanged signal; deliver that same UI event before clicking.
                 input.EmitSignal(Godot.LineEdit.SignalName.TextChanged, input.Text);
-                var originButton = (Godot.Button)Field(shell, random ? "_originRandom" : "_originApply")!;
+                var originButton = (Godot.Button)frame.FindChild(random ? "RunOriginRandom" : "RunOriginApply", true, false);
                 check(!originButton.Disabled, label + ": actual Settings origin button is available; busy=" +
-                    store.Runtime.HasSearchInFlight + "; input=" + input.Text + "; feedback=" + ((Godot.Label)Field(shell, "_originFeedback")!).Text);
+                    store.Runtime.HasSearchInFlight + "; input=" + input.Text);
                 originButton.EmitSignal(Godot.Button.SignalName.Pressed);
                 if (random && store.CurrentPersistentOriginOrdinal == oldFrontier)
                     originButton.EmitSignal(Godot.Button.SignalName.Pressed);

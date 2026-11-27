@@ -27,16 +27,16 @@ internal sealed partial class NeowPartyFilterExecution
         private bool _pairFusedParity, _groupingDisabled;
         private int _densePairGroups, _pairLiveGroups, _liveBatches;
         private int _lastDenseOutputCount = -1;
-        internal bool CanGroupDenseBatches => !_privatePairDisposed && !_groupingDisabled && (CanGroupPrivateDenseBatches || UsesFused &&
+        internal bool CanGroupDenseBatches => Body.MaximumGpuRootWindow == 0 && !_privatePairDisposed && !_groupingDisabled && (CanGroupPrivateDenseBatches || UsesFused &&
             _executions.All(stage => stage is IDenseFamilyBatchGrouping { CanGroupDenseBatches: true }));
         bool IDenseFamilyBatchGrouping.CanGroupDenseBatches => CanGroupDenseBatches;
         // Private PartyInitial retains its original complete suffix policy.
         // Public fused small populations have the same CPU boundary as solo N.
         bool IDenseFamilyBatchGrouping.PreferDenseBatchGrouping => CanGroupDenseBatches && UsesFused && !_compact && !_skipExactValidation &&
             Volatile.Read(ref _lastDenseOutputCount) is >= 0 and <= SmallCandidateExactPolicy.MaximumCandidates;
-        private NeowFamilyGpuExecutor CreateFused(Godot.RenderingDevice rd, NeowFamilyGpuExecutor? donor = null) =>
-            new(rd, _gpuStages[0].Gpu!, 43,
-                partyPlans: _gpuStages.Select(stage => stage.Gpu!).ToArray(), sharedDenseScratch: donor);
+        private NeowFamilyGpuExecutor CreateFused(Godot.RenderingDevice rd, NeowFamilyGpuExecutor? donor = null, bool publicCompact = false) =>
+            new(rd, _gpuStages[0].Gpu!, 43, partyPlans: _gpuStages.Length == 1 ? null : _gpuStages.Select(stage => stage.Gpu!).ToArray(),
+                sharedDenseScratch: donor, publicCompact: publicCompact);
 
         async ValueTask<DenseFamilyBatchGroup> IDenseFamilyBatchGrouping.PrepareDensePairAsync(FilterRuntimeServices context,
             SearchBatch first, SearchBatch second, CancellationToken token)

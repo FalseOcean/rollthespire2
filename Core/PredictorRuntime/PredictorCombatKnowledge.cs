@@ -43,6 +43,7 @@ internal enum PredictorCombatDomain
 internal sealed record PredictorCombatPendingCause(string Code, string Description,
     PredictorCombatDomain AffectedDomains, PredictorEnemyCreationSource? EnemySource = null)
 {
+    public RolltheSpire2.Core.Identity.ModelKey? UnmodeledRelic { get; init; }
     public string? NodeId { get; init; }
     // Bind before comparing/merging. External captures may still use the
     // positional constructor; an empty value is never a merge identity.

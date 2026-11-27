@@ -38,9 +38,9 @@ internal sealed partial class QueryWorkbenchFrame
         _seat = Math.Min(_seat, count - 1);
     }
 
-    private static (SerializableUnlockState Unlocks, string Source) ManualSeatUnlocks(int slot)
+    private static (SerializableUnlockState Unlocks, string Source) ManualSeatUnlocks(int slot, bool fullUnlocks = false)
     {
-        if (slot == 0)
+        if (slot == 0 && !fullUnlocks)
         {
             try { return (LobbyUnlockReadout.Copy(SaveManager.Instance.GenerateUnlockStateFromProgress().ToSerializable()), "CapturedLocalProfile"); }
             catch (Exception ex) { Bootstrap.RuntimeLog.Warn("partyLocalProgressUnavailable=" + ex.Message); }
@@ -61,7 +61,7 @@ internal sealed partial class QueryWorkbenchFrame
         _readRoster = "";
         _partyConfigured = true;
         for (int slot = 0; slot < MaximumPreviewPlayers; slot++)
-            (_lobbyUnlocks[slot], _partyUnlockSources[slot]) = ManualSeatUnlocks(slot);
+            (_lobbyUnlocks[slot], _partyUnlockSources[slot]) = ManualSeatUnlocks(slot, _useFullUnlocks);
     }
 
     private bool DropExpiredLobby()
@@ -80,17 +80,10 @@ internal sealed partial class QueryWorkbenchFrame
         if (draft.Players.Count == 0 || draft.RequiresLobbyRead) return draft;
         var players = draft.Players.Select(p =>
         {
-            var (unlocks, source) = ManualSeatUnlocks(p.Slot);
+            var (unlocks, source) = ManualSeatUnlocks(p.Slot, draft.UseFullUnlocks);
             return p with { Unlocks = unlocks, UnlockSource = source };
         }).ToArray();
-        // Manual progress has just been captured for the running version. Preserve
-        // the existing version check for old lobby captures and malformed versions.
-        var saved = GameVersionIdentity.From(draft.GameVersion);
-        var current = GameVersionIdentity.From(_runtime.Detection.NormalizedVersion);
-        if (saved.IsExact && current.IsExact && saved != current && draft.Players.All(p =>
-            p.UnlockSource == "AssumedFullyUnlocked" || p.Slot == 0 && p.UnlockSource == "CapturedLocalProfile"))
-            draft = draft with { GameVersion = current.ExactVersion, Profile = _runtime.Profile.ProfileId };
-        return draft with { Players = players };
+        return draft with { Players = players, GameVersion = _runtime.Detection.NormalizedVersion, Profile = _runtime.Profile.ProfileId };
     }
 
     private OrderedPartyAuthority? _editorParty;
@@ -155,7 +148,7 @@ internal sealed partial class QueryWorkbenchFrame
         }
         var q = _eventEditor.ExportSharedPartyQuery(_ancientEditor.ExportSharedPartyQuery(_actInformationEditor.ExportQuery(SearchQuery.Empty))) with { Players = queries };
         return new(players[0].Character, _partyAscension, q, AncientOptionConditionProfile.BroadDefault)
-        { Version = 4, Players = players,
+        { Version = 4, Players = players, UseFullUnlocks = _useFullUnlocks,
             PartyAncientEditor = _ancientEditor.ExportSharedPartyEditorState(),
             MapEditor = _actInformationEditor.ExportMapState(),
             Mode = Core.World.Snapshots.WorldGameMode.Multiplayer, GameVersion = _runtime.Detection.NormalizedVersion,
@@ -198,7 +191,7 @@ internal sealed partial class QueryWorkbenchFrame
         for (int slot = draft.Players.Count; slot < MaximumPreviewPlayers; slot++)
         {
             _seatCharacters[slot] = BaseGameModelKeys.Characters.Ironclad;
-            (_lobbyUnlocks[slot], _partyUnlockSources[slot]) = ManualSeatUnlocks(slot);
+            (_lobbyUnlocks[slot], _partyUnlockSources[slot]) = ManualSeatUnlocks(slot, _useFullUnlocks);
         }
         _multiplayer = true; _seat = 0; _partyAscension = draft.Ascension;
         _editorParty = null; _editorPartyKey = "";

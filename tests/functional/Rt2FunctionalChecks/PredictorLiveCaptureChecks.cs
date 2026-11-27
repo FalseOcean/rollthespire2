@@ -19,9 +19,12 @@ using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Saves;
 using MegaCrit.Sts2.Core.Saves.Runs;
 using MegaCrit.Sts2.Core.Unlocks;
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Prediction.Maps;
 using RolltheSpire2.Core.PredictorRuntime;
+using RolltheSpire2.Infrastructure.ContentNames;
 using RolltheSpire2.Infrastructure.Snapshots;
+using RolltheSpire2.Presentation.Localization;
 using RolltheSpire2.Ui.InRunMap;
 
 internal static class PredictorLiveCaptureChecks
@@ -229,6 +232,7 @@ internal static class PredictorLiveCaptureChecks
             NodeEntrySessionLifecycle(native, baseline, roomSet);
             EventExclusionSessionLifecycle(baseline);
             OpeningEntrySessionLifecycle(baseline);
+            CompletedLaterAncientRebases(baseline);
             NodeEntryFeaturePreferenceLifecycle(baseline);
             BingBongSkipState(native, baseline.Context.GameVersion);
             Console.WriteLine($"RUNTIME_LIVE_CAPTURE_PASS checks={_checks};native=true;actualInventory=true;actualRng=true;actualQueues=true;noGameMutation=true");
@@ -247,32 +251,38 @@ internal static class PredictorLiveCaptureChecks
 
     private static void BingBongSkipState(RunState native, string version)
     {
+        version = NativeGameFixture.GameVersionOr(version);
         var player = native.Players[0];
         var relic = (BingBong)ModelDb.Relic<BingBong>().ToMutable();
-        var field = typeof(BingBong).GetField("_cardsToSkip", Members)!;
+        var field = typeof(BingBong).GetField("_cardsToSkip", Members);
+        Check((field != null) == RuntimeProfilePolicies.RetainsDeckCopyExclusions(RuntimeVersionCompatibility.Resolve(version).SemanticProfileId),
+            "BingBong native lifetime set follows the loaded version's deck-copy rule");
         player.AddRelicInternal(relic);
         try
         {
-            field.SetValue(relic, null);
+            field?.SetValue(relic, null);
             string before = NativeFacts(native);
             string emptyFingerprint = PredictorLiveRunCapture.Fingerprint(native, true);
             var empty = PredictorLiveRunCapture.Capture(native, version, true);
             Check(empty.State.Relics.Single(r => r.Id == PredictorLiveRunCapture.Id(relic)).BingBongCardsToSkip.IsEmpty &&
-                field.GetValue(relic) == null && NativeFacts(native) == before &&
+                PredictorLiveRunCapture.BingBongSkipCards(relic) == null && field?.GetValue(relic) == null && NativeFacts(native) == before &&
                 PredictorLiveRunCapture.Fingerprint(native, true) == emptyFingerprint,
-                "BingBong null backing set captures empty without invoking initializing getter or changing native state");
+                "BingBong absent or null backing set captures empty without initializing or changing native state");
 
             var card = player.Deck.Cards[0];
-            var skip = new HashSet<CardModel> { card };
-            field.SetValue(relic, skip);
-            string skipFingerprint = PredictorLiveRunCapture.Fingerprint(native, true);
-            Check(skipFingerprint != emptyFingerprint, "BingBong skip membership participates in native purity fingerprint");
-            var populated = PredictorLiveRunCapture.Capture(native, version, true);
-            Check(populated.State.Relics.Single(r => r.Id == PredictorLiveRunCapture.Id(relic)).BingBongCardsToSkip
-                .SequenceEqual([PredictorLiveRunCapture.Id(card)]) && ReferenceEquals(field.GetValue(relic), skip) &&
-                skip.SetEquals([card]) && NativeFacts(native) == before &&
-                PredictorLiveRunCapture.Fingerprint(native, true) == skipFingerprint,
-                "BingBong nonempty skip state is copied with identity and leaves actual native backing state unchanged");
+            if (field != null)
+            {
+                var skip = new HashSet<CardModel> { card };
+                field.SetValue(relic, skip);
+                string skipFingerprint = PredictorLiveRunCapture.Fingerprint(native, true);
+                Check(skipFingerprint != emptyFingerprint, "BingBong skip membership participates in native purity fingerprint");
+                var populated = PredictorLiveRunCapture.Capture(native, version, true);
+                Check(populated.State.Relics.Single(r => r.Id == PredictorLiveRunCapture.Id(relic)).BingBongCardsToSkip
+                    .SequenceEqual([PredictorLiveRunCapture.Id(card)]) && ReferenceEquals(field.GetValue(relic), skip) &&
+                    skip.SetEquals([card]) && NativeFacts(native) == before &&
+                    PredictorLiveRunCapture.Fingerprint(native, true) == skipFingerprint,
+                    "BingBong nonempty skip state is copied with identity and leaves actual native backing state unchanged");
+            }
 
             Check(PredictorLiveRunCapture.BingBongSkipCards(new SkipSetFixture(null)) == null,
                 "shared BingBong field adapter preserves legitimate null");
@@ -483,7 +493,7 @@ internal static class PredictorLiveCaptureChecks
         native.Players[0].Gold = 300;
         var rooms = (RoomSet)typeof(ActModel).GetField("_rooms", Members)!.GetValue(native.Act)!;
         rooms.events.Clear();
-        rooms.events.AddRange(new EventModel[] { ModelDb.Event<MorphicGrove>(), ModelDb.Event<ZenWeaver>(), ModelDb.Event<AromaOfChaos>() });
+        rooms.events.AddRange(new EventModel[] { ModelDb.Event<TeaMaster>(), ModelDb.Event<ZenWeaver>(), ModelDb.Event<AromaOfChaos>() });
         rooms.eventsVisited = 0;
         native.Odds.UnknownMapPoint.MonsterOdds = 0;
         native.Odds.UnknownMapPoint.TreasureOdds = 0;
@@ -497,7 +507,10 @@ internal static class PredictorLiveCaptureChecks
         var session = new InRunMapPredictionSession();
         string before = NativeFacts(native);
         session.Update(native, baseline.Context.GameVersion, true, drafts);
+        var text = JsonUiTextProvider.CreatePredictorUi13("en");
+        var presenter = new InRunMapNodePresenter(session, RuntimeGameContentNameResolver.Create("en"), text);
         PredictorRouteNodeKnowledge Node() => session.Nodes[(1, point)];
+        InRunMapNodeDetailData Detail() => presenter.Detail((1, point))!;
         PredictorPlannedNode Option(string key)
         {
             var node = Node();
@@ -505,24 +518,37 @@ internal static class PredictorLiveCaptureChecks
                 Event = new(node.Event!.Event!.Value) { Actions = [new(PredictorEventActionKind.Option)
                     { ExpectedOption = node.Event.EntryOptions.Single(option => option.Key == key).Value! }] } };
         }
-        bool Exclude(PredictorEventOccurrenceExclusion exclusion, bool excluded)
+        bool Exclude(bool excluded)
         {
-            var plan = session.GetPlan(1, point)!;
-            var values = plan.EventOccurrenceExclusions.Remove(exclusion);
-            return session.SetPlan(1, point, plan with { EventOccurrenceExclusions = excluded ? values.Add(exclusion) : values,
-                Event = plan.Event is { } authored ? authored with { Occurrence = null } : null });
+            var detail = Detail();
+            string label = text.Get(excluded ? "predictor.map.event_exclude" : "predictor.map.event_restore");
+            var action = detail.Sections.Where(section => !section.CollapsedByDefault).SelectMany(section => section.Choices)
+                .Single(choice => excluded ? choice.Label == label : choice.Label.StartsWith(label + " · ", StringComparison.Ordinal));
+            return presenter.ApplyChoice(detail.NodeId, action.Id);
         }
-        Check(Node().Event?.Event?.Entry == "MORPHIC_GROVE", "conditional queue starts with automatic A");
-        Check(session.SetPlan(1, point, Option("LONER")), "author A operations before appearance edits");
+        Check(Node().Event?.SelectedOccurrence is { Event.Entry: "TEA_MASTER", CanExclude: true, EligibilityAssumed: false },
+            "drawn queue starts at the currently satisfied conditional A");
+        var initial = Detail();
+        string assumeLabel = text.Get("predictor.map.event_assume_occurrence");
+        var assumeLater = initial.Sections.Single(section => section.Objects.Any(value => value.Key.Entry == "ZEN_WEAVER"))
+            .Choices.Single(choice => choice.Label == assumeLabel);
+        Check(presenter.ApplyChoice(initial.NodeId, assumeLater.Id) && Node().Event?.Event?.Entry == "ZEN_WEAVER",
+            "the real candidate picker can still select later conditional B in one action");
+        var selected = Detail();
+        var restoreAutomatic = selected.Sections.SelectMany(section => section.Choices)
+            .Single(choice => choice.Label == text.Get("predictor.map.event_auto_occurrence"));
+        Check(presenter.ApplyChoice(selected.NodeId, restoreAutomatic.Id) && Node().Event?.Event?.Entry == "TEA_MASTER",
+            "restoring automatic appearance returns to first eligible A");
+        Check(session.SetPlan(1, point, Option("BONE_TEA")), "author A operations before appearance edits");
         var candidate = Node().Event!.SelectedOccurrence!;
         var excludeA = new PredictorEventOccurrenceExclusion(candidate.QueueEvent, candidate.Cursor);
-        Check(Exclude(excludeA, true) && Node().Event?.Event?.Entry == "ZEN_WEAVER", "exclude A selects automatic B");
+        Check(Exclude(true) && Node().Event?.Event?.Entry == "ZEN_WEAVER", "visible exclude A selects automatic B");
         Check(session.SetPlan(1, point, Option("BREATHING_TECHNIQUES")), "author B's independent operations");
-        Check(Exclude(excludeA, false) && Node().Event?.Event?.Entry == "MORPHIC_GROVE" &&
-            session.GetPlan(1, point)!.Event!.Actions.Single().ExpectedOption!.Key == "LONER" &&
+        Check(Exclude(false) && Node().Event?.Event?.Entry == "TEA_MASTER" &&
+            session.GetPlan(1, point)!.Event!.Actions.Single().ExpectedOption!.Key == "BONE_TEA" &&
             session.GetPlan(1, point)!.EventOccurrenceExclusions.IsEmpty,
             "restore A converges and rebinds A actions without resurrecting old exclusions");
-        Check(Exclude(excludeA, true) && Node().Event?.Event?.Entry == "ZEN_WEAVER" &&
+        Check(Exclude(true) && Node().Event?.Event?.Entry == "ZEN_WEAVER" &&
             session.GetPlan(1, point)!.Event!.Actions.Single().ExpectedOption!.Key == "BREATHING_TECHNIQUES",
             "excluding A again rebinds B actions without oscillating to A");
         session.Update(native, baseline.Context.GameVersion, true, new Dictionary<int, PredictorMapRouteDraft>());
@@ -565,14 +591,46 @@ internal static class PredictorLiveCaptureChecks
         Check(session.Forecast?.Fault == null && Node().Event?.Event?.Entry == "ZEN_WEAVER" &&
             session.GetPlan(1, point) == retainedPlan && NativeFacts(native) == before,
             "explicit retry restores the original node and authored intent after its source is trustworthy again");
-        Check(Exclude(excludeA, false) && Node().Event?.Event?.Entry == "MORPHIC_GROVE" && NativeFacts(native) == before,
+        Check(Exclude(false) && Node().Event?.Event?.Entry == "TEA_MASTER" && NativeFacts(native) == before,
             "explicit correction after rejected edit and recompute failure restores A without mutating native state/RNG");
+        Console.WriteLine("LIVE_CAPTURE_EVENT_EXCLUSIONS_PASS known conditional; visible skip/restore; explicit successor; automatic reset; separate event operations; native state preserved");
+    }
+
+    private static void CompletedLaterAncientRebases(PredictorRun baseline)
+    {
+        var native = EntryFixture(baseline, 2);
+        string version = baseline.Context.GameVersion;
+        var start = native.Map.StartingMapPoint.coord;
+        var ancient = native.Act.Ancient;
+        PredictorLiveRunCapture.CaptureBeforeNodeEntry(native, version, start);
+        native.AddVisitedMapCoord(start);
+        native.AppendToMapPointHistory(MegaCrit.Sts2.Core.Map.MapPointType.Ancient, RoomType.Event, ancient.Id);
+        var room = new EventRoom(ModelDb.GetById<EventModel>(ancient.Id));
+        native.PushRoom(room);
+        PredictorLiveRunCapture.RecordNodeEntryTask(native, start, Task.CompletedTask);
+        var session = new InRunMapPredictionSession();
+        var map = PredictorLiveRunCapture.Map(native);
+        var here = new MapPosition(start.col, start.row);
+        var next = map.Points.Single(point => point.Position == here).Children.First();
+        var draft = new PredictorMapRouteDraft(map, here);
+        draft.ApplyStroke([next], PredictorMapStrokeMode.Draw);
+        var drafts = new Dictionary<int, PredictorMapRouteDraft> { [1] = draft };
+        session.Update(native, version, false, drafts);
+        Check(session.IsCurrentNodeReplay, "An unchosen later Ancient still exposes its entry offers");
+        room.MarkPreFinished();
+        string before = NativeFacts(native);
+        session.Update(native, version, false, drafts);
+        Check(!session.IsCurrentNodeReplay && !session.WaitingForBoundary && session.Nodes.ContainsKey((1, next)) &&
+            !session.Nodes.ContainsKey((1, here)) && NativeFacts(native) == before,
+            "A finished Act 2 Ancient continues from its real inventory, even before the map enables travel");
     }
 
     private static void OpeningEntrySessionLifecycle(PredictorRun baseline)
     {
         var native = EntryFixture(baseline, 1);
-        string version = baseline.Context.GameVersion;
+        // This observation is compared directly against the loaded native
+        // generator. The route corpus still deliberately exercises 0.111.
+        string version = NativeGameFixture.GameVersionOr(baseline.Context.GameVersion);
         var start = native.Map.StartingMapPoint.coord;
         string before = NativeFacts(native);
         var entry = PredictorLiveRunCapture.CaptureBeforeNodeEntry(native, version, start)!;
@@ -584,8 +642,11 @@ internal static class PredictorLiveCaptureChecks
         native.PushRoom(room);
         var neow = (Neow)ModelDb.Event<Neow>().ToMutable();
         neow.BeginEvent(native.Players[0], null, false).GetAwaiter().GetResult();
-        Check(neow.CurrentOptions.Select(option => PredictorLiveRunCapture.Key(option.Relic!))
-            .SequenceEqual(entry.State.OpeningOptions), "copied first-entry offers match native Neow generation exactly");
+        var nativeOffers = neow.CurrentOptions.Select(option => PredictorLiveRunCapture.Key(option.Relic!)).ToArray();
+        Check(nativeOffers.SequenceEqual(entry.State.OpeningOptions),
+            $"copied {version} first-entry offers match native Neow generation exactly; " +
+            "native=" + string.Join(",", nativeOffers.Select(offer => offer.Entry)) + "; copied=" +
+            string.Join(",", entry.State.OpeningOptions.Select(offer => offer.Entry)));
         PredictorLiveRunCapture.RecordNodeEntryTask(native, start, Task.CompletedTask);
         var session = new InRunMapPredictionSession();
         session.Update(native, version, false, new Dictionary<int, PredictorMapRouteDraft>());

@@ -58,6 +58,7 @@ internal static partial class AncientOptionFamily
                 FamilyCanonicalMeasuredCost.TryDenseQuote(selected, geometry) ?? AncientOptionPhysicalPricing.Quote(pricing, plan, geometry))
         };
         var body = new FilterBodyDescription(preparation, "A.AncientOption.Gpu.EventLocal" + plan.RuleRevision, model.ProfileId) {
+            SmallTailCpuMatcher = plan.HasOnlyNumericalRows ? CreateMatcher(plan) : null,
             UsesGpu = true, InputIdentity = identity, PlayersCount = model.Authority.PlayersCount,
             CpuWorkers = preferences.WorkerCount, WindowCapacity = plan.Capacity,
             NumericRequirements = plan.GpuNumericRequirements, Cost = cost, CpuAlternatives = [cpu],
@@ -72,6 +73,8 @@ internal static partial class AncientOptionFamily
                     var output = resource.Execute(input, token, out var metrics);
                     return new(output, metrics.CanonicalMs, metrics.DispatchSyncMs, metrics.ReadbackMs, metrics.ReadbackBytes);
                 }, resource => resource.Dispose(), plan.Reference, profile, resource => (resource.Device, resource.SetupMs)),
+            LargeWindowRole = GpuLargeWindowRole.Dense | GpuLargeWindowRole.Compact,
+            SupportsStandaloneLargeWindow = true,
             BindPrivate = plan.NumericalVariant != GpuNumericalVariant.NativeFloat64 ? null :
                 (device, input, output) => {
                     var resource = new AncientOptionFamilyGpuExecutor(device, plan, input, output);

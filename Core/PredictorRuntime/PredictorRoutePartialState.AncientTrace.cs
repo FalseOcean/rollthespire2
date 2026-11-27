@@ -13,7 +13,7 @@ internal sealed partial class PredictorRun
     {
         internal readonly string Node = node;
         internal readonly List<PredictorKnowledgeFactId> Common = [];
-        internal readonly Dictionary<string, PredictorKnowledgeFactId> Conditions = new(StringComparer.Ordinal);
+        internal readonly Dictionary<string, (PredictorKnowledgeFactId Fact, ImmutableArray<PredictorCombatPendingCause> Causes)> Conditions = new(StringComparer.Ordinal);
         internal readonly List<PredictorKnowledgeFactId> Character = [];
         internal PredictorKnowledgeFactId StarterCard;
         internal PredictorKnowledgeFactId StarterRelic;
@@ -28,6 +28,7 @@ internal sealed partial class PredictorRun
     private sealed partial class RoutePartialState
     {
         private readonly Dictionary<(string Node, int Index, string Field), PredictorKnowledgeFactId> _ancientResultFacts = [];
+        private readonly Dictionary<(string Node, int Index), ImmutableArray<PredictorCombatPendingCause>> _ancientGeneratedOfferCauses = [];
         private readonly Dictionary<string, ImmutableArray<PredictorKnowledgeFactId>> _ancientChildResultFacts = new(StringComparer.Ordinal);
         private readonly Dictionary<string, PredictorKnowledgeFactId> _ancientSelectionPlans = new(StringComparer.Ordinal);
         private int _ancientBindingOccurrence;
@@ -35,6 +36,8 @@ internal sealed partial class PredictorRun
 
         internal ImmutableArray<PredictorKnowledgeFactId> AncientResultReads(string node, int index, string field) =>
             _ancientResultFacts.TryGetValue((node, index, field), out var id) ? [id] : [];
+        internal ImmutableArray<PredictorCombatPendingCause>? AncientGeneratedOfferCauses(string node, int index) =>
+            _ancientGeneratedOfferCauses.TryGetValue((node, index), out var causes) ? causes : null;
         internal ImmutableArray<PredictorKnowledgeFactId> AncientResultUnresolvedReads(string node, int index, string field) =>
             Unresolved(AncientResultReads(node, index, field));
         internal ImmutableArray<PredictorKnowledgeFactId> AncientChildResultReads(string node) =>
@@ -53,9 +56,9 @@ internal sealed partial class PredictorRun
             trace.Profile = profile;
             var origin = run.Context.Live == null ? PredictorKnowledgeOrigin.Derived : PredictorKnowledgeOrigin.Captured;
             PredictorKnowledgeFactId Input<T>(string key, T value, ImmutableArray<PredictorCombatPendingCause> causes = default,
-                ImmutableArray<PredictorKnowledgeFactId> reads = default) =>
+                ImmutableArray<PredictorKnowledgeFactId> reads = default, string? derivation = null) =>
                 Facts.RecordResult("ancient.input." + key, trace.Node, value, causes, origin,
-                    operation: "EnterAncient input", allReadFactIds: reads);
+                    operation: "EnterAncient input", allReadFactIds: reads, derivation: derivation);
             trace.Common.Add(Input("act", position.Act));
             trace.Common.Add(Input("ancient", ancient.Serialized));
             trace.Common.Add(Input("character", run.Context.Character.Serialized));
@@ -94,21 +97,23 @@ internal sealed partial class PredictorRun
             void CountCondition(string name, PredictorDeckProjectionScope scope, int threshold, bool value)
             {
                 var projection = Deck.Project(scope);
+                var countCauses = ProjectionCauses(projection, count: true);
                 var count = RecordInteger("ancient.input.profile." + name + ".count", trace.Node, projection.Count,
-                    ProjectionCauses(projection, count: true), "AncientConditions " + scope + " count");
-                bool boundsProve = projection.Count is { } expression &&
-                    (expression.Bounds.Lower >= threshold || expression.Bounds.Upper < threshold);
-                bool mismatch = boundsProve && value != (projection.Count!.Bounds.Lower >= threshold);
-                bool proven = boundsProve && !mismatch;
+                    countCauses, "AncientConditions " + scope + " count");
+                bool? thresholdProved = projection.KnownCandidates.Length >= threshold || projection.Count?.Bounds.Lower >= threshold
+                    ? true : projection.Count?.Bounds.Upper < threshold ? false : null;
+                bool mismatch = thresholdProved.HasValue && value != thresholdProved.Value;
+                bool proven = thresholdProved.HasValue && !mismatch;
                 ImmutableArray<PredictorCombatPendingCause> gap = mismatch ?
                     [PredictorRouteCauseEvidence.CreateExplicit("AncientProfileWitnessMismatch", trace.Node, PredictorCombatDomain.Deck,
                         PredictorPendingReasonKind.ImplementationGap,
                         "The generator's concrete profile disagrees with the retained deck threshold proof.",
                         ["ancient.profile." + name], occurrenceKey: name)] : [];
-                trace.Conditions[name] = Facts.RecordResult("ancient.compute.profile." + name, trace.Node, value,
+                var fact = Facts.RecordResult("ancient.compute.profile." + name, trace.Node, value,
                     gap, operation: "AncientConditions threshold " + threshold, allReadFactIds: [count],
                     unresolvedReadFactIds: proven ? [] : Unresolved([count]),
-                    derivation: proven ? "The typed count enclosure proves this threshold across every retained alternative." : null);
+                    derivation: proven ? "The guaranteed candidate subset or the count bounds prove this threshold across the retained alternatives." : null);
+                trace.Conditions[name] = (fact, proven ? [] : gap.AddRange(countCauses));
             }
             CountCondition("basicStrike", PredictorDeckProjectionScope.BasicStrike, 1, profile.TezcataraHasBasicStrike);
             CountCondition("swift", PredictorDeckProjectionScope.Enchantable, 4, profile.NonupeipeSwiftEnchantableAtLeast4);
@@ -119,23 +124,34 @@ internal sealed partial class PredictorRun
             var all = Deck.Project(PredictorDeckProjectionScope.All);
             var deckCauses = ProjectionCauses(all, count: false);
             var relicCauses = Domain(PredictorCombatDomain.Relics).Where(c => c.Code != "FirstPlayerTurn").ToImmutableArray();
+            ImmutableArray<PredictorCombatPendingCause> CardMembership(params string[] entries) =>
+                PredictorRouteCauseEvidence.Normalize(_dependencies.Where(dependency =>
+                    entries.Any(entry => RouteCardMayVary(run, [dependency], entry))).Select(dependency => dependency.Cause));
+            var starterCardCauses = CardMembership("BASH", "NEUTRALIZE", "UNLEASH", "FALLING_STAR", "DUALCAST");
+            var starterRelicCauses = PredictorRouteCauseEvidence.Normalize(run.Context.Catalog!.StarterRelics
+                .SelectMany(key => RouteRelicMembershipCauses(run, _dependencies, key.Entry)));
             var starterCatalog = Input("catalog.starterRelics", string.Join(" | ", run.Context.Catalog!.StarterRelics.Select(k => k.Serialized)));
             var petCatalog = Input("catalog.eventPetRelics", string.Join(" | ", run.Context.Catalog.EventPetRelics.Select(k => k.Serialized)));
             var relics = Input("relics.allMembership", string.Join(" | ", run.Working.Relics.Select(r => r.Key.Serialized)),
                 relicCauses, AncientLatest("relics.orderedInventory"));
-            var egg = Input("deck.containsByrdonisEgg", run.Working.Deck.Any(id => run.Working.Card(id).Key.Entry == "BYRDONIS_EGG"),
-                deckCauses, deckReads);
-            trace.Conditions["legion"] = Facts.RecordResult("ancient.compute.profile.legion", trace.Node, profile.PaelAllowLegionNoEventPet,
-                operation: "AncientConditions no event-pet relic and no Byrdonis Egg", allReadFactIds: [relics, egg, petCatalog],
-                unresolvedReadFactIds: Unresolved([relics, egg]));
-            var starter = Input("deck.containsStarterModel", profile.OrobasArchaicToothConditionMet, deckCauses, deckReads);
-            trace.Conditions["tooth"] = starter;
-            trace.Conditions["touch"] = Facts.RecordResult("ancient.compute.profile.touch", trace.Node, profile.OrobasTouchOfOrobasConditionMet,
-                operation: "AncientConditions starter-relic membership including melted instances", allReadFactIds: [relics, starterCatalog],
-                unresolvedReadFactIds: Unresolved([relics]));
+            var petInputs = new EventStateInputs(run, ancient, _dependencies, "ancient");
+            var petRelic = petInputs.EventPetMember();
+            var egg = petInputs.CardMember("BYRDONIS_EGG");
+            var hasPet = EventStateInputs.Or(EventStateInputs.Known(petRelic), EventStateInputs.Known(egg));
+            var legionCauses = hasPet.HasValue ? ImmutableArray<PredictorCombatPendingCause>.Empty : petInputs.Causes;
+            trace.Conditions["legion"] = (Facts.RecordResult("ancient.compute.profile.legion", trace.Node, profile.PaelAllowLegionNoEventPet,
+                legionCauses, operation: "AncientConditions no event-pet relic and no Byrdonis Egg", allReadFactIds: petInputs.Facts.Add(petCatalog),
+                derivation: "Either guaranteed pet suffices to exclude Pael's Legion. Allowing it requires both memberships to be absent."), legionCauses);
+            var starter = Input("deck.containsStarterModel", profile.OrobasArchaicToothConditionMet, starterCardCauses, deckReads,
+                "Only starter card identity and membership are read.");
+            trace.Conditions["tooth"] = (starter, starterCardCauses);
+            trace.Conditions["touch"] = (Facts.RecordResult("ancient.compute.profile.touch", trace.Node, profile.OrobasTouchOfOrobasConditionMet,
+                starterRelicCauses, operation: "AncientConditions starter-relic membership including melted instances", allReadFactIds: [relics, starterCatalog],
+                derivation: "The scoped starter relic membership establishes the result."),
+                starterRelicCauses);
             var modifiers = Input("modifiers", string.Join(" | ", run.Context.Modifiers.Select(m => m.Key.Serialized)));
-            trace.Conditions["pandora"] = Facts.RecordResult("ancient.compute.profile.pandora", trace.Node, profile.DarvAllowPandorasBoxRelicSet,
-                operation: "AncientConditions Draft/Insanity/SealedDeck exclusion", allReadFactIds: [modifiers]);
+            trace.Conditions["pandora"] = (Facts.RecordResult("ancient.compute.profile.pandora", trace.Node, profile.DarvAllowPandorasBoxRelicSet,
+                operation: "AncientConditions Draft/Insanity/SealedDeck exclusion", allReadFactIds: [modifiers]), []);
             trace.StarterCard = Input("starterCard.firstId", run.Working.Deck.Select(run.Working.Card).FirstOrDefault(c =>
                 c.Key.Entry is "BASH" or "NEUTRALIZE" or "UNLEASH" or "FALLING_STAR" or "DUALCAST")?.Id.ToString() ?? "none",
                 deckCauses.AddRange(Domain(PredictorCombatDomain.InstanceIds)), deckReads);
@@ -165,7 +181,7 @@ internal sealed partial class PredictorRun
                 _ => true
             };
             var allocationReads = trace.Common.Concat(AncientSlotConditions(run.CurrentAncient.Value.Entry, 2)
-                .Select(key => trace.Conditions[key])).ToImmutableArray();
+                .Select(key => trace.Conditions[key].Fact)).ToImmutableArray();
             var count = Facts.RecordResult("ancient.compute.offerCount", trace.Node, run.AncientOffers.Length,
                 operation: "EnterAncient option allocation count", allReadFactIds: allocationReads,
                 unresolvedReadFactIds: fixedCount ? [] : Unresolved(allocationReads),
@@ -177,7 +193,7 @@ internal sealed partial class PredictorRun
             // This stream is private to the event provider. It is not Niche,
             // UpFront or another PredictorState cursor.
             var countReads = trace.Common.Concat(AncientSlotConditions(run.CurrentAncient.Value.Entry, 2)
-                .Select(key => trace.Conditions[key])).ToImmutableArray();
+                .Select(key => trace.Conditions[key].Fact)).ToImmutableArray();
             if (run.CurrentAncient.Value.Entry is "NONUPEIPE" or "TANX" or "DARV")
                 Facts.RecordResult("ancient.compute.eventLocal.calls", trace.Node, generated.RngCallCount,
                     operation: "PredictEventLocal draw count", allReadFactIds: countReads, unresolvedReadFactIds: Unresolved(countReads));
@@ -186,8 +202,11 @@ internal sealed partial class PredictorRun
             foreach (var pair in run.AncientOffers.Select((offer, index) => (offer, index)))
             {
                 var offer = pair.offer;
-                var reads = trace.Common.Concat(AncientSlotConditions(run.CurrentAncient.Value.Entry, pair.index)
-                    .Select(key => trace.Conditions[key])).ToImmutableArray();
+                var conditions = AncientSlotConditions(run.CurrentAncient.Value.Entry, pair.index)
+                    .Select(key => trace.Conditions[key]).ToArray();
+                var reads = trace.Common.Concat(conditions.Select(condition => condition.Fact)).ToImmutableArray();
+                _ancientGeneratedOfferCauses[(trace.Node, pair.index)] =
+                    PredictorRouteCauseEvidence.Normalize(conditions.SelectMany(condition => condition.Causes));
                 var catalog = trace.Context!.Catalog!;
                 void Pool(string id)
                 {

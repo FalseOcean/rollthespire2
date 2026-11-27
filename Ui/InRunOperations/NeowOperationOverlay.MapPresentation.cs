@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Godot;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Models;
@@ -41,6 +42,14 @@ internal sealed partial class NeowOperationOverlay
     internal bool MapCardPresentation { get; init; }
     internal bool MapSummaryOnly { get; init; }
     internal bool MapSummaryCardNames { get; init; }
+
+    // This new dock already has a settled, ordered offer. The map row owns its
+    // heading and choices, so only the native card stack needs constructing.
+    internal void BuildMapRewardCards(ImmutableArray<PredictorCard> cards)
+    {
+        AddCardGroup(cards, "", 0, stacked: true, spread: false, possible: false);
+        BuildStacks();
+    }
 
     // Quest objects carry a stable identity/effect rather than a reward offer
     // to compare. Their names and real actions remain in the map summary.

@@ -266,12 +266,19 @@ internal sealed partial class InRunMapNodePresenter
     private static PredictorPlannedNode? EventOptionPlan(Context c, PredictorEventNodeKnowledge node, PredictorEventOptionKnowledge option, bool initial)
     {
         if (node.Event is not { } key || option.Value == null) return null;
-        var plan = EventPlanApplies(c, node) ? c.Plan.Event! : new PredictorPlannedEvent(key);
+        var plan = PlanForEventOption(c, node, key);
         // Conveyor's entry HP declaration precedes its first option. Preserve
         // that accepted input when a result authors the parent and child.
         var prefix = initial ? plan.Actions.TakeWhile(action => action.Action != PredictorEventActionKind.Option).ToImmutableArray() :
             plan.Actions.Take(node.AppliedActions).ToImmutableArray();
         return c.Plan with { Event = plan with { Actions = prefix.Add(new(PredictorEventActionKind.Option) { ExpectedOption = option.Value }) } };
+    }
+
+    private static PredictorPlannedEvent PlanForEventOption(Context context, PredictorEventNodeKnowledge node, ModelKey key)
+    {
+        var plan = EventPlanApplies(context, node) ? context.Plan.Event! : new PredictorPlannedEvent(key);
+        // Adopting a fresh trade retires any saved arrival inventory from older drawings.
+        return key.Entry == "THE_FUTURE_OF_POTIONS" ? plan with { Potions = null } : plan;
     }
 
     private static bool EventPlanApplies(Context context, PredictorEventNodeKnowledge node) =>

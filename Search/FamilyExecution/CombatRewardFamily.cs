@@ -157,6 +157,8 @@ internal static partial class CombatRewardFamily
                     return new(output, metrics.CanonicalMs, metrics.DispatchSyncMs, metrics.ReadbackMs, metrics.ReadbackBytes);
                 }, resource => resource.Dispose(), gpuPlan.UsesObservedOpeningHotLoop ? replay.MatchesObservedHotReference : replay.MatchesReference,
                 profile, resource => (resource.Device, resource.SetupMs), 4096),
+            LargeWindowRole = GpuLargeWindowRole.Dense | GpuLargeWindowRole.Compact,
+            SupportsStandaloneLargeWindow = true,
             BindPrivate = gpuPlan.NumericalVariant != GpuNumericalVariant.NativeFloat64 ? null : (device, input, output) => {
                 var resource = new CombatRewardGpuExecutor(device, gpuPlan, privateInput: input, privateOutput: output);
                 return new(resource, resource.Device, resource.SetupMs, input, output, (batch, count, token) => {

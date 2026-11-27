@@ -10,7 +10,7 @@ internal sealed partial class NeowFilterExecution
     private bool _pairParity;
     private int _densePairGroups, _pairLiveGroups, _liveBatches;
     private int _lastDenseOutputCount = -1;
-    internal bool CanGroupDenseBatches => !_disabled && _gpuPlan is { DirectNestedMode: 0, JointTransformMetaOffset: < 0 } &&
+    internal bool CanGroupDenseBatches => Body.MaximumGpuRootWindow == 0 && !_disabled && _gpuPlan is { DirectNestedMode: 0, JointTransformMetaOffset: < 0 } &&
         _composite is null && _transformations is null;
     bool IDenseFamilyBatchGrouping.CanGroupDenseBatches => CanGroupDenseBatches;
     bool IDenseFamilyBatchGrouping.PreferDenseBatchGrouping => CanGroupDenseBatches && !_compact && !_skipExactValidation &&

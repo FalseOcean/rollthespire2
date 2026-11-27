@@ -61,8 +61,11 @@ internal static class PredictorInitialization
         var upFront = state.Streams.Single(s => s.Stream == PredictorStream.UpFront).Restore();
         static PredictorBagEntry Entry(NeowEffectRelicSnapshot r) => new(r.RelicKey,
             string.IsNullOrWhiteSpace(r.RarityCode) ? r.Rarity.ToString() : r.RarityCode);
-        var shared = PredictorRelicBag.Populate(effects.SharedRelicPoolSource.Select(Entry), false, upFront);
-        var personal = PredictorRelicBag.Populate(effects.SharedRelicPoolSource.Concat(effects.CharacterRelicPoolSource).Select(Entry), true, upFront);
+        var semantics = context.VersionResolution.SemanticProfileId;
+        var shared = PredictorRelicBag.Populate(effects.SharedRelicPoolSource.Select(Entry), false, upFront,
+            semantics, sharedRefreshAllowed: !context.Uses114RoomRules);
+        var personal = PredictorRelicBag.Populate(effects.SharedRelicPoolSource.Concat(effects.CharacterRelicPoolSource).Select(Entry),
+            true, upFront, semantics);
         var runtimeWorld = PredictorWorldInitialization.Generate(context, world);
         var final = runtimeWorld.FinalUpFrontState;
         ImmutableArray<ModelKey> neowOptions = [];

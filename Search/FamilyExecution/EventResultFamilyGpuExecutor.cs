@@ -22,7 +22,7 @@ internal sealed class EventResultFamilyGpuExecutor : IDisposable
     private readonly int _owner = System.Environment.CurrentManagedThreadId;
     private bool _disposed;
     private readonly bool _privateInput, _privateOutput;
-    private readonly bool _tracePrivate = EwPhysicalExperiment.Mode.Length != 0 || PrivateOrdinalSelection.IsRequested || NwaePhysicalExperiment.Mode.Length != 0;
+    private readonly int _outputCapacity;
     internal int Capacity { get; }
     internal string Device { get; }
     internal double SetupMs { get; }
@@ -34,7 +34,7 @@ internal sealed class EventResultFamilyGpuExecutor : IDisposable
             throw new InvalidOperationException("E.IntegerRne.PrivateTransportNotValidated");
         _privateInput = privateInput is not null; _privateOutput = privateOutput is not null;
         if (_privateInput && ReferenceEquals(privateInput, privateOutput)) throw new ArgumentException("E.PrivateBuffersAlias");
-        _rd = rd; Capacity = plan.Capacity; var watch = Stopwatch.StartNew();
+        _rd = rd; Capacity = GpuFilterSubwindow.Capacity(plan.Capacity, _privateOutput); _outputCapacity = privateOutput?.ElementCapacity ?? Capacity; var watch = Stopwatch.StartNew();
         Rid Add(Rid r) { _owned.Add(r); return r; }
         Rid Data(uint[] data) => Add(FamilyGpuComputeUtility.CreateStorageBuffer(rd, FamilyGpuComputeUtility.ToBytesNonEmpty(data)));
         try
@@ -43,6 +43,7 @@ internal sealed class EventResultFamilyGpuExecutor : IDisposable
             for (int i = 0; i < plan.Buffers.Length; i++) buffers[i + 1] = Data(plan.Buffers[i]);
 
             string source = plan.ShaderSource();
+            if (Capacity > plan.Capacity) source = GpuRootWindow.Shader2D(source);
             if (_privateInput)
             {
                 const string address = "input_ids.v[i]";
@@ -57,14 +58,15 @@ internal sealed class EventResultFamilyGpuExecutor : IDisposable
             for (int slot = 0; slot < GroupingK; slot++)
             {
                 buffers[0] = _batch[slot] = Data(new uint[8]);
-                buffers[3] = _input[slot] = privateInput?.Buffer ?? Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, Capacity * 4));
+                buffers[3] = _input[slot] = privateInput?.Buffer ?? Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd,
+                    _privateOutput ? sizeof(uint) : Capacity * sizeof(uint)));
                 buffers[4] = _header[slot] = _privateOutput && slot > 0 ? _header[0] : Data(Header());
                 buffers[5] = _output[slot] = privateOutput?.Buffer ?? Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, Capacity * 4));
                 _uniforms[slot] = Add(FamilyGpuComputeUtility.CreateUniformSet(rd, shader, buffers, "E.EventResult"));
             }
             _headerBank = _privateOutput ? default : Data(new uint[GroupingK * 8]);
             WorkspaceBytes = GroupingK * 32L + (_privateOutput ? 32L : GroupingK * 64L) +
-                (_privateInput ? 0 : GroupingK * Capacity * 4L) + (_privateOutput ? 0 : GroupingK * Capacity * 4L) + plan.Buffers.Sum(b => Math.Max(4, b.Length * 4L));
+                (_privateInput ? 0 : GroupingK * (_privateOutput ? 4L : Capacity * 4L)) + (_privateOutput ? 0 : GroupingK * Capacity * 4L) + plan.Buffers.Sum(b => Math.Max(4, b.Length * 4L));
             Device = rd.GetDeviceName(); SetupMs = watch.Elapsed.TotalMilliseconds;
         }
         catch (Exception failure)
@@ -82,13 +84,13 @@ internal sealed class EventResultFamilyGpuExecutor : IDisposable
     }
     internal FamilyCandidateSet ExecutePrivate(SearchBatch batch, int count, CancellationToken token, out EventResultFamilyGpuMetrics metrics)
     {
-        if (!_privateInput || _privateOutput || count < 0 || count > batch.BatchCandidateCount || batch.BatchCandidateCount > PrivateOrdinalBuffer.Capacity)
+        if (!_privateInput || _privateOutput || count < 0 || count > batch.BatchCandidateCount || batch.BatchCandidateCount > GpuRootWindow.Maximum)
             throw new InvalidDataException("E.PrivateTerminalBounds");
         return ExecuteCore(FamilyCandidateSet.Dense(batch), count, token, out metrics)!;
     }
     internal int ExecutePrivateStage(SearchBatch batch, int count, CancellationToken token, out EventResultFamilyGpuMetrics metrics)
     {
-        if (!_privateOutput || (!_privateInput && count != batch.BatchCandidateCount) || count < 0 || count > batch.BatchCandidateCount || batch.BatchCandidateCount > PrivateOrdinalBuffer.Capacity)
+        if (!_privateOutput || (!_privateInput && count != batch.BatchCandidateCount) || count < 0 || count > batch.BatchCandidateCount || batch.BatchCandidateCount > GpuRootWindow.Maximum)
             throw new InvalidDataException("E.PrivateStageBounds");
         ExecuteCore(FamilyCandidateSet.Dense(batch), count, token, out metrics);
         return metrics.Output;
@@ -113,7 +115,7 @@ internal sealed class EventResultFamilyGpuExecutor : IDisposable
                 int windowOffset = offset + slot * Capacity, count = Math.Min(Capacity, inputCount - windowOffset);
                 FamilyGpuComputeUtility.Update(_rd, _batch[slot], [(uint)input.Batch.BatchBase, (uint)(input.Batch.BatchBase >> 32),
                     (uint)input.Batch.BatchCandidateCount, (uint)count, input.IsDense && !_privateInput ? 0u : 1u,
-                    (uint)(resident ? PrivateOrdinalBuffer.Capacity : Capacity), (uint)windowOffset, 0], "E.EventResult.Batch");
+                    (uint)_outputCapacity, (uint)windowOffset, 0], "E.EventResult.Batch");
                 if (!resident) FamilyGpuComputeUtility.Update(_rd, _header[slot], Header(), "E.EventResult.Header");
                 if (!input.IsDense && !_privateInput)
                     FamilyGpuComputeUtility.UpdateBytes(_rd, _input[slot], FamilyGpuComputeUtility.PackAbi1UInt32(input, windowOffset, count), "E.EventResult.Input");
@@ -133,7 +135,7 @@ internal sealed class EventResultFamilyGpuExecutor : IDisposable
                     if (resident && slot > 0) _rd.ComputeListAddBarrier(list);
                     _rd.ComputeListBindUniformSet(list, _uniforms[slot], 0);
                     int count = Math.Min(Capacity, inputCount - offset - slot * Capacity);
-                    _rd.ComputeListDispatch(list, (uint)((count + 63) / 64), 1, 1);
+                    GpuRootWindow.Dispatch(_rd, list, (uint)((count + 63) / 64));
                     dispatches++;
                 }
             }
@@ -229,7 +231,7 @@ internal sealed class EventResultFamilyGpuExecutor : IDisposable
         double validation = watch.Elapsed.TotalMilliseconds - validationStart;
         metrics = new(inputCount, result.Count, dispatches, bytes, read, sort, watch.Elapsed.TotalMilliseconds, submitSync)
             { SubmissionGroups = groups, HeaderReadCalls = headerCalls };
-        if (_tracePrivate)
+        if (Bootstrap.RuntimeLog.DetailEnabled)
             RolltheSpire2.Bootstrap.RuntimeLog.TryBackgroundDetail($"ewStageTiming=true;stage=E;input={input.Count};output={result.Count};dispatches={dispatches};groups={groups};headerReadCalls={headerCalls};dispatchSyncMs={submitSync};readbackBytes={bytes};readbackMs={read};widenMs={widen};sortMs={sort};validationMs={validation};prepareOtherMs={metrics.CanonicalMs-submitSync-read-widen-sort-validation};canonicalMs={metrics.CanonicalMs}");
         return result;
     }

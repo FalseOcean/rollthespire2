@@ -52,7 +52,8 @@ internal sealed partial class PredictorRun
         if (_eventHealth == null)
         {
             _conveyorEntryHealthPending = true;
-            return [];
+            return _preview.Settings.Policy == PredictorRoutePreviewPolicy.LiveMapDefaults
+                ? [new("OBSERVE_CHEF")] : [];
         }
         RollConveyorDish();
         return ConveyorOptions();

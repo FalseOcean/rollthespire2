@@ -80,19 +80,19 @@ internal sealed partial class QueryWorkbenchFrame
             return new Observation(this);
         }
 
-        internal EditorRefreshContext Solo(ModRuntimeSnapshot runtime, ModelKey character, int ascension)
+        internal EditorRefreshContext Solo(ModRuntimeSnapshot runtime, ModelKey character, int ascension, bool fullUnlocks)
         {
-            string key = $"{_freshness}/{character}/{ascension}/1/0";
+            string key = $"{_freshness}/{character}/{ascension}/1/0" + (fullUnlocks ? "/full" : "");
             if (_solo is null || key != _soloKey)
             {
                 var authority = RuntimeContextAuthorityCapture.CaptureRuntimeReadOnly(runtime.Profile,
                     ProfileSeedGenerator.CreateProbeSeed(runtime.Profile), CharacterIdentity.FromKey(character),
                     ascension, runtime.Detection.DisplayVersion, predictionGameMode: WorldGameMode.Singleplayer,
-                    predictionGameModeAuthority: PredictionGameModeAuthority.ExplicitRequest);
+                    predictionGameModeAuthority: PredictionGameModeAuthority.ExplicitRequest, explicitUnlockState: fullUnlocks ? UnlockState.all : null);
                 // Keep production's CurrentAccount support-evidence provenance.
                 // Its own unlock read is required by that boundary; editors then
                 // share this authority instead of manufacturing ExplicitRequest evidence.
-                _solo = new(key, _unlocks, authority); _soloKey = key; AuthorityCaptures++;
+                _solo = new(key, fullUnlocks ? UnlockState.all.ToSerializable() : _unlocks, authority); _soloKey = key; AuthorityCaptures++;
             }
             return _solo;
         }
@@ -118,7 +118,7 @@ internal sealed partial class QueryWorkbenchFrame
         internal CompiledSearch Compile(WorkbenchSearchDraft draft, ModRuntimeSnapshot runtime)
         {
             if (draft.Players.Count == 0)
-                return draft.Compile(runtime, out _, Solo(runtime, draft.Character, draft.Ascension).Authority);
+                return draft.Compile(runtime, out _, Solo(runtime, draft.Character, draft.Ascension, draft.UseFullUnlocks).Authority);
             var party = Party(runtime, draft.Players.Select(p => p.Character).ToArray(),
                 draft.Players.Select(p => p.RequireUnlocks()).ToArray(), draft.Ascension,
                 draft.Players.Select(p => p.UnlockSource).ToArray());
@@ -135,7 +135,7 @@ internal sealed partial class QueryWorkbenchFrame
 
     private EditorRefreshContext? EditorContextForSeat(int seat)
     {
-        if (!_multiplayer) return _editorInputs.Solo(_runtime, _soloCharacter, _soloAscension);
+        if (!_multiplayer) return _editorInputs.Solo(_runtime, _soloCharacter, _soloAscension, _useFullUnlocks);
         var party = EditorParty();
         return party is null ? null : new EditorRefreshContext(party.Fingerprint + "/" + seat,
             _lobbyUnlocks[seat]!, party.Players[seat]);

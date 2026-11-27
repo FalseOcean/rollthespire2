@@ -98,12 +98,12 @@ internal static partial class UiSurfaceChecks
             {
                 preferences.SetOperationPredictionMode(extra, mode);
                 var demand = (OperationDemand)captureDemand.Invoke(controller, [rf])!;
-                bool expectedSequence = mode == OperationPredictionMode.On || mode == OperationPredictionMode.Auto && !rf.IsLoaded;
+                bool expectedSequence = mode == OperationPredictionMode.On || mode == OperationPredictionMode.Auto && !rf.Features.Covers(extra);
                 check(demand.Surface.IncludeRewardSequence == expectedSequence &&
-                    demand.Surface.IncludeRewardAlternative == !rf.IsLoaded &&
-                    demand.MayPredict == (expectedSequence || !rf.IsLoaded),
+                    demand.Surface.IncludeRewardAlternative == !rf.Features.Covers("reward:reroll") &&
+                    demand.MayPredict == (expectedSequence || !rf.Features.Covers("reward:reroll")),
                     name + ":" + rf.Status + ":" + rf.Version + ":" + mode +
-                    " admits sequence only for forced On or Auto without confirmed RF, independently of the immediate Auto result");
+                    " admits sequence only for forced On or Auto without confirmed feature coverage, independently of the immediate Auto result");
                 preferences.SetOperationPredictionMode("reward:reroll", OperationPredictionMode.Off);
                 var sequenceOnly = (OperationDemand)captureDemand.Invoke(controller, [rf])!;
                 check(sequenceOnly.Surface.IncludeRewardSequence == expectedSequence &&

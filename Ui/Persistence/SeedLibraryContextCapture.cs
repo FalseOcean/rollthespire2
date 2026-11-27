@@ -26,8 +26,8 @@ internal static class SeedLibraryContextCapture
             ? draft.Players.Select(p => new SeedLibraryPlayer(p.Slot, p.Character, LobbyUnlockReadout.Copy(p.RequireUnlocks()),
                 p.UnlockSource, draft.Query.Players[p.Slot].AncientPremises,
                 OpeningPremise(draft.Query.Players[p.Slot].Conditions), null)).ToArray()
-            : [new SeedLibraryPlayer(0, draft.Character, SaveManager.Instance.GenerateUnlockStateFromProgress().ToSerializable(),
-                "CapturedLocalProfile", draft.AncientPremises, OpeningPremise(draft.Query), null)];
+            : [new SeedLibraryPlayer(0, draft.Character, (draft.UseFullUnlocks ? UnlockState.all : SaveManager.Instance.GenerateUnlockStateFromProgress()).ToSerializable(),
+                draft.UseFullUnlocks ? "AssumedFullyUnlocked" : "CapturedLocalProfile", draft.AncientPremises, OpeningPremise(draft.Query), null)];
         return new(runtime.Detection.NormalizedVersion, runtime.Profile.ProfileId, draft.Mode, draft.Ascension, players);
     }
 

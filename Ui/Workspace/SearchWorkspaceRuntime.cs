@@ -50,6 +50,22 @@ internal sealed partial class SearchWorkspaceRuntime(SearchWorkspace store)
     private FamilySearchEtaProjectionV1? _eta;
     private SearchDiagnosticSummarySnapshot? _diagnostics;
     private ManualValidationReceipt? _receipt;
+    internal IReadOnlyList<PersistedSearchResult> SessionResults => _lastBatch?.Results ?? store.DisplayResults;
+    internal SearchProgressSnapshot? SessionProgress => _execution?.Progress ?? _terminalProgress ?? store.Workspace.ResultProgress;
+    private SearchProgressSnapshot? _terminalProgress;
+    // The weak workspace cache can release a finished session between scenes.
+    // Keep only the ID needed to return to an unattended result in this game process.
+    private static string? _unseenBackgroundBatchId;
+    internal bool HasUnseenBackgroundResults => _unseenBackgroundBatchId is { } id &&
+        id == (_lastBatch?.Id ?? store.Workspace.ResultBatchId);
+    internal void MarkBackgroundResultsViewed()
+    {
+        if (HasUnseenBackgroundResults) _unseenBackgroundBatchId = null;
+    }
+    internal void SetPlayingBudget(bool enabled)
+    {
+        if (_execution?.Session is ProductionSearchSession production) production.PlayingBudget = enabled;
+    }
     internal bool Receiving => _execution is not null;
     internal bool IsReceivingSearchFeedback(SearchFeedbackAttempt attempt) => ReferenceEquals(_execution?.Feedback, attempt);
     internal bool HasSearchInFlight => Receiving || HasManualCandidateValidation;
@@ -71,7 +87,8 @@ internal sealed partial class SearchWorkspaceRuntime(SearchWorkspace store)
         store.InitializeWorkbenchCursor();
         var execution = SearchPreparationCompiler.Compile(compiled,
             new(store.CurrentNextCursorSeed, long.MaxValue, target, workers, SkipExactValidation: store.Preferences.SkipExactValidation,
-                ManualFamilyOrder: draft.ManualFamilyOrder, MapLossy: store.MapLossyPreferences), feasibility);
+                ManualFamilyOrder: draft.ManualFamilyOrder, MapLossy: store.MapLossyPreferences,
+                GpuRootBatchSize: store.Preferences.GpuRootBatchSize), feasibility);
         if (!execution.Success || execution.Plan is null) throw new InvalidOperationException(execution.Issue);
         Auxiliary(() => store.EnsureEnvironment(SearchEnvironmentSignatureBuilder.Capture(runtime)), "EnvironmentSave");
         Auxiliary(() => store.SaveWorkbench(draft), "DraftSave");
@@ -98,6 +115,7 @@ internal sealed partial class SearchWorkspaceRuntime(SearchWorkspace store)
             prepared?.History ?? store.Workspace.QueryHistory.FirstOrDefault(history => history.Id == store.Workspace.ActiveHistoryId))
         { ProgressRequestedAt = requestedAt, StartupSessionId = RuntimeLog.SessionId };
         _runRevision++; _diagnostics = null; _eta = null;
+        _terminalProgress = null;
         _lastBatch = _execution.Batch;
         if (prepared is not null) Auxiliary(() => store.BindPreparedResultWorkspace(prepared), "StartReceiverInstall");
         if (_execution.Batch?.Start is { } source)
@@ -129,7 +147,12 @@ internal sealed partial class SearchWorkspaceRuntime(SearchWorkspace store)
 
     internal void Close(SceneTree? tree)
     {
-        Cancel(flush: false);
+        if (store.Preferences.PersistentSearch)
+        {
+            if (_execution?.Batch is { } batch) _unseenBackgroundBatchId = batch.Id;
+            SetPlayingBudget(true);
+        }
+        else Cancel(flush: false);
         Auxiliary(store.FlushAll, "ClosingSave");
         Auxiliary(() => Bind(tree), "ClosingFrameBinding");
     }
@@ -178,26 +201,35 @@ internal sealed partial class SearchWorkspaceRuntime(SearchWorkspace store)
         // unpriced ETA. Refresh on the existing main-thread receive boundary.
         if (active.Session is ProductionSearchSession production) _eta = production.EtaProjection;
         var session = active.Session;
-        void Drain()
+        // Let the bounded channel apply backpressure while the player is in a run.
+        // A row stays in the inbox until storage and acknowledgement both succeed.
+        int deliveriesLeft = session is ProductionSearchSession { PlayingBudget: true } ? 2 : int.MaxValue;
+        bool Drain()
         {
-            while (session.TryReadCandidate(out var candidate))
-                if (candidate is not null) active.Inbox.Enqueue(candidate);
-            while (active.Inbox.TryPeek(out var candidate))
+            while (deliveriesLeft > 0)
             {
+                if (!active.Inbox.TryPeek(out var candidate))
+                {
+                    if (!session.TryReadCandidate(out candidate)) return true;
+                    if (candidate is null) continue;
+                    active.Inbox.Enqueue(candidate);
+                }
                 store.AppendResult(candidate, active.Fingerprint, active.History, active.Batch);
                 session.AcknowledgeCandidate(candidate.Seed);
                 active.Inbox.Dequeue();
+                deliveriesLeft--;
                 if (active.Feedback is { } feedback)
                     Auxiliary(() => feedback.Receive(candidate), "SearchFeedbackCandidate", candidate.Seed);
             }
+            return false;
         }
         Drain();
-        bool complete = session.Completion.IsCompleted;
-        if (complete) Drain();
+        bool complete = session.Completion.IsCompleted && Drain();
         Checkpoint(active, complete);
         ObserveFirstScan(active);
         if (complete) Auxiliary(() => _diagnostics = session.GetDiagnosticSummary(), "FinalDiagnostics");
         if (!complete) return;
+        _terminalProgress = active.Progress;
         _execution = null;
         Auxiliary(store.FlushAll, "TerminalSave");
         Task disposal;

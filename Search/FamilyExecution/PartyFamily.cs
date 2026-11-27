@@ -75,9 +75,15 @@ internal sealed class PartyFamily
         // unconditional player facts used by the price projection.
         var dense = OrderPersonalStages(false, NoPassedPersonalCoverage);
         var compact = OrderPersonalStages(true, NoPassedPersonalCoverage);
+        bool expandedDense = UsesPrivate
+            ? GpuRootWindow.MaximumFor(dense.Select(s => s.Body).ToArray()) > PrivateOrdinalBuffer.Capacity
+            : dense.All(s => s.Body.UsesGpu && s.Body.MaximumRootWindowSize is null) &&
+                dense[0].Body.SupportsStandaloneLargeWindow &&
+                dense[0].Body.LargeWindowRole.HasFlag(GpuLargeWindowRole.Dense);
         return new(prepared, Condition(false).PhysicalImplementationRevision, _profile)
         {
             UsesGpu = UsesGpu, CpuWorkers = _workers, PlayersCount = _players, InputIdentity = _identity,
+            SupportsStandaloneLargeWindow = expandedDense, LargeWindowRole = expandedDense ? GpuLargeWindowRole.Dense : GpuLargeWindowRole.None,
             WindowCapacity = UsesGpu ? FamilyPhysicalExecutionDefaults.DefaultCandidateBatchSize : CpuFilterExecution.Capacity,
             PreferredRootWindowSize = UsesGpu ? null : CpuFilterExecution.Capacity,
             NumericRequirements = _stages.Aggregate(GpuNumericRequirements.None, (value, s) => value | s.Body.NumericRequirements),
@@ -272,19 +278,36 @@ internal sealed class PartyFilterExecution : IFilterExecution
         if (_executions is null)
         {
             var passed = services.CoverageFor(Body);
-            _executions = stages.Select(s =>
+            _executions = stages.Select((s, index) =>
             {
-                services.BindCoverage(s.Body, passed);
-                return (s.Slot, (s.Body.CreateExecution ??
-                    throw new InvalidOperationException("Party.ChildExecutionUnavailable:" + s.Body.FamilyId))(s.Body, services));
+                var child = !_private && index == 0 && input.IsDense && Body.MaximumGpuRootWindow > 0
+                    ? GpuRootWindow.PrepareStandalone(s.Body, Body.WindowCapacity) : s.Body;
+                services.BindCoverage(child, passed);
+                return (s.Slot, (child.CreateExecution ??
+                    throw new InvalidOperationException("Party.ChildExecutionUnavailable:" + child.FamilyId))(child, services));
             }).ToArray();
         }
         var timer = Stopwatch.StartNew(); var output = input;
         if (_private)
         {
-            _chain ??= await services.ExecuteGpuAsync(device => new FamilyPrivateGpuChain(device,
-                _executions.Select(s => s.Execution.Body).ToArray()), token).ConfigureAwait(false);
-            output = await services.ExecuteGpuAsync(_ => _chain.Execute(input, token, services.SmallCandidateExact), token).ConfigureAwait(false);
+            output = await services.ExecuteGpuAsync(device => {
+                int capacity = GpuRootWindow.PublicCapacity(Body, input.Count);
+                if (_chain is not null && _chain.RootCapacity < capacity)
+                {
+                    _chain.Dispose();
+                    _chain = null;
+                }
+                _chain ??= new FamilyPrivateGpuChain(device, _executions.Select(s => s.Execution.Body).ToArray(),
+                    rootCapacity: capacity);
+                try { return _chain.Execute(input, token, services.SmallCandidateExact); }
+                catch (GpuRootWindowBindingRefused failure)
+                {
+                    var rejected = _chain;
+                    _chain = null;
+                    FamilyGpuComputeUtility.CleanupAfterFailure(failure, rejected.Dispose, "Party.LargeWindowBinding");
+                    throw;
+                }
+            }, token).ConfigureAwait(false);
         }
         else for (int i = 0; i < _executions.Length; i++)
         {
@@ -295,7 +318,10 @@ internal sealed class PartyFilterExecution : IFilterExecution
                 if (output.IsDense) output = FamilyCandidateSet.FromSortedAbi1(output.Batch, output.EnumerateLogicalOrdinals().ToArray());
                 break;
             }
-            output = await _executions[i].Execution.FilterAsync(services, output, token).ConfigureAwait(false);
+            var child = _executions[i].Execution;
+            output = i > 0 && input.Batch.BatchCandidateCount > PrivateOrdinalBuffer.Capacity
+                ? await GpuRootWindow.FilterPublicTailAsync(child, services, output, token).ConfigureAwait(false)
+                : await child.FilterAsync(services, output, token).ConfigureAwait(false);
         }
         services.Costs.ObserveCompleted(Body, input, output.Count, timer.Elapsed.TotalMilliseconds, passedCoverage: services.CoverageFor(Body));
         return output;
@@ -303,7 +329,7 @@ internal sealed class PartyFilterExecution : IFilterExecution
     public async ValueTask DisposeAsync(FilterRuntimeServices services)
     {
         _lastResource = CaptureResourceInfo();
-        if (_chain is not null) await services.ExecuteGpuAsync(_ => { _chain.Dispose(); return true; }, CancellationToken.None).ConfigureAwait(false);
-        foreach (var stage in _executions ?? []) await stage.Execution.DisposeAsync(services).ConfigureAwait(false);
+        await FilterExecutionCleanup.DisposeChildrenAsync(services, Body.FamilyId,
+            (_executions ?? []).Select(stage => stage.Execution), _chain).ConfigureAwait(false);
     }
 }

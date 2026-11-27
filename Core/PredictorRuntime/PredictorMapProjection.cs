@@ -10,22 +10,23 @@ internal static class PredictorMapProjection
 {
     internal static MapPrediction Generate(string seed, ModelKey act, int actIndex, int ascension,
         int playersCount, bool hasSecondBoss, bool goldenCompass, bool spoilsMap, bool bigGameHunter,
-        CancellationToken token = default)
+        CancellationToken token, RngSemanticProfileId semantics)
     {
         var standard = Beta111MapPredictor.Predict(seed, RuntimeProfileId.Beta111,
-            act, actIndex, ascension, playersCount, hasSecondBoss, token);
+            act, actIndex, ascension, playersCount, hasSecondBoss, token, semantics);
         if (goldenCompass) return GoldenPath(standard, playersCount > 1);
         bool multiplayer = playersCount > 1;
         var map = spoilsMap ? Beta111StandardMapGenerator.GenerateSpoilsMap(seed, act, ascension, token,
-            multiplayer: multiplayer) : standard;
+            multiplayer: multiplayer, semantics: semantics) : standard;
         if (!bigGameHunter) return map;
-        var counts = new MapPointTypeCounts(map.Points.Count(p => p.Type == MapPointType.Unknown),
-            map.Points.Count(p => p.Type == MapPointType.RestSite),
+        var countedRooms = semantics == RngSemanticProfileId.Modern113 ? map.Points.Where(p => p.CanBeModified) : map.Points;
+        var counts = new MapPointTypeCounts(countedRooms.Count(p => p.Type == MapPointType.Unknown),
+            countedRooms.Count(p => p.Type == MapPointType.RestSite),
             (int)Math.Round(map.Points.Count(p => p.Type == MapPointType.Elite) * 2.5f))
         { PointTypesThatIgnoreRules = [MapPointType.Elite] };
-        return spoilsMap ? Beta111StandardMapGenerator.GenerateSpoilsMap(seed, act, ascension, token, counts, multiplayer)
+        return spoilsMap ? Beta111StandardMapGenerator.GenerateSpoilsMap(seed, act, ascension, token, counts, multiplayer, semantics)
             : Beta111StandardMapGenerator.GenerateBigGameStandardMap(seed, act, actIndex, ascension,
-                hasSecondBoss, counts, token, multiplayer);
+                hasSecondBoss, counts, token, multiplayer, semantics);
     }
 
     private static MapPrediction GoldenPath(MapPrediction standard, bool multiplayer)

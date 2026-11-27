@@ -107,7 +107,10 @@ internal static partial class UiSurfaceChecks
                 ModelDb.Relic<NutritiousOyster>(), ModelDb.Relic<OldCoin>(), ModelDb.Relic<GoldenPearl>(),
                 ModelDb.Relic<SignetRing>(), ModelDb.Relic<PotionBelt>(), ModelDb.Relic<PumpkinCandle>() })
                 check(!OperationSurfaceHoverCapture.MayDisplayRelicObtain(model), model.Id.Entry + " public native override has no projection output");
-            foreach (var model in new RelicModel[] { ModelDb.Relic<Strawberry>(), ModelDb.Relic<OldCoin>(), ModelDb.Relic<PotionBelt>() })
+            foreach (var model in new RelicModel[] { ModelDb.Relic<Strawberry>(), ModelDb.Relic<PotionBelt>(),
+                ModelDb.Relic<DollysMirror>(), ModelDb.Relic<GnarledHammer>(), ModelDb.Relic<Kifuda>(),
+                ModelDb.Relic<PunchDagger>(), ModelDb.Relic<RoyalStamp>(), ModelDb.Relic<LeesWaffle>(),
+                ModelDb.Relic<BeltBuckle>(), ModelDb.Relic<FrozenEgg>(), ModelDb.Relic<WingCharm>() })
             {
                 Offer(model.ToMutable());
                 Admit(relicSlot, false, model.Id.Entry + " public obtain stays out without Courier");
@@ -116,7 +119,7 @@ internal static partial class UiSurfaceChecks
                 courier.IsMelted = true;
             }
             foreach (var model in new RelicModel[] { ModelDb.Relic<Whetstone>(), ModelDb.Relic<WarPaint>(),
-                ModelDb.Relic<Orrery>(), ModelDb.Relic<Cauldron>(), ModelDb.Relic<NewLeaf>(), ModelDb.Relic<NeowsBones>() })
+                ModelDb.Relic<Orrery>(), ModelDb.Relic<Cauldron>() })
             {
                 check(OperationSurfaceHoverCapture.MayDisplayRelicObtain(model), model.Id.Entry + " retains its native obtain projection");
                 Offer(model.ToMutable()); Admit(relicSlot, true, model.Id.Entry + " remains eligible without Courier");

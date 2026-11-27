@@ -95,7 +95,7 @@ internal sealed partial class QueryWorkbenchFrame
     private int SearchWorkers => SearchWorkspace.ResolveSearchWorkers(
         _persistence.Preferences.SearchWorkerBudget, System.Environment.ProcessorCount);
     private string AnalysisKey(string query) => query+_editorInputs.Freshness+_language+":"+_target+":"+_persistence.Preferences.SearchMode+":"+SearchWorkers+
-        ":gpu="+FamilyDeviceProfileFoundation.Initialization.Capture().Revision+":map="+_persistence.MapLossyPreferences.Identity;
+        ":gpu="+FamilyDeviceProfileFoundation.Initialization.Capture().Revision+":map="+_persistence.MapLossyPreferences.Identity+":gpuRootBatch="+_persistence.Preferences.GpuRootBatchSize;
     private string _draftCompileIssue="";
     private bool UpdateProbabilityPanel(WorkbenchSearchDraft draft,string serialized)
     {
@@ -129,7 +129,7 @@ internal sealed partial class QueryWorkbenchFrame
         }
         PresentPendingProbabilityPreview();
         _probabilityPreview.Submit(new(_analysisKey, compiled, _target, SearchWorkers, _persistence.Preferences.SearchMode == "CPU",
-            _manualFamilyOrder?.ToArray(), _persistence.MapLossyPreferences));
+            _manualFamilyOrder?.ToArray(), _persistence.MapLossyPreferences, _persistence.Preferences.GpuRootBatchSize));
         // Estimate failures do not change admission; canonical compile failures do.
         return true;
     }
@@ -165,7 +165,8 @@ internal sealed partial class QueryWorkbenchFrame
     }
 
     internal string DescribeProbability(CompiledSearch compiled) => DescribeProbability(compiled,
-        WorkbenchProbabilityPreview.Compute(compiled, _target, SearchWorkers, _persistence.Preferences.SearchMode == "CPU", _manualFamilyOrder));
+        WorkbenchProbabilityPreview.Compute(compiled, _target, SearchWorkers, _persistence.Preferences.SearchMode == "CPU",
+            _manualFamilyOrder, _persistence.MapLossyPreferences, _persistence.Preferences.GpuRootBatchSize));
 
     internal string DescribeProbability(CompiledSearch compiled, WorkbenchProbabilityPreview preview)
     {
@@ -256,6 +257,12 @@ internal sealed partial class QueryWorkbenchFrame
         _familyEntries.Clear();
         _previewEta=preview.Eta;
         var costs=preview.Costs.ToDictionary(p=>p.Key,p=>BestQuotedSpeed(p.Value.Cpu,p.Value.Gpu));
+        if (preview.TransformUsesGpu is bool gpuTransform &&
+            (!costs.TryGetValue(TransformationAggregateFamily.Id, out var transformSpeed) || transformSpeed == "—"))
+        {
+            // An absent timing reference does not hide the planned processor.
+            costs[TransformationAggregateFamily.Id] = gpuTransform ? "GPU" : "CPU";
+        }
         string Cost(params string[] ids) {
             string FamilyName(string id)=>_text.Get(id switch {
                 "N.Neow"=>"query.domain.neow","R.Relic"=>"query.domain.relics","W.World"=>"coverage.world",

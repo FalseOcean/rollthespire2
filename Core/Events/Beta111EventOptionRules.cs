@@ -112,6 +112,8 @@ public static class Beta111EventOptionRules
     {
         EventGoldCost? value = (entry, option) switch
         {
+            ("WATERFALL_OF_OBVIOUS_SECRETS", "NEGOTIATE") => new(70),
+            ("THERMAE_NONUPEIPE", "THERMAL_BATHS") => new(88, RequiresSufficientGold: false),
             ("TEA_MASTER", "BONE_TEA" or "EMBER_TEA" or "TEA_OF_DISCOURTESY") => TeaMaster(option).Cost,
             ("ZEN_WEAVER", "BREATHING_TECHNIQUES" or "EMOTIONAL_AWARENESS" or "ARACHNID_ACUPUNCTURE") => ZenWeaver(option).Cost,
             ("WATERLOGGED_SCRIPTORIUM", "TENTACLE_QUILL" or "PRICKLY_SPONGE") => Scriptorium(option).Cost,
@@ -123,6 +125,8 @@ public static class Beta111EventOptionRules
 
     public static EventHealthEffect? FixedHealth(string entry, string option) => (entry, option) switch
     {
+        ("MUSEUM_OF_TORTURE", "BREAK_OUT") => new(0, -10),
+        ("THERMAE_NONUPEIPE", "DRINK_WATERS") => new(-31, 0),
         ("DROWNING_BEACON", "CLIMB") => BeaconClimb.Health,
         ("UNREST_SITE", "REST") => new(0, 0, FullHeal: true),
         ("UNREST_SITE", "KILL") => new(0, -8),

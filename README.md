@@ -1,86 +1,84 @@
 # RolltheSpire2
 
-English | [简体中文](README.zh-CN.md)
+English · [简体中文](README.zh-CN.md)
 
 **Find the seed you want, then see what it has in store.**
 
-RolltheSpire2 (RT2) is an in-game seed search and analysis mod for **Slay the Spire 2**. Combine your desired conditions, search for matching seeds, and inspect their predicted openings, rewards, maps and more.
+RolltheSpire2 (RT2) is an in-game seed search and analysis mod for **Slay the Spire 2**. Search for a seed that matches what you want to play, inspect predictions for an existing seed, or plan your reveals with the Crystal Sphere assistant.
 
-This source tree is **1.4.11**. On Windows, the same RT2 installation selects the rules for stable **0.111.1** and beta **0.114.0**.
+[Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3755166888) · [Download the latest release](https://github.com/FalseOcean/rollthespire2/releases/latest)
 
-In 0.113, search for ordinary relics in the first 1 to 3 shops, the relic tier rolled by an event, or named transformation results. Click Astrolabe or Pandora’s Box in Seed Information to see the cards in order. Several GPU searches combining Neow, events or multiplayer openings are faster.
+On Windows, the same RT2 installation automatically selects the rules for stable **0.111.1** and beta **0.114.0**.
 
-## Future Plans
+**RT2 1.4.12**　Improved seed search performance and brought common controls together in Search settings on the right side of the search page.
 
-- Keep adapting to new game content and add reliably predictable outcomes as seed search conditions.
-- Continue improving commonly used filter combinations to shorten the wait for search results.
+## Seed search
 
-## What you can do
+Looking for a specific Neow start, a combination of relics and cards, or particular shops, events, or maps? Combine your conditions in-game and let RT2 search for matching seeds.
 
-- Search for Neow starts, shop contents, Bosses, Ancient options, events, relics, combat rewards, map conditions and transformation combinations.
-- Configure single-player or **2–4 player** searches, with personal conditions and shared party conditions.
-- Inspect a seed's predicted results, preview maps, draw routes and browse routes tied for the best value of a selected metric.
-- In single-player on game 0.111.0, draw a route on the current Act's map to forecast events, encounters and rewards, then adjust choices along the route.
-- See condition rarity, search speed and the estimated time for **one result**, with CPU/GPU search selected automatically where supported.
-- Keep favorite seeds with titles and notes, reuse search presets and revisit persistent search history in the Library. Create card collections across characters to exclude unwanted combat card rewards or highlight cards in route forecasts. Developer picks provide ready-to-use seeds.
-- Click supported events in Seed Analysis to see their predicted outcomes. The in-game encyclopedia is available in English and Chinese. It opens the 0.111 or 0.113 edition for your game version and lets you switch manually.
-- At Crystal Sphere, use the optional in-run shortcut to read the current event state, explore compatible rewards and get reveal guidance, including Driftwood rerolls and optional enchantment targets.
+RT2 supports single-player and **2–4 player** searches. Load the current multiplayer lobby in one step or set up the party manually, with personal conditions for each seat and shared conditions for the party.
 
-## Download and get started
+RT2 selects CPU or GPU search based on your query and hardware. See how rare the conditions are, how fast the search is running, and, where an estimate is available, how long it may take to find one result. Save frequently used conditions as presets.
 
-[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3755166888)
+Choose single-player or multiplayer on the search page, set the characters and ascension, add your conditions, then start the search. Open **Search settings** at the upper right to adjust the result target, CPU/GPU mode, execution order, GPU batch limit, CPU threads, or search starting point.
 
-Manual packages and matching source snapshots are available from [GitHub Releases](https://github.com/FalseOcean/rollthespire2/releases). Older versions will be kept as frozen downloads, without ongoing maintenance.
+To keep a search running after closing the panel, turn on **Enable persistent search** in RT2’s main Settings. Start the search from the main menu. It continues at reduced load while you play. Open RT2 during a run to check progress and results or stop the search.
 
-For a manual installation package, place its `RolltheSpire2` folder inside the game's `mods` folder. Source archives need to be built first.
+## Seed Analysis
 
-1. Open **RolltheSpire2** at the upper left of the game's main menu.
-2. Choose single-player or multiplayer, set your characters and ascension, and add the conditions you want.
-3. Start searching. Open a result in **Seed Analysis**, or enter a seed there directly.
+Open **Seed Analysis** from a search result or enter an existing seed directly. Inspect predicted opening choices, maps, shops, events, and combat rewards. Save a seed with its configuration and notes in the Library to come back to it later.
 
-Enable **Show tools button** in Settings to show the in-run dice entry for the Crystal Sphere assistant and current-seed information. Crystal Sphere supports the local player in single-player or multiplayer, three, six or remaining reveals, and card upgrades. Include enchantments and the translucent mask are separate switches, both off by default. Operation prediction and map route forecasting have their own enable switches; showing the tools entry does not enable all prediction features or simulate a complete run.
+## Crystal Sphere assistant
 
-Operation prediction, the in-run tool entry, the console and map drawing prediction are off by default for new configurations. Existing saved switches are retained. The interface uses the current blue-ink theme; the old color editor and saved palettes have been retired.
+Enable **Show tools button** in RT2 Settings. When you reach Crystal Sphere, select the Bones icon near the upper-right run information. The assistant reads the current event state so you can pick the rewards you want, compare gold plans, and see which tiles to reveal.
 
-The in-game encyclopedia explains individual conditions and prediction assumptions. Settings lets you change the language and font, adjust the history limit and search starting point, and open the log folder. History defaults to 30 recent queries with 30 distinct results each; preset-linked records are retained.
+## Install and get started
 
-## Multiplayer and compatibility
+### Steam Workshop
 
-Multiplayer assumes full unlocks by default; you can explicitly read the actual lobby context. Seed Analysis has its own multiplayer configuration. Its Neow pickups follow **P1 → P2 → P3 → P4**, including the displayed default choices, so earlier choices can affect later players' predictions.
+1. Open the [RolltheSpire2 Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3755166888) and select **Subscribe**.
+2. Wait for Steam to finish downloading, then launch the game. If the game is already running, exit and relaunch.
+3. Open **Mods** from the game's main menu and enable **RolltheSpire2**. Restart if the game prompts you to.
+4. Select **RolltheSpire2** at the upper left of the main menu.
 
-Multiplayer transformation combinations are not included. In-run route forecasting covers the current Act, follows vanilla rules and ignores mod-added relics and effects. Drawing a route does not simulate every action in a complete run.
+### Manual installation from GitHub (Windows)
 
-Map filtering uses full evaluation by default. An optional lossy prefilter on the map page supports CPU/GPU execution for standard vanilla single-player maps: lower and upper bounds for all nine map properties, multiple properties together, and combinations with grouped Monster, Unknown-room, Shop, Elite and Rest-Site route requirements. Supported three-Act daily totals retain their original meaning. It can miss matching seeds; surviving candidates still receive full map evaluation, and the Exact-validation setting remains independent. Other conditions retain full evaluation. Advanced parameters are in Settings.
+1. Exit the game. Open the [latest GitHub release](https://github.com/FalseOcean/rollthespire2/releases/latest) and download the `RolltheSpire2-<version>.zip` file under **Assets**. The `-source` ZIP and the **Source code** archives are for building the mod.
+2. In your Steam Library, right-click **Slay the Spire 2** and select **Manage → Browse local files**. Find the `mods` folder in the game directory, or create it if needed.
+3. Extract the ZIP and place its `RolltheSpire2` folder in `mods`. You should see `RolltheSpire2.dll` and `RolltheSpire2.json` directly inside `mods/RolltheSpire2`.
+4. Launch the game and enable **RolltheSpire2** under **Mods** on the main menu. Restart if prompted, then open RT2 from the upper left of the main menu.
 
-Game updates and mods that change game rules can affect prediction accuracy. Vanilla single-player has the most testing; combinations of multiplayer, mods and partial unlocks still need broader coverage. Rarity and ETA are estimates, and complex queries may have incomplete estimates.
+Steam updates Workshop installations. For a manual update, exit the game and replace the old RT2 folder in `mods` with the new one. Keep one copy of RT2 when switching methods. Move the manual copy out of `mods` before switching to the Workshop, or unsubscribe before switching to a manual installation.
 
-GPU initialization failures show their stage and reason and offer an explicit retry. Better diagnostics do not guarantee compatibility with every GPU, driver or rendering backend.
+### Reuse presets and search history
 
-The optional candidate-output mode is off by default and skips final Exact validation. With normal validation enabled, Exact can still return `Unknown` or `Unsupported` without a proven mismatch; these results are also delivered as explicitly unverified. Only a final `Match` confirms the modeled conditions. Unverified results can be checked individually later, but another check may remain inconclusive. Actual checking exceptions remain pending failures with their original cause, rather than ordinary unverified results or completed target progress.
+Open a preset in Library → Search presets and select **Copy share code**. To use a code someone sent you, copy it and select **Import from clipboard** to preview, use, or save the preset. The code carries the ordered roster, ascension, and active search conditions. You can search from the main menu with full unlocks for every seat.
+
+In Library → Search history, select a search and choose **Reload and check saved seeds**. RT2 loads the conditions and checks each saved seed under the current rules. You can open or favorite the results. The original search record and scan position are preserved.
+
+## Before you use RT2
+
+- Multiplayer predictions match each player to their lobby seat. Reload the lobby after a player or seat changes. Some predictions depend on your actual choices or pickup order. See the in-game encyclopedia for the relevant rules.
+- Game updates and mods that change RNG, card pools, events, or reward rules can affect search and prediction results. Supported conditions also differ between single-player and multiplayer.
+- Search speed varies by conditions and hardware. Rarity and time estimates are approximate. Unverified candidates may fail your search conditions. The optional lossy map prefilter may miss matching seeds.
 
 ## Feedback
 
-To investigate a slowdown, turn on **Log GPU power during searches** in **Settings → Diagnostics**. Starting with the next GPU search, the log pairs available NVIDIA power readings and limits on Windows with scan speed. The feedback ZIP includes the log. This setting defaults to off.
-
-Open **Feedback** in RT2 to export a diagnostic ZIP and open a prefilled [GitHub Issue](https://github.com/FalseOcean/rollthespire2/issues/new). Add a description and reproduction steps, attach the ZIP, then submit. You can also copy the report and email **rollthespire2@outlook.com**.
-
-Workshop and Bilibili comments are better suited to discussion and simple questions. RT2 is a personal hobby project; a timely reply or fix cannot be guaranteed for every report.
+If you encounter a crash, a failed search, an unusual slowdown, or an incorrect prediction, open **Feedback** in RT2 and export a diagnostic ZIP. Open the prefilled issue, add a description and steps to reproduce the problem, and attach the ZIP manually before submitting. Issues and attachments are public, so review the contents before uploading. You can also email the diagnostic ZIP and a description to **rollthespire2@outlook.com**. [Open a GitHub issue](https://github.com/FalseOcean/rollthespire2/issues/new)
 
 ## Build from source
 
-You need the **.NET 9 SDK** and a local Slay the Spire 2 installation. See [BUILDING.md](BUILDING.md) for dependencies, build commands and output locations. Game binaries are not included in the source distribution.
+You need the **.NET 9 SDK** and a local Slay the Spire 2 installation. See [BUILDING.md](BUILDING.md) for dependencies, build commands, and output locations.
 
-## Contributors & acknowledgements
+## Acknowledgements
 
-- **James Zhou (@JamesZhou233)** shared GPU execution and data-transfer optimization ideas, implementations and comparison evidence, helping improve batch submission, buffer reuse and candidate transfer. RT2 independently adapted the ideas; the implementation in [PR #4](https://github.com/FalseOcean/rollthespire2/pull/4) was not merged.
-- **Egoistic今宵 (@shion0528)** shared CPU/GPU filtering and opening-simulation optimizations with validation material, helping improve CPU batch prescreening, computation reuse, reward-pool preparation and candidate-state reuse. See [resource.17](https://github.com/shion0528/rollthespire2/releases/tag/v1.3.5-resource.17).
+- Thanks to **James Zhou (@JamesZhou233)** for GPU execution and data transfer ideas and comparisons that helped improve batch submission and buffer reuse. [PR #4](https://github.com/FalseOcean/rollthespire2/pull/4)
+- Thanks to **Egoistic 今宵 (@shion0528)** for CPU/GPU filtering and opening simulation implementations and validation that helped improve batch prefiltering and computation reuse. [Research release](https://github.com/shion0528/rollthespire2/releases/tag/v1.3.5-resource.17)
 
 ## License
 
-RolltheSpire2's original source code and accompanying project documentation are licensed under [MPL-2.0](LICENSE), except where otherwise noted. When distributing a modified version, provide the corresponding MPL-covered source, including your modifications. Independent files containing no MPL-covered code may use other licenses.
+Unless otherwise noted, RT2's original source code and accompanying project documentation are licensed under [MPL-2.0](LICENSE). Game and third-party materials retain their respective rights and licenses. See [Third-party sources and notices](THIRD_PARTY_NOTICES.md).
 
 This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-Game and third-party materials retain their respective rights and licenses. RT2 is a community project and is not affiliated with Mega Crit.
-
-See [Third-party sources and notices](THIRD_PARTY_NOTICES.md) for algorithm references, artwork and screenshot provenance, and attribution still being confirmed.
+RT2 is an unofficial, fan-made mod and is not affiliated with Mega Crit.

@@ -34,4 +34,5 @@ public sealed record SearchProgressSnapshot(
     // UI observation only; never a pricing/calibration denominator.
     public double ObservedScanningSeconds { get; init; }
     public long ObservedScanningRoots { get; init; }
+    public int? ActiveGpuRootBatchSize { get; init; }
 }

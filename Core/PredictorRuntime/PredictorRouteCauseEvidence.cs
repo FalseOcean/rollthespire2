@@ -71,14 +71,18 @@ internal static class PredictorRouteCauseEvidence
 
     internal static PredictorCombatPendingCause Bind(PredictorCombatPendingCause cause,
         string? nodeId = null, string? occurrenceKey = null)
+        => Bind(cause, new Normalization(), nodeId, occurrenceKey);
+
+    private static PredictorCombatPendingCause Bind(PredictorCombatPendingCause cause, Normalization normalization,
+        string? nodeId = null, string? occurrenceKey = null)
     {
         ArgumentNullException.ThrowIfNull(cause);
         string? originNode = cause.NodeId ?? nodeId;
-        var definition = Describe(cause.Code);
         bool hasClassification = !string.IsNullOrWhiteSpace(cause.Identity) ||
             cause.SourceEvidence != "Dependency evidence has not been bound." ||
             cause.ReasonKind != PredictorPendingReasonKind.ImplementationGap;
-        var reasonKind = hasClassification ? cause.ReasonKind : definition.Kind;
+        var definition = hasClassification ? null : Describe(cause.Code);
+        var reasonKind = definition?.Kind ?? cause.ReasonKind;
         string identity = !string.IsNullOrWhiteSpace(cause.Identity) ? cause.Identity :
             originNode != null ? Key("cause", originNode, cause.Code, cause.EnemySource?.ToString() ?? "",
                 occurrenceKey ?? cause.ChoiceId ?? "") :
@@ -86,53 +90,99 @@ internal static class PredictorRouteCauseEvidence
         string? choiceId = cause.ChoiceId ?? (reasonKind == PredictorPendingReasonKind.UserChoice
             ? Key("choice", originNode ?? "unlocated", cause.Code, occurrenceKey ?? identity) : null);
         var properties = hasClassification ? (cause.RequiredPropertyKeys.IsDefault ? [] : cause.RequiredPropertyKeys) :
-            cause.RequiredPropertyKeys.IsDefaultOrEmpty ? definition.Properties : cause.RequiredPropertyKeys;
+            cause.RequiredPropertyKeys.IsDefaultOrEmpty ? definition!.Properties : cause.RequiredPropertyKeys;
         if (!hasClassification && cause.Code == "EnemyCreationCount" && cause.EnemySource is { } source)
             properties = ["combat.enemyCreation." + source + ".count"];
-        var parents = Normalize(cause.Parents.IsDefault ? [] : cause.Parents)
-            .Where(parent => parent.Identity != identity).ToImmutableArray();
+        var parents = cause.Parents.IsDefaultOrEmpty ? [] : normalization.Collect(cause.Parents, identity);
+        if (cause.NodeId == originNode && cause.Identity == identity && cause.ChoiceId == choiceId &&
+            cause.ReasonKind == reasonKind && cause.RequiredPropertyKeys == properties &&
+            !cause.Parents.IsDefault && SameParents(cause.Parents, parents))
+            return cause;
         return cause with
         {
             NodeId = originNode, Identity = identity, ChoiceId = choiceId,
             ReasonKind = reasonKind, RequiredPropertyKeys = properties,
-            Parents = parents, SourceEvidence = hasClassification ? cause.SourceEvidence : definition.Evidence
+            Parents = parents, SourceEvidence = definition?.Evidence ?? cause.SourceEvidence
         };
     }
 
     internal static PredictorCombatPendingCause WithParents(PredictorCombatPendingCause cause,
         ImmutableArray<PredictorCombatPendingCause> parents)
     {
-        var bound = Bind(cause);
-        return bound with { Parents = Normalize(bound.Parents.AddRange(parents.IsDefault ? [] : parents))
-            .Where(parent => parent.Identity != bound.Identity).ToImmutableArray() };
+        var normalization = new Normalization();
+        var bound = Bind(cause, normalization);
+        if (parents.IsDefaultOrEmpty) return bound;
+        var combined = normalization.Collect(bound.Parents.Concat(parents), bound.Identity);
+        return SameParents(bound.Parents, combined) ? bound : bound with { Parents = combined };
     }
 
     internal static PredictorCombatPendingCause Merge(PredictorCombatPendingCause left,
         PredictorCombatPendingCause right)
     {
-        left = Bind(left); right = Bind(right);
-        if (left.Identity != right.Identity) throw new ArgumentException("PredictorCauseIdentityMismatch");
-        return WithParents(left with
-        {
-            AffectedDomains = left.AffectedDomains | right.AffectedDomains,
-            RequiredPropertyKeys = left.RequiredPropertyKeys.AddRange(right.RequiredPropertyKeys)
-                .Distinct(StringComparer.Ordinal).ToImmutableArray()
-        }, right.Parents);
+        var normalization = new Normalization();
+        return normalization.Merge(Bind(left, normalization), Bind(right, normalization));
     }
 
     internal static ImmutableArray<PredictorCombatPendingCause> Normalize(
-        IEnumerable<PredictorCombatPendingCause> causes)
+        IEnumerable<PredictorCombatPendingCause> causes) => new Normalization().Collect(causes);
+
+    private static bool SameParents(ImmutableArray<PredictorCombatPendingCause> left,
+        ImmutableArray<PredictorCombatPendingCause> right) => left == right ||
+        System.Linq.ImmutableArrayExtensions.SequenceEqual(left, right, ReferenceEqualityComparer.Instance);
+
+    private sealed class Normalization
     {
-        var result = new List<PredictorCombatPendingCause>();
-        var index = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var source in causes)
+        private Dictionary<PredictorCombatPendingCause, PredictorCombatPendingCause>? _bindings;
+        private Dictionary<PredictorCombatPendingCause, Dictionary<PredictorCombatPendingCause, PredictorCombatPendingCause>>? _merges;
+
+        internal PredictorCombatPendingCause AsBound(PredictorCombatPendingCause source)
         {
-            var cause = string.IsNullOrWhiteSpace(source.Identity) ? Bind(source) : source;
-            if (!index.TryGetValue(cause.Identity, out int at))
-            { index.Add(cause.Identity, result.Count); result.Add(cause); }
-            else result[at] = Merge(result[at], cause);
+            if (!string.IsNullOrWhiteSpace(source.Identity)) return source;
+            _bindings ??= new(ReferenceEqualityComparer.Instance);
+            if (!_bindings.TryGetValue(source, out var bound)) _bindings.Add(source, bound = Bind(source, this));
+            return bound;
         }
-        return result.ToImmutableArray();
+
+        internal ImmutableArray<PredictorCombatPendingCause> Collect(IEnumerable<PredictorCombatPendingCause> causes,
+            string? excludeIdentity = null)
+        {
+            var result = new List<PredictorCombatPendingCause>();
+            var index = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var source in causes)
+            {
+                var cause = AsBound(source);
+                if (cause.Identity == excludeIdentity) continue;
+                if (!index.TryGetValue(cause.Identity, out int at))
+                { index.Add(cause.Identity, result.Count); result.Add(cause); }
+                else result[at] = Merge(result[at], cause);
+            }
+            return result.ToImmutableArray();
+        }
+
+        internal PredictorCombatPendingCause Merge(PredictorCombatPendingCause left, PredictorCombatPendingCause right)
+        {
+            if (ReferenceEquals(left, right)) return left;
+            if (left.Identity != right.Identity) throw new ArgumentException("PredictorCauseIdentityMismatch");
+            _merges ??= new(ReferenceEqualityComparer.Instance);
+            if (!_merges.TryGetValue(left, out var byRight)) _merges.Add(left, byRight = new(ReferenceEqualityComparer.Instance));
+            if (byRight.TryGetValue(right, out var merged)) return merged;
+
+            var leftParents = left.Parents.IsDefault ? [] : left.Parents;
+            var rightParents = right.Parents.IsDefault ? [] : right.Parents;
+            var parents = leftParents == rightParents ? leftParents : Collect(leftParents.Concat(rightParents), left.Identity);
+            var leftProperties = left.RequiredPropertyKeys.IsDefault ? [] : left.RequiredPropertyKeys;
+            var rightProperties = right.RequiredPropertyKeys.IsDefault ? [] : right.RequiredPropertyKeys;
+            var properties = leftProperties == rightProperties ? leftProperties : leftProperties.Concat(rightProperties)
+                .Distinct(StringComparer.Ordinal).ToImmutableArray();
+            string evidence = left.SourceEvidence == right.SourceEvidence ? left.SourceEvidence : string.Join("\n",
+                left.SourceEvidence.Split('\n').Concat(right.SourceEvidence.Split('\n')).Distinct(StringComparer.Ordinal));
+            var domains = left.AffectedDomains | right.AffectedDomains;
+            merged = domains == left.AffectedDomains && evidence == left.SourceEvidence &&
+                leftProperties.SequenceEqual(properties) && SameParents(leftParents, parents)
+                ? left : left with { AffectedDomains = domains, RequiredPropertyKeys = properties, Parents = parents, SourceEvidence = evidence };
+            byRight.Add(right, merged);
+            return merged;
+        }
     }
 
     // Both UI and trace retain a producer's own classified limitation alongside
@@ -146,14 +196,16 @@ internal static class PredictorRouteCauseEvidence
     {
         var evidence = new Dictionary<string, PredictorCombatPendingCause>(StringComparer.Ordinal);
         var expanded = new HashSet<PredictorCombatPendingCause>(ReferenceEqualityComparer.Instance);
-        var stack = new Stack<PredictorCombatPendingCause>(Normalize(causes).Reverse());
+        var normalization = new Normalization();
+        var stack = new Stack<PredictorCombatPendingCause>(causes.Reverse());
         while (stack.TryPop(out var value))
         {
             if (!expanded.Add(value)) continue;
-            var cause = Bind(value);
+            var cause = normalization.AsBound(value);
             evidence[cause.Identity] = evidence.TryGetValue(cause.Identity, out var existing)
-                ? Merge(existing, cause) : cause;
-            foreach (var parent in cause.Parents.Reverse()) stack.Push(parent);
+                ? normalization.Merge(existing, cause) : cause;
+            if (!cause.Parents.IsDefaultOrEmpty)
+                foreach (var parent in cause.Parents.Reverse()) stack.Push(parent);
         }
         return evidence.Values.Where(IsOriginalCause).ToImmutableArray();
     }

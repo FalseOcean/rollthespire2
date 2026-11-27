@@ -47,8 +47,12 @@ internal sealed record FilterBodyDescription(PreparedFilter Preparation, string 
     internal bool HasConditionalProjections => Preparation.HasConditionalProjections;
     internal FamilySurvivalProjection ResolveSurvival(IReadOnlySet<string> passed) => Preparation.ResolveSurvival(passed);
     internal FamilyExpectedFilteringCostProjection? ResolveExpectedFilteringCost(IReadOnlySet<string> passed) => Preparation.ResolveExpectedFilteringCost(passed);
+    internal Func<ulong, bool>? SmallTailCpuMatcher { get; init; }
     internal bool UsesGpu { get; init; }
     internal FilterInputModes InputModes { get; init; } = FilterInputModes.All;
+    internal bool SupportsStandaloneLargeWindow { get; init; }
+    internal GpuLargeWindowRole LargeWindowRole { get; init; }
+    internal int MaximumGpuRootWindow { get; init; }
     internal int WindowCapacity { get; init; } = FamilyPhysicalExecutionDefaults.DefaultCandidateBatchSize;
     internal int CpuChunkCapacity { get; init; } = 65536;
     // Public root-batch preference differs from the body's internal chunk/group capacity.

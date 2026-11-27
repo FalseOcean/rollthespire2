@@ -13,11 +13,6 @@ internal static class PredictorSettlementEffects
     {
         if (context?.Operation?.IgnoresBehavior(key) == true && key.IsValid && key.Category == "RELIC") return;
         if (crystalBestEffort && key.IsValid && key.Category == "RELIC") return;
-        // These new Fool relics can occur in a standard bag. Their hooks run
-        // in combat; receiving them has no additional local obtain effect.
-        if (context?.Operation != null && key.Category == "RELIC" && key.Entry is
-            ("BIZARRE_LAMP" or "CONDUCTORS_BATON" or "EXERCISE_MAT" or "FERTILIZER" or "OCARINA" or "TWINE" or "WHITTLING_KNIFE"))
-            return;
         if (key.Category != "RELIC" || key.Entry is not ("MASSIVE_SCROLL" or "WHETSTONE" or "WAR_PAINT" or "POTION_BELT" or "EMPTY_CAGE" or "BURNING_BLOOD" or "BOWLER_HAT" or "ECTOPLASM" or "SOZU" or
             "LASTING_CANDY" or "PRAYER_WHEEL" or "WHITE_STAR" or "BLACK_STAR" or "WHITE_BEAST_STATUE" or "MOLTEN_EGG" or "TOXIC_EGG" or "FROZEN_EGG" or
             "DINGY_RUG" or "AMETHYST_AUBERGINE" or "WONGOS_MYSTERY_TICKET" or "CIRCLET" or "GOLDEN_PEARL" or "PRISMATIC_GEM" or "SILVER_CRUCIBLE" or "SILKEN_TRESS" or
@@ -35,6 +30,7 @@ internal static class PredictorSettlementEffects
             "SAND_CASTLE" or "LOOMING_FRUIT" or "FRAGRANT_MUSHROOM" or "PRECARIOUS_SHEARS" or
             "BIG_MUSHROOM" or "BIIIG_HUG" or "DISTINGUISHED_CAPE" or "SERE_TALON" or "ELECTRIC_SHRYMP" or "PAELS_WING" or "DRIFTWOOD" or "TOY_BOX" or "FUR_COAT" or
             "CLAWS" or "PAELS_LEGION" or "PAELS_EYE" or "SNECKO_EYE" or "BLOOD_SOAKED_ROSE" or "PAELS_HORN" or "TANXS_WHISTLE" or "STORYBOOK" or "FISHING_ROD" or "WAR_HAMMER" or
+            "BATH_TOWEL" or "BIZARRE_LAMP" or "CONDUCTORS_BATON" or "EXERCISE_MAT" or "FERTILIZER" or "MIGHTY_WINGS" or "OCARINA" or "TWINE" or "WHITTLING_KNIFE" or
             "BLESSED_ANTLER" or "BOOMING_CONCH" or "BRILLIANT_SCARF" or "CHOICES_PARADOX" or "CROSSBOW" or "DIAMOND_DIADEM" or "FIDDLE" or "JEWELED_MASK" or "MUSIC_BOX" or
             "PAELS_BLOOD" or "PAELS_FLESH" or "PAELS_TEARS" or "PHILOSOPHERS_STONE" or "RADIANT_PEARL" or "RUNIC_PYRAMID" or "SAI" or "SPIKED_GAUNTLETS" or "THROWING_AXE" or
             "TOASTY_MITTENS" or "VELVET_CHOKER" or "VERY_HOT_COCOA" or "WHISPERING_EARRING" or "WONGO_CUSTOMER_APPRECIATION_BADGE" or "SWORD_OF_STONE" or "SWORD_OF_JADE" or
@@ -55,7 +51,14 @@ internal static class PredictorSettlementEffects
             "RIPPLE_BASIN" or "RUINED_HELMET" or "RUNIC_CAPACITOR" or "SCREAMING_FLAGON" or "SELF_FORMING_CLAY" or "SHURIKEN" or "SLING_OF_COURAGE" or "SNECKO_SKULL" or
             "SPARKLING_ROUGE" or "STONE_CALENDAR" or "STONE_CRACKER" or "STRIKE_DUMMY" or "STURDY_CLAMP" or "SYMBIOTIC_VIRUS" or "THE_ABACUS" or "TINGSHA" or "TOOLBOX" or
             "TOUGH_BANDAGES" or "TUNING_FORK" or "TWISTED_FUNNEL" or "UNCEASING_TOP" or "UNDYING_SIGIL" or "UNSETTLING_LAMP" or "VAJRA" or "VAMBRACE" or "VEXING_PUZZLEBOX" or "VITRUVIAN_MINION"))
+        {
+            if (context?.DrawingUnmodeledRelics is { } drawing && key.IsValid && key.Category == "RELIC")
+            {
+                drawing.Add(key);
+                return;
+            }
             throw new NotImplementedException($"Predictor relic hooks pending: {key}");
+        }
     }
 
     internal static void RequireImplementedCard(PredictorCard card, bool crystalBestEffort = false, PredictorContext? context = null)
@@ -91,7 +94,7 @@ internal static class PredictorSettlementEffects
             // Keep this separate from acquisition: Byrdine.AfterObtained must
             // transform Byrd Swoop, and future routes need additional state.
             if (context?.Operation != null && relic.Key.Category == "RELIC" && relic.Key.Entry is
-                ("WUPPY" or "BATH_TOWEL" or "BATH_ROBES" or "BYRDINE" or "MIGHTY_WINGS")) continue;
+                ("WUPPY" or "BATH_ROBES" or "BYRDINE")) continue;
             RequireImplementedRelic(relic.Key, crystalBestEffort, context);
         }
         foreach (long id in state.Deck) RequireImplementedCard(state.Card(id), crystalBestEffort, context);

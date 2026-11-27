@@ -202,13 +202,11 @@ internal static partial class UiSurfaceChecks
                                     "philosopher ordinals share the ordinary continuous-reward setting and preserve their exact numeric sequence");
                                 check(!Descendants(view).Any(node => node.Name == "Rt2IconPaths"),
                                     "one deterministic philosopher result at each ordinal uses reading order without a redundant icon strip");
-                                bool needsCaption = previewGroups.Any(group => group.IconPaths.IsEmpty);
                                 var captions = Descendants(view).OfType<Label>().Where(label =>
-                                    label.Visible && label.Text == ordinalText.Get("operation.place.this.group")).ToArray();
-                                check(captions.Length == (needsCaption ? 1 : 0) &&
-                                Enumerable.Range(1, 3).All(ordinal => !Descendants(view).OfType<Label>()
-                                    .Any(label => label.Visible && label.Text == ordinalText.Format("operation.rerollStep", ordinal))),
-                                "philosopher hover identifies current-group placement once across three ordered results");
+                                    label.Visible && label.Text == ordinalText.Get("operation.rerollNow")).ToArray();
+                                check(captions.Length == 1 && Enumerable.Range(2, 2).All(ordinal => Descendants(view).OfType<Label>()
+                                    .Any(label => label.Visible && label.Text == ordinalText.Format("operation.rerollAtPosition", ordinal))),
+                                    "philosopher predictions label the current reward at each possible reroll position");
                                 CheckOperationIconPaths(view, preview, check);
                                 RecordRerollNativeLayout(view, preview, output, "philosopher-reroll-ordinal");
                                 var stacks = Descendants(view).OfType<Control>().Where(node => node.Name.ToString().StartsWith("Rt2NeowCardStack_", StringComparison.Ordinal)).ToArray();

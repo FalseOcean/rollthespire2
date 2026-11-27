@@ -216,7 +216,9 @@ internal static partial class UiSurfaceChecks
                 var language = (OptionButton)Field(shell, "_language");
                 Call(shell, "SelectSettingsCategory", 2);
                 await AwaitPageReady(root, shell);
-                var worker = (SpinBox)Field(shell, "_workerBudget");
+                var searchSettings = (Control)shell.FindChild("SettingsCategoryPage2", true, false);
+                Check(new[] { "SettingsGpuRootBatchSize", "SettingsWorkerBudget", "SettingsOrigin" }
+                    .All(name => searchSettings.FindChild(name, true, false) is null), "run controls only appear in the workbench");
                 var operation = (CheckButton)Field(shell, "_operationPrediction");
                 var map = (CheckButton)Field(shell, "_mapPrediction");
                 Check(!operation.ButtonPressed && !map.ButtonPressed, "operation and map prediction default off");
@@ -230,15 +232,6 @@ internal static partial class UiSurfaceChecks
                 Check(!readback.Preferences.OperationPredictionEnabled && !readback.Preferences.MapPredictionEnabled,
                     "feature preferences survive reload");
                 operation.ButtonPressed = true; map.ButtonPressed = true;
-                worker.Value = 3;
-                Check(persistence.Preferences.SearchWorkerBudget == 3 &&
-                    (int)workbench.GetType().GetProperty("SearchWorkers", flags)!.GetValue(workbench)! == 3,
-                    "worker edit reaches the actual search input");
-                ((Button)shell.FindChild("SettingsWorkerReset", true, false)).EmitSignal(Button.SignalName.Pressed);
-                Check(persistence.Preferences.SearchWorkerBudget is null && worker.Value ==
-                    SearchWorkspace.ResolveSearchWorkers(null, System.Environment.ProcessorCount), "automatic half-CPU reset");
-                var originalCursor = persistence.CurrentPersistentOriginSeed;
-                var origin = (LineEdit)Field(shell, "_originInput"); origin.Text = "000000000456";
                 foreach (var locale in new[] { ("zh", 1), ("en", 2) })
                 {
                     language.Select(locale.Item2); language.EmitSignal(OptionButton.SignalName.ItemSelected, (long)locale.Item2);
@@ -268,14 +261,23 @@ internal static partial class UiSurfaceChecks
                         }
                     }
                 }
-                Check(origin.Text == "000000000456" && persistence.CurrentPersistentOriginSeed == originalCursor,
-                    "category and language changes preserve unsubmitted origin");
-                ((Button)Field(shell, "_originApply")).EmitSignal(Button.SignalName.Pressed);
-                Check(persistence.CurrentPersistentOriginSeed == "000000000456", "existing origin action retained");
                 var skip = (CheckButton)Field(shell, "_skipExact"); skip.ButtonPressed = true;
                 Check(persistence.Preferences.SkipExactValidation, "advanced candidate control retained"); skip.ButtonPressed = false;
                 Call(shell, "CloseSettings");
                 Check(workbench.IsVisibleInTree(), "settings returns to original workspace");
+                ((Button)workbench.FindChild("OpenSearchSettings", true, false)).ButtonPressed = true;
+                var worker = (SpinBox)workbench.FindChild("RunWorkerBudget", true, false);
+                worker.Value = 3;
+                Check(persistence.Preferences.SearchWorkerBudget == 3 &&
+                    (int)workbench.GetType().GetProperty("SearchWorkers", flags)!.GetValue(workbench)! == 3,
+                    "worker edit reaches the actual search input");
+                ((Button)workbench.FindChild("RunWorkerAuto", true, false)).EmitSignal(Button.SignalName.Pressed);
+                Check(persistence.Preferences.SearchWorkerBudget is null && worker.Value ==
+                    SearchWorkspace.ResolveSearchWorkers(null, System.Environment.ProcessorCount), "automatic half-CPU reset");
+                var origin = (LineEdit)workbench.FindChild("RunOrigin", true, false);
+                origin.Text = "000000000456"; origin.EmitSignal(LineEdit.SignalName.TextChanged, origin.Text);
+                ((Button)workbench.FindChild("RunOriginApply", true, false)).EmitSignal(Button.SignalName.Pressed);
+                Check(persistence.CurrentPersistentOriginSeed == origin.Text, "right rail applies starting seed");
                 GD.Print($"SETTINGS_PASS checks={checks};categories=4;languages=zh,en;resolutions=1600,1280;workers+features+origin");
                 return;
             }
@@ -334,13 +336,15 @@ internal static partial class UiSurfaceChecks
                 skipExact.ButtonPressed = true;
                 Require(persistence.Preferences.SkipExactValidation, "candidate switch saves explicit opt-in");
                 skipExact.ButtonPressed = false;
-                var origin = (LineEdit)Field(shell, "_originInput");
-                origin.Text = "000000000123";
-                ((Button)Field(shell, "_originApply")).EmitSignal(Button.SignalName.Pressed);
-                Require(persistence.CurrentPersistentOriginSeed == "000000000123", "origin is saved");
                 root.GetViewport().GetTexture().GetImage().SavePng(Path.Combine(output, "settings-" + locale + ".png"));
                 Call(shell, "CloseSettings");
                 Require(((Control)Field(shell, "_references")).Visible, "settings returns to Search");
+                ((Button)workbench.FindChild("OpenSearchSettings", true, false)).ButtonPressed = true;
+                var origin = (LineEdit)workbench.FindChild("RunOrigin", true, false);
+                origin.Text = "000000000123"; origin.EmitSignal(LineEdit.SignalName.TextChanged, origin.Text);
+                ((Button)workbench.FindChild("RunOriginApply", true, false)).EmitSignal(Button.SignalName.Pressed);
+                Require(persistence.CurrentPersistentOriginSeed == "000000000123", "origin is saved");
+                ((Button)workbench.FindChild("OpenSearchSettings", true, false)).ButtonPressed = false;
                 ((Button)Field(shell, "_feedback")).EmitSignal(Button.SignalName.Pressed);
                 await AwaitPageReady(root, shell);
                 for (int i = 0; i < 3; i++) await root.ToSignal(root.GetTree(), SceneTree.SignalName.ProcessFrame);

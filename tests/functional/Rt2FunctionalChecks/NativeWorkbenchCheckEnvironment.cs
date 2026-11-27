@@ -14,7 +14,7 @@ namespace RolltheSpire2.Tests.FastSearch;
 
 internal static class NativeWorkbenchCheckEnvironment
 {
-    internal static ModRuntimeSnapshot Initialize(string purpose)
+    internal static ModRuntimeSnapshot Initialize(string purpose, string gameVersion = "0.111.0")
     {
         if (Environment.GetEnvironmentVariable("RT2_AUTHORED_GODOT_RUNNER") != "1")
             throw new InvalidOperationException("Use AuthoredEventChecks native host and RT2_NATIVE_CHECK for this check");
@@ -41,7 +41,7 @@ internal static class NativeWorkbenchCheckEnvironment
         if (!ReferenceEquals(SaveManager.Instance, mockSave))
             throw new InvalidOperationException("NativeWorkbenchCheck.MockSaveManagerLost");
         var runtime = ModRuntimeSnapshot.NotInitialized with { Profile = Beta111Profile.Instance,
-            Detection = new("0.111.0", "0.111.0", "beta", purpose, true, "") };
+            Detection = new(gameVersion, gameVersion, "beta", purpose, true, "") };
         WorkspaceShell.InitializeSearchEvidenceOnMainThread();
         // Use the real catalog capture without the main-menu wrapper's
         // user-data baseline-candidate file writer.

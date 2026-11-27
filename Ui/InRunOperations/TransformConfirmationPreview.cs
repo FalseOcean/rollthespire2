@@ -76,7 +76,7 @@ internal static partial class TransformConfirmationPreview
             NeowOperationHoverController.HasTransformExtras(player);
         bool chain = InRunFeaturePreferences.GetOperationMode("extra:obtain-chain") != OperationPredictionMode.Off &&
             obtain?.HasParentObtain == true;
-        return OperationPredictionPolicy.Wants(InRunFeaturePreferences.GetOperationMode(feature), rf.IsLoaded,
+        return OperationPredictionPolicy.Wants(InRunFeaturePreferences.GetOperationMode(feature), rf.Features.Transform(screen),
             transformEffects || chain);
     }
 

@@ -29,12 +29,16 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
     private readonly PreparedSearch _plan;
     private readonly SearchModel _model;
     private readonly FamilyExecutionPlan _executionPlan;
-    internal FamilyExecutionPlan ExecutionPlan => Volatile.Read(ref _gpuCreationCpuRecovery)?.Plan ?? _executionPlan;
+    private FamilyExecutionPlan? _activeGpuPlan;
+    private readonly AdaptiveGpuRootWindow? _adaptiveWindow;
+    internal FamilyExecutionPlan ExecutionPlan => Volatile.Read(ref _gpuCreationCpuRecovery)?.Plan ?? Volatile.Read(ref _activeGpuPlan) ?? _executionPlan;
     private readonly FamilySearchEtaProjectionV1 _etaProjection;
     private readonly bool _logWorkload;
     private readonly IRuntimeProfile _profile;
-    private readonly IReadOnlyList<IFilterExecution> _families;
+    private IReadOnlyList<IFilterExecution> _families;
     private readonly SmallCandidateExactPolicy? _smallCandidateExactPolicy;
+    private readonly List<FilterBodyDescription> _skippedCpuTail = [];
+    private long _smallTailCpuRejected;
     private int _rootBatchPairGroups;
     private long _rootBatchPairAdmissionWaitTicks;
     private readonly Channel<SearchCandidate> _candidates;
@@ -43,6 +47,8 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
     private readonly CancellationTokenSource _lifetime = new();
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private readonly int _executionWindowSize;
+    private int _activeWindowSize;
+    private readonly bool _usesGpu;
     private readonly SearchRecoveryLedger _recovery;
     private readonly Task _completion;
     private long _scanned;
@@ -105,7 +111,8 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
         bool allowInitialGpuCreationFallback = false,
         Action<CancellationToken>? beforeExactEvaluate = null,
         bool enableGpuPowerDiagnostics = false,
-        bool logWorkload = false)
+        bool logWorkload = false,
+        bool enableAdaptiveGpuBatch = false)
     {
         if (executionWindowSize <= 0) throw new ArgumentOutOfRangeException(nameof(executionWindowSize));
         if (queueCapacity <= 0) throw new ArgumentOutOfRangeException(nameof(queueCapacity));
@@ -118,8 +125,17 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
         _beforeExactEvaluate = beforeExactEvaluate;
         _beforeCandidatePublish = beforeCandidatePublish;
         _executionPlan = executionPlan ?? throw new ArgumentNullException(nameof(executionPlan));
+        var cpuTailBodies = executionPlan.ExecutionOrderUnits
+            .Where(body => body.SmallTailCpuMatcher is not null && body.RequiredPassedCoverage is null &&
+                body.PlayersCount == 1 && _model.Authority.PlayersCount == 1).ToArray();
+        void CaptureSkippedTail(IReadOnlyList<string> skipped)
+        {
+            foreach (var body in cpuTailBodies)
+                if (skipped.Contains(body.FamilyId) && !_skippedCpuTail.Contains(body))
+                    _skippedCpuTail.Add(body);
+        }
         _smallCandidateExactPolicy = executionPlan.AllowSmallCandidateExact && !plan.RunOptions.SkipExactValidation
-            ? new SmallCandidateExactPolicy() : null;
+            ? new SmallCandidateExactPolicy(cpuTailBodies.Length > 0 ? CaptureSkippedTail : null) : null;
         _initialGpuCreationFallbackAllowed = allowInitialGpuCreationFallback && !failOnPhysicalRecovery &&
             !plan.RunOptions.SkipExactValidation && executionPlan.RankingAuthority != FamilyPlannerRankingAuthority.UnpricedPhysicalTrial &&
             !executionPlan.DecisionEvidence.Contains("ExplicitPhysicalSelection=true", StringComparer.Ordinal);
@@ -128,6 +144,16 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
         _profile = RuntimeProfileRegistry.Select(plan.Model.Detection);
         _recovery = new(plan, _profile, continuation, measurePendingPayload);
         _executionWindowSize = executionWindowSize;
+        _activeWindowSize = executionWindowSize;
+        if (enableAdaptiveGpuBatch && plan.RunOptions.GpuRootBatchSize == 0 &&
+            executionWindowSize == PrivateOrdinalBuffer.Capacity && plan.ScanCount >= 16L * PrivateOrdinalBuffer.Capacity)
+        {
+            var largest = FamilyExecutionCoordinator.WithGpuRootBatchSize(executionPlan, GpuRootWindow.Maximum);
+            if (largest.Stages.Count != 0 && !ReferenceEquals(largest, executionPlan) &&
+                largest.Stages[0].Family.WindowCapacity > executionWindowSize)
+                _adaptiveWindow = new(largest.Stages[0].Family.WindowCapacity);
+        }
+        _usesGpu = executionPlan.OrderedFamilies.Any(body => body.UsesGpu);
         _diagnosticSink = diagnosticSink;
         _traceSingleCandidateSeed = traceSingleCandidateSeed?.Trim() ?? string.Empty;
         _candidates = Channel.CreateBounded<SearchCandidate>(new BoundedChannelOptions(queueCapacity)
@@ -154,6 +180,7 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
         try
         {
             _executionContext.SmallCandidateExact = _smallCandidateExactPolicy;
+            _executionContext.BoundPublicGpuTail = executionPlan.Stages.Count > 1 && executionWindowSize > PrivateOrdinalBuffer.Capacity;
             if(executionPlan.OrderedFamilies.Any(body=>body.RequiresBonesCapsuleDiagnostics))
                 _executionContext.BonesCapsuleDiagnostics=new(_model);
             var passedCoverage = new HashSet<string>(StringComparer.Ordinal);
@@ -189,20 +216,42 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
 
     internal FamilyPerformanceObservation CaptureFilterObservation(FilterBodyDescription body)
     {
-        var execution=_families.FirstOrDefault(item=>ReferenceEquals(item.Body,body));
+        var execution = FindBoundExecution(body);
         var resource=execution?.ResourceInfo ?? (Device:"",SetupMs:0d);
-        return _executionContext.Costs.CaptureLatest(body,resource.Device,resource.SetupMs);
+        return _executionContext.Costs.CaptureLatest(execution?.Body ?? body,resource.Device,resource.SetupMs);
     }
     // Null means the descriptor has no directly bound public handle. Private
     // children report completed samples through the observer, not invented state.
     internal bool? IsFilterExecutionFaulted(FilterBodyDescription body) =>
-        _families.FirstOrDefault(item=>ReferenceEquals(item.Body,body))?.ExecutionFaulted;
+        FindBoundExecution(body)?.ExecutionFaulted;
+
+    private IFilterExecution? FindBoundExecution(FilterBodyDescription body)
+    {
+        var bound = Volatile.Read(ref _families);
+        for (int i = 0; i < bound.Count; i++)
+            if (ReferenceEquals(bound[i].Body, body) || (bound.Count == _executionPlan.Stages.Count &&
+                ReferenceEquals(_executionPlan.Stages[i].Family, body)))
+                return bound[i];
+        return null;
+    }
 
     public Task Completion => _completion;
     public IReadOnlyList<string> FamilyIds => ExecutionPlan.OrderedFamilies.Select(family => family.FamilyId).ToArray();
     // Same-run timing observations never reprice the selected session evidence.
     internal FamilySearchEtaProjectionV1 EtaProjection => Volatile.Read(ref _gpuCreationCpuRecovery)?.Eta ?? _etaProjection;
-    internal int ExecutionWindowSize => Volatile.Read(ref _gpuCreationCpuRecovery)?.WindowSize ?? _executionWindowSize;
+    private const int PlayingWindowLimit = 65_536;
+    private const int PlayingBatchDelayMilliseconds = 20;
+    private volatile bool _usedPlayingBudget;
+    internal bool PlayingBudget
+    {
+        get => _executionContext.PlayingBudget;
+        set
+        {
+            if (value) _usedPlayingBudget = true;
+            _executionContext.PlayingBudget = value;
+        }
+    }
+    internal int ExecutionWindowSize => Volatile.Read(ref _gpuCreationCpuRecovery)?.WindowSize ?? Volatile.Read(ref _activeWindowSize);
 
     public void Cancel()
     {
@@ -231,12 +280,69 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
             PendingCandidateCount = _recovery.PendingCount,
             CleanupIssue = Volatile.Read(ref _cleanupIssue),
             ExecutionWarnings = CaptureExecutionWarnings(),
+            ActiveGpuRootBatchSize = _usesGpu && Volatile.Read(ref _gpuCreationCpuRecovery) is null
+                ? (PlayingBudget ? Math.Min(ExecutionWindowSize, PlayingWindowLimit) : ExecutionWindowSize) : null,
             ObservedScanningSeconds = ElapsedMilliseconds(Math.Max(0,Interlocked.Read(ref _scanLastCompletedTimestamp)-Interlocked.Read(ref _scanFirstCompletedTimestamp)))/1000,
             ObservedScanningRoots = Interlocked.Read(ref _scanAfterFirstRoots)
         };
     }
 
     public ulong GetSafeNextOrdinal() => _recovery.SafeNextOrdinal;
+
+    private FamilyExecutionPlan PlanForWindow(int window) =>
+        window == PrivateOrdinalBuffer.Capacity ? _executionPlan :
+            FamilyExecutionCoordinator.WithGpuRootBatchSize(_executionPlan, window);
+
+    private async ValueTask RebindGpuOrderAsync(FamilyExecutionPlan target, int window, GpuRootWindowBindingRefused? refusal = null)
+    {
+        // A suffix binding can be refused while the dense producer still owns
+        // a wide buffer. Release every old slot before retrying this frontier.
+        var previous = _families;
+        IFilterExecution?[] ordinary = previous.ToArray();
+        var failures = new List<Exception>();
+        for (int i = previous.Count - 1; i >= 0; i--)
+        {
+            var execution = previous[i];
+            if (!execution.Body.UsesGpu || _executionContext.TryGetCpuFilterIsolation(execution, out _)) continue;
+            ordinary[i] = null;
+            try { await execution.DisposeAsync(_executionContext).ConfigureAwait(false); }
+            catch (Exception failure) { failures.Add(failure); }
+        }
+        Volatile.Write(ref _families, ordinary.OfType<IFilterExecution>().ToArray());
+        if (failures.Count > 0)
+        {
+            if (refusal is not null) failures.Insert(0, refusal);
+            throw new AggregateException("PublicGpuWindow.ReleaseFailed", failures);
+        }
+        if (_executionContext.GpuOwnerThreadId != 0)
+            await _executionContext.ExecuteGpuAsync(rd =>
+            {
+                GpuRootStorageBudget.DrainRetiredWindowIfNeeded(rd, window);
+                return true;
+            }, CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            for (int i = 0; i < previous.Count; i++)
+            {
+                if (ordinary[i] is not null) continue;
+                var body = target.Stages[i].Family;
+                _executionContext.BindCoverage(body, _executionContext.CoverageFor(previous[i].Body));
+                ordinary[i] = body.CreateExecution!(body, _executionContext);
+            }
+        }
+        catch (Exception bindingFailure)
+        {
+            // The session owns the new, partially constructed execution list.
+            // RunAsync drains it through the normal fault/cleanup path.
+            Volatile.Write(ref _families, ordinary.OfType<IFilterExecution>().ToArray());
+            if (refusal is null) throw;
+            throw new AggregateException("PublicGpuWindow.RebindFailed", refusal, bindingFailure);
+        }
+        Volatile.Write(ref _families, ordinary!);
+        _executionContext.BoundPublicGpuTail = target.Stages.Count > 1 && window > PrivateOrdinalBuffer.Capacity;
+        Volatile.Write(ref _activeGpuPlan, target);
+        Volatile.Write(ref _activeWindowSize, window);
+    }
 
     public bool TryGetSafeNextOrdinal(out ulong nextOrdinal) => _recovery.TryGetSafeNextOrdinal(out nextOrdinal);
 
@@ -308,7 +414,8 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
             if (_logWorkload && !workloadLogged) LogWorkloadEvidence();
             _terminalHandoff.Writer.TryComplete();
             bool physicalRecoveryContaminated = Volatile.Read(ref _initialGpuCreationRecoveryAttempted) != 0;
-            bool performanceEvidenceUnavailable = false;
+            // Contended sessions cannot establish the cost of a foreground full-speed search.
+            bool performanceEvidenceUnavailable = _usedPlayingBudget;
             foreach (IFilterExecution family in _families)
             {
                 try { await family.DisposeAsync(_executionContext).ConfigureAwait(false); }
@@ -361,7 +468,7 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
             }
             RuntimeLog.TryBackgroundInfo(
                 $"familyExactTimingObservation=true;submitted={exactTimingSubmitted.ToString().ToLowerInvariant()};" +
-                $"exactAttempts={exactAttempts};completedExactAttempts={completedExactAttempts};exactAggregateMs={F(exactAggregateMs)};" +
+                $"exactAttempts={exactAttempts};smallTailCpuRejected={Interlocked.Read(ref _smallTailCpuRejected)};completedExactAttempts={completedExactAttempts};exactAggregateMs={F(exactAggregateMs)};" +
                 $"implementationRevision={(exactTimingRevision.Length == 0 ? "Legacy" : exactTimingRevision)};" +
                 $"physicalRecoveryContaminated={physicalRecoveryContaminated.ToString().ToLowerInvariant()};" +
                 "timingOnly=true;acceptanceIgnored=true;survivalAuthority=false;diskIoOnWorker=false");
@@ -395,6 +502,8 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
             ulong batchBase = startOrdinal;
             int batchNumber = 0;
             PreparedFamilyBatch? preparedNext = null;
+            long groupStarted = 0;
+            int groupDelivered = 0, measuredRoots = 0;
             while (remaining > 0 && Volatile.Read(ref _targetReached) == 0)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -411,17 +520,38 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
 
                 // Window sizing is coordinator/physical policy. SearchBatch itself
                 // remains only BatchBase + BatchCandidateCount and owns no 2^24 rule.
-                int count = (int)Math.Min(remaining, ExecutionWindowSize);
+                bool playing = PlayingBudget;
+                if (playing) await Task.Delay(PlayingBatchDelayMilliseconds, cancellationToken).ConfigureAwait(false);
+                int window = playing ? Math.Min(ExecutionWindowSize, PlayingWindowLimit) : ExecutionWindowSize;
+                bool measureWindow = _adaptiveWindow is not null && window == ExecutionWindowSize &&
+                    Volatile.Read(ref _gpuCreationCpuRecovery) is null;
+                if (preparedNext is null && measureWindow)
+                {
+                    groupStarted = Stopwatch.GetTimestamp();
+                    groupDelivered = Volatile.Read(ref _targetCandidates);
+                    measuredRoots = 0;
+                    int chosen = _adaptiveWindow!.Choose(remaining, Math.Max(0, _plan.TargetMatchCount - groupDelivered));
+                    if (chosen != window)
+                    {
+                        await RebindGpuOrderAsync(PlanForWindow(chosen), chosen).ConfigureAwait(false);
+                        RuntimeLog.TryBackgroundInfo($"adaptiveGpuWindow=true;state={_adaptiveWindow.State};selected={_adaptiveWindow.Selected};from={window};to={chosen};frontier={batchBase};remaining={remaining}");
+                        window = chosen;
+                    }
+                }
+                if (!measureWindow) groupStarted = 0;
+                // A pair submitted before a mode change owns its original ordinal range.
+                int count = preparedNext?.Batch.BatchCandidateCount ?? (int)Math.Min(remaining, window);
                 var batch = new SearchBatch(batchBase, count);
                 var observation = batch;
                 long familyPipelineStarted = Stopwatch.GetTimestamp();
                 long pairAdmissionWait = 0;
+                _skippedCpuTail.Clear();
                 FamilyCandidateSet survivors;
                 try
                 {
                     PreparedFamilyBatch? prepared = preparedNext;
                     preparedNext = null;
-                    if (FamilyDenseBatchGroupingPolicy.Enabled && prepared is null && batchNumber > 0 && remaining > count + SmallCandidateExactPolicy.MaximumCandidates &&
+                    if (!playing && window <= PrivateOrdinalBuffer.Capacity && FamilyDenseBatchGroupingPolicy.Enabled && prepared is null && batchNumber > 0 && remaining > count + SmallCandidateExactPolicy.MaximumCandidates &&
                         Volatile.Read(ref _gpuCreationCpuRecovery) is null && _families.Count > 0 &&
                         _families[0] is IDenseFamilyBatchGrouping { CanGroupDenseBatches: true, PreferDenseBatchGrouping: true } grouping)
                     {
@@ -457,6 +587,21 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
                             _executionContext, observation, _families, _smallCandidateExactPolicy,
                             cancellationToken, prepared).ConfigureAwait(false);
                 }
+                catch (GpuRootWindowBindingRefused refusal) when (!cancellationToken.IsCancellationRequested &&
+                    !_executionContext.FailOnPhysicalRecovery && window > PrivateOrdinalBuffer.Capacity)
+                {
+                    // The binding owner released the oversized resources. No results
+                    // from this batch reached the terminal queue or advanced the cursor.
+                    _executionContext.ReleaseFilterIsolations(batch);
+                    _adaptiveWindow?.Refuse();
+                    int retryWindow = _adaptiveWindow?.Current ?? PrivateOrdinalBuffer.Capacity;
+                    if (_adaptiveWindow is not null || _executionContext.BoundPublicGpuTail)
+                        await RebindGpuOrderAsync(PlanForWindow(retryWindow), retryWindow, refusal).ConfigureAwait(false);
+                    else
+                        Volatile.Write(ref _activeWindowSize, retryWindow);
+                    TryDiagnostic(() => RuntimeLog.TryBackgroundWarning($"gpuRootWindowReduced=true;batchBase={batch.BatchBase};requested={_plan.RunOptions.GpuRootBatchSize};from={window};to={retryWindow};context={_plan.SnapshotFingerprint};exceptionJson={RuntimeLog.SafeJson(refusal.ToString())}"), "GpuRootWindowReduced");
+                    continue;
+                }
                 catch (Exception failure) when (!cancellationToken.IsCancellationRequested)
                 {
                     if (!await TryRecoverInitialGpuCreationAsync(failure, batch, cancellationToken).ConfigureAwait(false)) throw;
@@ -483,7 +628,10 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
                 }
                 else Interlocked.Add(ref _scanAfterFirstRoots,count);
                 Interlocked.Exchange(ref _scanLastCompletedTimestamp,familyCompletedTimestamp);
-                var terminalBatch = new FamilyTerminalBatch(nextBatchNumber, survivors, familyCompletedTimestamp);
+                // Only the serial producer collects skipped bodies. Snapshot for this batch
+                // before the next root window can overlap its consumer.
+                var terminalBatch = new FamilyTerminalBatch(nextBatchNumber, survivors, familyCompletedTimestamp,
+                    _skippedCpuTail.ToArray());
                 // Channel ownership excludes a batch already transferred to Exact.
                 int terminalOutstanding = _terminalHandoff.Reader.Count + 1;
                 UpdateMaximum(ref _maxTerminalOutstanding, terminalOutstanding);
@@ -491,6 +639,20 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
                     RecordBoundedQueueViolation("TerminalOutstandingExceeded", terminalOutstanding);
                 terminalBatch.MarkTerminalOffered();
                 await _terminalHandoff.Writer.WriteAsync(terminalBatch, cancellationToken).ConfigureAwait(false);
+                if (groupStarted != 0 && measureWindow)
+                {
+                    measuredRoots += count;
+                    if (preparedNext is null && count == window && measuredRoots % window == 0)
+                    {
+                        // Paired GPU submissions share the same wait. Count both
+                        // only after their ordered handoffs have absorbed backpressure.
+                        int windows = measuredRoots / window;
+                        double ms = Stopwatch.GetElapsedTime(groupStarted).TotalMilliseconds / windows;
+                        int delivered = Volatile.Read(ref _targetCandidates) - groupDelivered;
+                        for (int member = 0; member < windows; member++)
+                            _adaptiveWindow!.Observe(window, ms, member == windows - 1 ? delivered : 0);
+                    }
+                }
                 Interlocked.Add(
                     ref _familyToTerminalEnqueueTicks,
                     Stopwatch.GetTimestamp() - terminalBatch.FamilyCompletedTimestamp);
@@ -551,7 +713,7 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
                 try
                 {
                     await EvaluateExactTerminalAsync(
-                        candidates,
+                        candidates, terminalBatch.CpuTail,
                         exactStartTimestamp,
                         cancellationToken).ConfigureAwait(false);
                 }
@@ -577,7 +739,7 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
     }
 
     private async ValueTask EvaluateExactTerminalAsync(
-        FamilyCandidateSet candidates,
+        FamilyCandidateSet candidates, FilterBodyDescription[] cpuTail,
         long exactStartTimestamp,
         CancellationToken cancellationToken)
     {
@@ -612,14 +774,14 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
         {
             await Parallel.ForEachAsync(
                 Enumerable.Range(0, survivorCount),
-                new ParallelOptions { CancellationToken = cancellationToken, MaxDegreeOfParallelism = _plan.WorkerCount },
+                new ParallelOptions { CancellationToken = cancellationToken, MaxDegreeOfParallelism = PlayingBudget ? 1 : _plan.WorkerCount },
                 async (survivorIndex, token) =>
                 {
                     if (Volatile.Read(ref _targetReached) != 0) return;
                     ulong logicalOrdinal = candidates.IsDense
                         ? (ulong)survivorIndex
                         : compactAbi1.Span[survivorIndex];
-                    if (await EvaluateCandidateAsync(candidates.Batch, logicalOrdinal, token).ConfigureAwait(false))
+                    if (await EvaluateCandidateAsync(candidates.Batch, logicalOrdinal, token, cpuTail: cpuTail).ConfigureAwait(false))
                         Volatile.Write(ref completed[survivorIndex], true);
                 }).ConfigureAwait(false);
             exactWorkCompletedTimestamp = Stopwatch.GetTimestamp();
@@ -639,7 +801,7 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
     }
 
     private async ValueTask<bool> EvaluateCandidateAsync(SearchBatch batch, ulong logicalOrdinal, CancellationToken cancellationToken,
-        bool retrying = false)
+        bool retrying = false, FilterBodyDescription[]? cpuTail = null)
     {
         ulong globalCandidate = batch.GlobalCandidate(logicalOrdinal);
         if (!retrying && _recovery.WasAlreadyHandled(globalCandidate))
@@ -670,11 +832,27 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
         SearchQueryEvaluation evaluation;
         ProductionExactSearchResult exact;
         await _executionContext.EnterCpuAsync(cancellationToken).ConfigureAwait(false);
-        Interlocked.Increment(ref _exactAttempts);
-        long exactAttemptStarted = Stopwatch.GetTimestamp();
+        long exactAttemptStarted = 0;
         bool exactCompleted = false;
         try
         {
+            if (cpuTail is not null)
+            {
+                foreach (var body in cpuTail)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    bool survives;
+                    try { survives = body.SmallTailCpuMatcher!(input.RootHash); }
+                    catch (Exception error) when (error is not OperationCanceledException)
+                    { throw new InvalidOperationException("SmallCandidateCpuTail:" + body.FamilyId, error); }
+                    if (survives) continue;
+                    Interlocked.Increment(ref _smallTailCpuRejected);
+                    Interlocked.Increment(ref _scanned);
+                    return true;
+                }
+            }
+            Interlocked.Increment(ref _exactAttempts);
+            exactAttemptStarted = Stopwatch.GetTimestamp();
             _beforeExactEvaluate?.Invoke(cancellationToken);
             // Parallel.ForEachAsync owns a child token whose propagation may lag
             // session cancellation. Exact and its consumer must use the same token.
@@ -818,14 +996,16 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
         public FamilyTerminalBatch(
             int batchNumber,
             FamilyCandidateSet candidates,
-            long familyCompletedTimestamp)
+            long familyCompletedTimestamp, FilterBodyDescription[] cpuTail)
         {
             BatchNumber = batchNumber;
+            CpuTail = cpuTail;
             Candidates = candidates;
             FamilyCompletedTimestamp = familyCompletedTimestamp;
         }
 
         public int BatchNumber { get; }
+        public FilterBodyDescription[] CpuTail { get; }
         public FamilyCandidateSet Candidates { get; }
         public long FamilyCompletedTimestamp { get; }
         public long TerminalOfferTimestamp { get; private set; }

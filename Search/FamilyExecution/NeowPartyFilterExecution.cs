@@ -20,9 +20,11 @@ internal sealed partial class NeowPartyFilterExecution : IFilterExecution, IDens
     private string FamilyId => Body.FamilyId;
     private readonly NeowPartyStage[] _gpuStages;
     private readonly IFilterExecution[] _executions;
-    private readonly bool UsesFused, UsesPrivate, _skipExactValidation;
+    private readonly bool UsesFused, UsesPrivate, _skipExactValidation, _widePublic;
     private FamilyPrivateGpuChain? _chain;
     private NeowFamilyGpuExecutor? _fused;
+    private int _fusedCapacity = PrivateOrdinalBuffer.Capacity;
+    private bool _fusedCompactStorage;
     private bool _compact, _privateParity;
     private long _inputs, _outputs, _liveInputs, _fusedReadback;
     private double _ms, _liveMs, _fusedDispatch;
@@ -32,17 +34,23 @@ internal sealed partial class NeowPartyFilterExecution : IFilterExecution, IDens
         bool fused, bool privateEdges, bool skipExact, FilterRuntimeServices services)
     {
         Body = body; _gpuStages = stages; UsesFused = fused; UsesPrivate = privateEdges; _skipExactValidation = skipExact;
+        // Integer N has one public shader per stage. Keep the shared-arrival
+        // program and the complete stage order even when the first dispatch grows.
+        _widePublic = body.WindowCapacity > PrivateOrdinalBuffer.Capacity &&
+            stages.Any(stage => stage.Gpu?.NumericalVariant == NeowGpuNumericalVariant.IntegerUnitFloat);
         var passed = services.CoverageFor(body);
-        _executions = stages.Select(stage =>
+        _executions = stages.Select((stage, index) =>
         {
-            services.BindCoverage(stage.Family, passed);
-            return (stage.Family.CreateExecution ??
-                throw new InvalidOperationException("PartyN.ChildExecutionUnavailable"))(stage.Family, services);
+            var family = _widePublic && index == 0
+                ? GpuRootWindow.PrepareStandalone(stage.Family, body.WindowCapacity) : stage.Family;
+            services.BindCoverage(family, passed);
+            return (family.CreateExecution ??
+                throw new InvalidOperationException("PartyN.ChildExecutionUnavailable"))(family, services);
         }).ToArray();
     }
     private (string Device, double SetupMs) CaptureResourceInfo()
     {
-        if (UsesFused)
+        if (UsesFused || _fused is not null)
             return (_fused?.Device ?? _pairFused?.Device ?? "", (_fused?.SetupMs ?? 0) + (_pairFused?.SetupMs ?? 0));
         if (UsesPrivate)
             return (_chain?.Device ?? _privatePairChain?.Device ?? "", (_chain?.SetupMs ?? 0) + (_privatePairChain?.SetupMs ?? 0));
@@ -58,11 +66,24 @@ internal sealed partial class NeowPartyFilterExecution : IFilterExecution, IDens
         var watch = Stopwatch.StartNew(); var result = input;
         try
         {
-            if ((UsesFused || UsesPrivate) && input.Count > 0)
+            int capacity = GpuRootWindow.PublicCapacity(Body, input.Count);
+            bool wide = capacity > PrivateOrdinalBuffer.Capacity;
+            bool useFused = UsesFused || wide && !_widePublic || _fusedCapacity > PrivateOrdinalBuffer.Capacity && _fused is not null;
+            if ((useFused || UsesPrivate) && input.Count > 0)
             {
-                if (UsesFused)
+                if (useFused)
                 {
-                    _fused ??= await services.ExecuteGpuAsync(device => CreateFused(device), token).ConfigureAwait(false);
+                    if (_fused is null || capacity > _fusedCapacity || _fusedCapacity > PrivateOrdinalBuffer.Capacity && _fusedCompactStorage == input.IsDense)
+                    {
+                        _fused = await services.ExecuteGpuAsync(device => {
+                            if (_chain is not null) { _chain.Dispose(); _chain = null; }
+                            if (_fused is not null) { _fused.Dispose(); _fused = null; }
+                            return GpuRootWindow.BindPublic(FamilyId, capacity, () => CreateFused(device, publicCompact: !input.IsDense));
+                        }, token).ConfigureAwait(false);
+                        _fusedCapacity = capacity;
+                        _fusedCompactStorage = !input.IsDense;
+                        _privateParity = false;
+                    }
                     result = await services.ExecuteGpuAsync(_ =>
                     {
                         var output = _fused.Execute(input, token, out var metrics);
@@ -72,16 +93,22 @@ internal sealed partial class NeowPartyFilterExecution : IFilterExecution, IDens
                 }
                 else
                 {
-                    _chain ??= await services.ExecuteGpuAsync(device => new FamilyPrivateGpuChain(device,
-                        _gpuStages.Select(stage => stage.Family).ToArray()), token).ConfigureAwait(false);
+                    _chain ??= await services.ExecuteGpuAsync(device => {
+                        if (_fused is not null) { _fused.Dispose(); _fused = null; _privateParity = false; }
+                        return new FamilyPrivateGpuChain(device, _gpuStages.Select(stage => stage.Family).ToArray());
+                    }, token).ConfigureAwait(false);
                     result = await services.ExecuteGpuAsync(_ => _chain.Execute(input, token), token).ConfigureAwait(false);
                 }
                 ValidatePrivateParity(input, result);
             }
-            else foreach (var stage in _executions)
+            else for (int index = 0; index < _executions.Length; index++)
             {
                 if (result.Count == 0) break;
-                result = await stage.FilterAsync(services, result, token).ConfigureAwait(false);
+                var stage = _executions[index];
+                result = _widePublic && index > 0 && !services.BudgetPublicTailBindings
+                    ? await GpuRootWindow.FilterPublicTailAsync(stage, services, result, token,
+                        supportsWideCompactOrdinals: true).ConfigureAwait(false)
+                    : await stage.FilterAsync(services, result, token).ConfigureAwait(false);
             }
             double elapsed = watch.Elapsed.TotalMilliseconds;
             if (input.IsDense) Volatile.Write(ref _lastDenseOutputCount, result.Count);
@@ -90,6 +117,7 @@ internal sealed partial class NeowPartyFilterExecution : IFilterExecution, IDens
             services.Costs.ObserveCompleted(Body, input, result.Count, elapsed, passedCoverage: services.CoverageFor(Body));
             return result;
         }
+        catch (GpuRootWindowBindingRefused) { throw; }
         catch (OperationCanceledException) { throw; }
         catch { _groupingDisabled = true; throw; }
     }
@@ -97,11 +125,8 @@ internal sealed partial class NeowPartyFilterExecution : IFilterExecution, IDens
     {
         _lastResource = CaptureResourceInfo();
         _privatePairDisposed = true;
-        if (_fused is not null || _pairFused is not null)
-            await services.ExecuteGpuAsync(_ => { DisposePair(_pairFused, _fused); return true; }, CancellationToken.None).ConfigureAwait(false);
-        if (_chain is not null || _privatePairChain is not null)
-            await services.ExecuteGpuAsync(_ => { PrivateOrdinalBuffer.DisposeAll(_privatePairChain, _chain); return true; }, CancellationToken.None).ConfigureAwait(false);
-        foreach (var stage in _executions) await stage.DisposeAsync(services).ConfigureAwait(false);
+        await FilterExecutionCleanup.DisposeChildrenAsync(services, FamilyId, _executions,
+            _pairFused, _fused, _privatePairChain, _chain).ConfigureAwait(false);
         RuntimeLog.TryBackgroundInfo($"partyNeowPipelineSummary=true;fused={UsesFused};private={UsesPrivate && !UsesFused};stages={_gpuStages.Length};batches={_batches};input={_inputs};output={_outputs};wallMs={_ms};setupMs={(_fused?.SetupMs ?? _chain?.SetupMs ?? 0) + (_pairFused?.SetupMs ?? 0) + (_privatePairChain?.SetupMs ?? 0)};intermediatePayloadReadbackBytes={(_chain is not null || _fused is not null ? 0 : -1)};readbackBytes={(_chain?.ReadbackBytes ?? _fusedReadback) + (_privatePairChain?.ReadbackBytes ?? 0)};dispatchSyncMs={(_chain?.DispatchMs ?? _fusedDispatch) + (_privatePairChain?.DispatchMs ?? 0)};parity={_privateParity};densePairGroups={_densePairGroups};densePairCalibrationSamples=Excluded;privateDensePairGroups={_privateDensePairGroups}");
     }
 }

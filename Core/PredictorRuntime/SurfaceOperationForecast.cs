@@ -19,6 +19,16 @@ internal sealed record OperationSurfaceForecastScope(bool IncludeOriginEffect = 
 // offer. Keeps child facts and originating faults independent of presentation.
 internal static class SurfaceOperationForecast
 {
+    // Normal merchant inventory has no open card reward. Reward modifiers
+    // still matter on reward pickup, where generated card offers can change.
+    // These vanilla goods produce only public changes or a player-chosen target.
+    internal static bool MayShowShopObtain(string? entry) => !IsShopDeckChoice(entry) && entry is not
+        ("BELT_BUCKLE" or "LEES_WAFFLE" or "STRAWBERRY" or "PEAR" or "MANGO" or "POTION_BELT" or
+         "LASTING_CANDY" or "LAVA_LAMP" or "WING_CHARM" or "FROZEN_EGG" or "MOLTEN_EGG" or "TOXIC_EGG");
+
+    private static bool IsShopDeckChoice(string? entry) => entry is
+        "DOLLYS_MIRROR" or "GNARLED_HAMMER" or "KIFUDA" or "PUNCH_DAGGER" or "ROYAL_STAMP";
+
     internal static OperationForecast BuildShop(PredictorOperationSnapshot snapshot,long entryId,
         CancellationToken token=default,OperationSurfaceForecastScope? demand=null)
     {
@@ -57,8 +67,11 @@ internal static class SurfaceOperationForecast
                 ?? throw new ArgumentException("ShopPreviewEntryMissing", nameof(entryId));
             var source = entry.Key ?? default;
             if (entry.Kind == PredictorShopEntryKind.CardRemoval) return Empty(source);
-            bool projectOrigin = entry.Kind == PredictorShopEntryKind.Relic && WantsRelicProjection(source, demand);
-            bool wantsRestock = demand.IncludeBasicRestock || demand.IncludeRestockWhetstone;
+            bool projectOrigin = entry.Kind == PredictorShopEntryKind.Relic && MayShowShopObtain(source.Entry) &&
+                WantsRelicProjection(source, demand);
+            bool wantsRestock = scene.IsMerchantRoom &&
+                (demand.IncludeBasicRestock || demand.IncludeRestockWhetstone && entry.Kind == PredictorShopEntryKind.Relic) &&
+                (source == Courier || snapshot.State.Relics.Any(r => !r.Melted && r.Key == Courier));
             if (!projectOrigin && !wantsRestock) return Empty(source);
             ImmutableArray<PredictorInput> inputs = [new BuyShopEntry(entryId, scene.Revision)];
             var result = execution.Evaluate(inputs, token);
@@ -67,26 +80,25 @@ internal static class SurfaceOperationForecast
                 // An invalid purchase is not necessarily missing input. Use the
                 // model's actual quoted offer (including discounts), not base cost.
                 var offer = result.ShopOffers.SingleOrDefault(item => item.EntryId == entryId);
-                return Empty(source) with { Notices = [offer is { Stocked: true, Affordable: false }
+                return Empty(projectOrigin ? source : Courier) with { Notices = [offer is { Stocked: true, Affordable: false }
                     ? "Purchase:InsufficientGold" : "Purchase:" + result.Disposition] };
             }
 
-            bool courier = wantsRestock && scene.IsMerchantRoom && result.State.Relics.Any(r => !r.Melted && r.Key == Courier);
-            bool mirrorRestock = courier && entry.Kind == PredictorShopEntryKind.Relic && source.Entry == "DOLLYS_MIRROR";
-            ImmutableArray<long> mirrorTargets = [];
-            if (mirrorRestock && result.Waiting.Phase == PredictorPhase.ObtainDeckCards)
+            bool courier = wantsRestock && result.State.Relics.Any(r => !r.Melted && r.Key == Courier);
+            PredictorSelection? deckChoice = null;
+            if (courier && entry.Kind == PredictorShopEntryKind.Relic && IsShopDeckChoice(source.Entry) &&
+                result.Waiting.Phase == PredictorPhase.ObtainDeckCards)
             {
-                // Vanilla copying (including deck-add hooks) does not change the
-                // Rewards/Shops streams or relic bag eligibility. One legal target
-                // therefore settles the shared replacement. It does not select for
-                // the player; a Whetstone continuation below checks every copy.
-                mirrorTargets = result.Waiting.Selection.CandidateCardIds;
-                var target = mirrorTargets.First();
-                result = execution.Evaluate(inputs.Add(new ChooseObtainDeckCards([target])), token);
+                // The choice does not alter the restock streams or bag. Settle
+                // one legal path for the replacement and price. A Whetstone
+                // restock below needs separate evidence for its future deck.
+                deckChoice = result.Waiting.Selection;
+                var representative = deckChoice.CandidateCardIds.Take(deckChoice.MinimumCardCount).ToImmutableArray();
+                result = execution.Evaluate(inputs.Add(new ChooseObtainDeckCards(representative)), token);
                 if (result.Disposition != PredictorInputResult.Accepted)
-                    throw new InvalidOperationException("CourierMirrorContinuation:" + result.Disposition);
+                    throw new InvalidOperationException("CourierDeckChoiceContinuation:" + source.Entry + ":" + result.Disposition);
             }
-            var preview = projectOrigin && !mirrorRestock
+            var preview = projectOrigin
                 ? RelicOperationForecast.Build(snapshot, inputs, source, token, demand.IncludeObtainContinuation) : Empty(source);
             // Preserve the purchased offer's kind separately from child relic facts.
             preview = preview with { PurchasedEntryKind = entry.Kind };
@@ -121,12 +133,12 @@ internal static class SurfaceOperationForecast
             if (result.Waiting.Phase != PredictorPhase.Shop)
                 return preview with { PendingReasons = preview.PendingReasons.Add(
                     "CourierRestockAwaitingPlayerChoice:" + result.Waiting.Phase) };
-            return AppendShopRestock(snapshot, inputs, preview, result, entryId, token, mirrorTargets: mirrorTargets, demand: demand);
+            return AppendShopRestock(snapshot, inputs, preview, result, entryId, token, deckChoice: deckChoice, demand: demand);
         }
 
         private OperationForecast AppendShopRestock(PredictorOperationSnapshot snapshot, ImmutableArray<PredictorInput> inputs,
             OperationForecast preview, PredictorOperationResult result, long entryId,
-            CancellationToken token, string? label = null, string? whetstoneKind = null, ImmutableArray<long> mirrorTargets = default,
+            CancellationToken token, string? label = null, string? whetstoneKind = null, PredictorSelection? deckChoice = null,
             bool showPrice = true, OperationSurfaceForecastScope? demand = null, bool isConditional = false)
         {
             demand ??= OperationSurfaceForecastScope.All;
@@ -152,31 +164,44 @@ internal static class SurfaceOperationForecast
                     ? "extra:restock-whetstone" : "shop:restock"
             };
             bool hasOriginEffect = !preview.ContainedRelics.IsEmpty || !preview.CurseCandidates.IsEmpty ||
+                preview.Notices.Any(value => value.StartsWith("RewardSacrificeProgress:", StringComparison.Ordinal)) ||
                 preview.Branches.Any(branch => branch.Sections.Any(effect => !effect.Rows.IsEmpty || !effect.CardGroups.IsEmpty));
-            preview = Append(preview with { Source = hasOriginEffect ? preview.Source : Courier }, section);
+            var purchaseSource = preview.Source;
+            preview = Append(preview with { Source = hasOriginEffect ? purchaseSource : Courier }, section);
             if (!whetstone) return preview;
             var effectInputs = inputs;
             try
             {
                 var outcomes = new List<ImmutableArray<PredictorCard>>();
-                if (!mirrorTargets.IsDefaultOrEmpty)
+                if (deckChoice != null)
                 {
-                    // Copying is irrelevant to the replacement identity, but it is
-                    // relevant to Whetstone's future deck and stable shuffle. Never
-                    // reuse the arbitrary first copy as a promised upgrade target.
-                    foreach (long target in mirrorTargets)
+                    // Modern Whetstone sorts equal card names by enchantment.
+                    // A multi-target enchant can change the upgrade result even
+                    // when every singleton appeared to give the same cards.
+                    bool pickOne = deckChoice.MinimumCardCount == 1 && deckChoice.MaximumCardCount == 1;
+                    var choices = pickOne
+                        ? deckChoice.CandidateCardIds.Select(id => ImmutableArray.Create(id)).ToArray()
+                        : RelicOperationForecast.Combinations(deckChoice.CandidateCardIds,
+                            deckChoice.MinimumCardCount, deckChoice.MaximumCardCount).ToArray();
+                    if (!pickOne && choices.Length > RelicOperationForecast.MaximumEvaluations)
+                        return Append(preview, new(Whetstone, [], [])
+                        {
+                            Category = OperationOutcomeCategory.ShopRestock, FeatureId = "extra:restock-whetstone",
+                            EmptyReason = "WhetstoneEnchantChoicesPending"
+                        });
+                    foreach (var ids in choices)
                     {
-                        effectInputs = inputs.Add(new ChooseObtainDeckCards([target]));
+                        effectInputs = inputs.Add(new ChooseObtainDeckCards(ids));
                         var settled = execution.Evaluate(effectInputs, token);
                         if (settled.Disposition != PredictorInputResult.Accepted || settled.Waiting.Phase != PredictorPhase.Shop)
-                            throw new InvalidOperationException("CourierMirrorWhetstoneContinuation:" + settled.Disposition);
+                            throw new InvalidOperationException("CourierWhetstoneContinuation:" + purchaseSource.Entry + ":" + settled.Disposition);
                         outcomes.Add(WhetstoneTargets(snapshot, settled, token));
                     }
-                    if (outcomes.Skip(1).Any(cards => !cards.SequenceEqual(outcomes[0])))
-                        whetstoneKind = "WhetstoneAfterMirrorChoice";
                 }
                 else outcomes.Add(WhetstoneTargets(snapshot, result, token));
                 bool possible = outcomes.Skip(1).Any(cards => !cards.SequenceEqual(outcomes[0]));
+                if (possible) whetstoneKind = purchaseSource.Entry == "DOLLYS_MIRROR"
+                    ? "WhetstoneAfterMirrorChoice" : "WhetstoneAfterEnchantChoice";
                 var targets = outcomes.SelectMany(cards => cards).Distinct().ToImmutableArray();
                 var effect = new OperationOutcomeSource(Whetstone,
                     targets.IsEmpty ? [] : [new(OperationOutcomeAction.UpgradeCard, [], targets, possible)], [])

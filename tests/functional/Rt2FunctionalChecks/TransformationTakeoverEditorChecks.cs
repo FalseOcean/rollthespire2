@@ -12,6 +12,22 @@ namespace RolltheSpire2.Tests.FastSearch;
 
 internal static class TransformationTakeoverEditorChecks
 {
+    internal static bool ButtonsFit(MapQuantityInput input)
+    {
+        input.Notification((int)Container.NotificationSortChildren);
+        var group = input.GetParent<Panel>().GetGlobalRect();
+        var control = input.GetGlobalRect();
+        var minus = input.GetNode<Button>("Minus").GetGlobalRect();
+        var field = input.GetNode<LineEdit>("Input").GetGlobalRect();
+        var plus = input.GetNode<Button>("Plus").GetGlobalRect();
+        Console.WriteLine($"STEPPER_BOUNDS {input.Name} width={control.Size.X} panel={group.Size.X} " +
+            $"inset={minus.Position.X - group.Position.X}/{group.End.X - plus.End.X}");
+        return minus.Size.X > 0 && plus.Size.X > 0 && control.Size.X <= 136 &&
+            control.Grow(0.1f).Encloses(minus) && control.Grow(0.1f).Encloses(plus) &&
+            minus.End.X <= field.Position.X && field.End.X <= plus.Position.X &&
+            minus.Position.X >= group.Position.X + 8 && plus.End.X <= group.End.X - 8;
+    }
+
     internal static int Run()
     {
         int checks = 0;
@@ -38,6 +54,7 @@ internal static class TransformationTakeoverEditorChecks
 
         Action<ModelKey>? chooseCard = null;
         var editor = new TransformationSearchEditor((_, choose) => chooseCard = choose) { Size = new(780, 620) };
+        ((SceneTree)Engine.GetMainLoop()).Root.AddChild(editor);
         try
         {
             T Node<T>(string name) where T : Node => (T)(editor.FindChild(name, true, false)
@@ -69,6 +86,26 @@ internal static class TransformationTakeoverEditorChecks
             AddCard();
             AddCard();
             Node<MapQuantityInput>("TransformationCardsRareCount").Value = 2;
+            foreach (string lang in new[] { "zh", "en" })
+            {
+                var strings = JsonUiTextProvider.CreateUi13(lang);
+                editor.Refresh(lang, strings, 0, sources, [card], startingStrikeDefendCount: 9, openingRelics: [leafy.Identity]);
+                var quantity = Node<MapQuantityInput>("TransformationCardsRareCount");
+                var labels = quantity.GetParent().GetChildren().OfType<Label>().ToArray();
+                var label = labels.Single(l => l.Text == strings.Get("query.transform.rare_count_optional"));
+                Check(quantity.Position.X >= label.Position.X + label.Size.X &&
+                    quantity.Position.X - label.Position.X - label.Size.X <= 16 &&
+                    labels.Any(l => l.Text == strings.Format("query.transform.selected_cards", 2)),
+                    "The localized minimum sits beside its input and selected copies are counted: " + lang);
+                foreach (int width in new[] { 944, 420, 300 })
+                {
+                    editor.Size = new(width, 620);
+                    editor.Refresh(lang, strings, 0, sources, [card], startingStrikeDefendCount: 9, openingRelics: [leafy.Identity]);
+                    Check(ButtonsFit(Node<MapQuantityInput>("TransformationCardsRareCount")), $"Both buttons stay inside the group: {lang}, {width}");
+                }
+                editor.Size = new(780, 620);
+            }
+            Refresh();
             Check(editor.SetSourceTakenOver(leafy.Id, true) && !editor.SetSourceTakenOver(lab.Id, true), "Multiple selected sources share one takeover");
             var grouped = editor.ExportCondition(query)!;
             Check(grouped.ResultRequirements.Count == 1 && grouped.ResultRequirements[0] is

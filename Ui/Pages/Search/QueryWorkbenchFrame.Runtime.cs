@@ -10,6 +10,7 @@ namespace RolltheSpire2.Ui.Pages.Search;
 internal sealed partial class QueryWorkbenchFrame
 {
     private Control? _runtimeSurface, _firstEtaPanel;
+    private Label? _activeGpuBatch;
     private readonly Label?[] _runValues = new Label?[4];
     private SearchProgressSnapshot? _lastProgress;
     private FamilySearchEtaProjectionV1? _runEta;
@@ -64,6 +65,9 @@ internal sealed partial class QueryWorkbenchFrame
             value.ClipText = true; value.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
             value.MouseFilter = MouseFilterEnum.Pass; column.AddChild(value); _runValues[i]=value;
         }
+        _activeGpuBatch = _p.Label("", 16, true);
+        _activeGpuBatch.Name = "SearchActiveGpuRootBatchSize";
+        runtimeColumn.AddChild(_activeGpuBatch);
         _resultSurface=new ScrollContainer {SizeFlagsVertical = SizeFlags.ExpandFill, HorizontalScrollMode=ScrollContainer.ScrollMode.Disabled};
         _runtimeSurface.AddChild(_resultSurface);
         _resultRows=new VBoxContainer {SizeFlagsHorizontal=SizeFlags.ExpandFill};
@@ -82,6 +86,13 @@ internal sealed partial class QueryWorkbenchFrame
     private void UpdateRuntimeStats()
     {
         var progress=_lastProgress;
+        if (_activeGpuBatch is { } batchLabel && GodotObject.IsInstanceValid(batchLabel))
+        {
+            batchLabel.Visible = progress?.ActiveGpuRootBatchSize is > 0;
+            if (progress?.ActiveGpuRootBatchSize is int size && size > 0)
+                batchLabel.Text = _text.Format("workflow.active_gpu_root_batch",
+                    size.ToString("N0", System.Globalization.CultureInfo.InvariantCulture));
+        }
         if(_showResults) {
             PresentExpectations(_displayedRunEta?.FirstResultMeanMs,_runEta?.AcceptedResultProbability,EtaRate(_runEta));
         }

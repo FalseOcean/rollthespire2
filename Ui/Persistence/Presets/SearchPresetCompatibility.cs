@@ -36,10 +36,8 @@ internal sealed record SearchPresetWorkbenchLoadResolution(
 internal static class SearchPresetCompatibilityResolver
 {
     /// <summary>
-    /// Roster, per-seat conditions and dormant editor selections are resolved
-    /// together. Exclusion members alone may remain explicitly unverified; their
-    /// original identities are passed intact to Exact. The current compiler and
-    /// editor catalog still own admission and representability.
+    /// Prefer the complete editor state. If it contains retired selections, try the
+    /// same roster and active conditions without the optional editor snapshots.
     /// </summary>
     internal static SearchPresetWorkbenchLoadResolution ResolveWorkbench(
         SearchPresetDefinition preset, RuntimeAuthoritySnapshot authority,
@@ -50,21 +48,29 @@ internal static class SearchPresetCompatibilityResolver
         ArgumentNullException.ThrowIfNull(encounterCatalog);
         if (preset.Workbench is not { } draft)
             return new(null, preset.UnresolvedAsset?.References ?? [], preset.UnresolvedAsset?.Issue ?? "PresetCurrentIntentRequired");
-        var unresolved = new List<SearchPresetUnresolvedReference>();
+        var resolution = Resolve(draft, authority, encounterCatalog);
+        return !resolution.CanLoad && draft.HasEditorSnapshots
+            ? Resolve(draft.WithoutEditorSnapshots(), authority, encounterCatalog) : resolution;
+    }
+
+    private static SearchPresetWorkbenchLoadResolution Resolve(WorkbenchSearchDraft candidate,
+        RuntimeAuthoritySnapshot authority, RuntimeEncounterCatalogSnapshot encounterCatalog)
+    {
         try
         {
-            ValidateWorkbenchShape(draft);
-            unresolved.AddRange(FindUnresolvedIntentReferences(draft.WithoutCapturedAuthority(), authority,
-                "Workbench", deferActVariants: true, encounterCatalog: encounterCatalog));
+            ValidateWorkbenchShape(candidate);
+            candidate = candidate.WithoutCapturedAuthority();
+            var unresolved = FindUnresolvedIntentReferences(candidate, authority,
+                "Workbench", deferActVariants: true, encounterCatalog: encounterCatalog);
+            if (unresolved.Count != 0)
+                return new(null, unresolved, HasAuthorityIncomplete(unresolved)
+                    ? "CurrentSemanticAuthorityIncomplete" : "PresetWorkbenchReferencesUnavailable");
+            return new(candidate, [], string.Empty);
         }
         catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException or ArgumentException)
         {
-            return new(null, unresolved, "PresetWorkbenchShapeUnresolved:" + ex.Message);
+            return new(null, [], "PresetWorkbenchShapeUnresolved:" + ex.Message);
         }
-        if (unresolved.Count != 0)
-            return new(null, unresolved, HasAuthorityIncomplete(unresolved)
-                ? "CurrentSemanticAuthorityIncomplete" : "PresetWorkbenchReferencesUnavailable");
-        return new(draft.WithoutCapturedAuthority(), [], string.Empty);
     }
 
     // Runtime authority DTOs are immutable captures. A new capture owns a new

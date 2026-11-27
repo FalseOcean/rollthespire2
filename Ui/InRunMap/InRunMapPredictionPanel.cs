@@ -109,8 +109,14 @@ internal sealed partial class InRunMapPredictionPanel : Control
         if (PredictionEnabled || _nativeDrawing != null) RefreshVisuals();
         UpdateInformationPositions();
         bool canLeave = _screen.IsTravelEnabled && !_screen.IsTraveling;
-        if (canLeave != _lastDepartureBoundary)
-        { _lastDepartureBoundary = canLeave; QueueInformationRefresh(); }
+        var progress = PredictorLiveRunCapture.RoomProgress(_run, out int completedRestChoices);
+        if (canLeave != _lastDepartureBoundary || progress != _lastRoomProgress || completedRestChoices != _lastCompletedRestChoices)
+        {
+            _lastDepartureBoundary = canLeave;
+            _lastRoomProgress = progress;
+            _lastCompletedRestChoices = completedRestChoices;
+            QueueInformationRefresh();
+        }
     }
     private void AlignStatus()
     {
@@ -236,7 +242,9 @@ internal sealed partial class InRunMapPredictionPanel : Control
         var draft = DisplayedDraft;
         _forecastStatus.Text = _predictionFault != null ? _text.Get(_predictionFault) :
             _message != null ? _text.Get(_message) : draft?.IsCompatible == false ? _text.Get("predictor.map.incompatible") :
-            _prediction.WaitingForBoundary && _prediction.Snapshot == null ? _text.Get("predictor.map.waiting_boundary") : "";
+            _prediction.RoomChoiceInterrupted ? _text.Get("predictor.map.room_choice_interrupted") :
+            _prediction.WaitingForBoundary && _prediction.Snapshot == null ? _text.Get(_prediction.WaitingForRoomChoice
+                ? "predictor.map.waiting_room_choice" : "predictor.map.waiting_boundary") : "";
         _forecastStatus.Visible = _forecastStatus.Text.Length > 0 && _featureEnabled && _screen.IsOpen;
         AlignStatus();
     }

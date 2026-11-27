@@ -123,8 +123,8 @@ internal sealed partial class TransformationSearchEditor : Control
             return;
         }
         Text(content, _text.Get("query.transform.sources.title"), 16, 0, width - 272, 20);
-        var resultCount = Text(content, _text.Get("query.transform.result_count") + " · " +
-            (_sources.Any(source => group.TakenOver.Contains(source.Id) && !SourceCount(source).HasValue) ? "—" : ResultCount(group).ToString()),
+        var resultCount = Text(content, _text.Format("query.transform.total_cards",
+            _sources.Any(source => group.TakenOver.Contains(source.Id) && !SourceCount(source).HasValue) ? "—" : ResultCount(group).ToString()),
             width - 240, 4, 224, 15, true);
         resultCount.HorizontalAlignment = HorizontalAlignment.Right;
         Text(content, _text.Get("query.transform.sources.hint"), 16, 32, width - 32, 14, true);
@@ -163,17 +163,12 @@ internal sealed partial class TransformationSearchEditor : Control
         y += 46;
         if (group.Objective == 0)
         {
-            var label = Text(content, _text.Get("query.transform.rare_count"), 16, y + 8, 150, 15, true);
-            label.Size = new(150, 30);
-            var quantity = new MapQuantityInput(_p, group.RareCount, true)
-            { Name = "TransformationRareCount", Position = new(174, y), Size = new(136, 38) };
-            quantity.ValueChanged += value => group.RareCount = value;
-            content.AddChild(quantity);
-            y += 50;
+            y = AddRareCount("query.transform.rare_count", "TransformationRareCount", group.RareCount,
+                value => group.RareCount = value);
         }
         else
         {
-            Text(content, _text.Get("query.transform.target_cards"), 16, y, width - 32, 16, true);
+            Text(content, _text.Format("query.transform.selected_cards", group.Cards.Count), 16, y, width - 32, 16, true);
             y += 30;
             int shown = group.Cards.Count;
             int columns = Math.Max(1, (int)((width - 32 + 12) / (WorkspaceResultTile.CompactWidth + 12)));
@@ -205,18 +200,29 @@ internal sealed partial class TransformationSearchEditor : Control
             }
             else
             {
-                Text(content, _text.Get("query.transform.rare_count_optional"), 16, y + 8, width - 182, 15, true);
-                var quantity = new MapQuantityInput(_p, group.CardsRareCount, true)
-                { Name = "TransformationCardsRareCount", Position = new(width - 152, y), Size = new(136, 38) };
-                quantity.ValueChanged += value => group.CardsRareCount = value;
-                content.AddChild(quantity);
-                y += 50;
+                y = AddRareCount("query.transform.rare_count_optional", "TransformationCardsRareCount", group.CardsRareCount,
+                    value => group.CardsRareCount = value);
             }
         }
         y = RenderSavedRequirements(content, width, y);
         content.CustomMinimumSize = new(width, y + 18);
         _presentation.Section(content, objectiveTop, y + 18);
         _presentation.Finish();
+
+        float AddRareCount(string key, string name, int value, Action<int> set)
+        {
+            var label = Text(content, _text.Get(key), 16, y + 5, width - 32, 15, true);
+            var quantity = new MapQuantityInput(_p, value, true, compact: true) { Name = name };
+            content.AddChild(quantity);
+            quantity.ResetSize();
+            float labelWidth = Mathf.Ceil(label.GetThemeFont("font").GetStringSize(label.Text, fontSize: 15).X);
+            label.Size = new(Math.Min(width - 32, labelWidth + 2), 28);
+            float inputX = label.Position.X + label.Size.X + 12;
+            bool wraps = inputX + quantity.Size.X > width - 16;
+            quantity.Position = wraps ? new(16, y + 34) : new(inputX, y);
+            quantity.ValueChanged += set;
+            return quantity.Position.Y + 50;
+        }
     }
 
     private void PickCard(GroupDraft group, int slot)
@@ -276,8 +282,8 @@ internal sealed partial class TransformationSearchEditor : Control
             if (!ActiveTakeovers(saved).Any()) targets.Add(_text.Get("query.transform.saved.inactive"));
             var label = Text(host, string.Join(" · ", targets), 16, y + 35, width - 32, 15, true);
             label.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-            label.Size = new(width - 32, 54);
-            y += 94;
+            label.Size = new(width - 32, Math.Max(28, label.GetMinimumSize().Y));
+            y = label.Position.Y + label.Size.Y + 10;
         }
         return y;
     }
@@ -289,18 +295,25 @@ internal sealed partial class TransformationSearchEditor : Control
         y += 36;
         var label = Text(host, string.Join(" · ", DescribeTargets(group)), 16, y, width - 32, 16);
         label.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-        label.Size = new(width - 32, 56);
-        return y + 72;
+        label.Size = new(width - 32, Math.Max(28, label.GetMinimumSize().Y));
+        return y + label.Size.Y + 12;
     }
 
     private List<string> DescribeTargets(GroupDraft group)
     {
         if (group.Objective == 0) return [_text.Format("query.transform.summary.rare_count", group.RareCount)];
-        var targets = group.Cards.Select(key => _names.Resolve(key, GameContentKind.Card)).ToList();
+        var targets = DescribeCardCopies(group.Cards, _names);
         if (group.Objective == 1 && group.CardsRareCount > 0)
             targets.Add(_text.Format("query.transform.summary.rare_count", group.CardsRareCount));
         return targets;
     }
+
+    internal static List<string> DescribeCardCopies(IEnumerable<ModelKey> cards, IGameContentNameResolver names) =>
+        cards.GroupBy(key => key, ModelKeyComparer.Instance).Select(group =>
+        {
+            string name = names.Resolve(group.Key, GameContentKind.Card);
+            return group.Count() > 1 ? $"{name} ×{group.Count()}" : name;
+        }).ToList();
 
     private float RenderSources(Control content, float y, GroupDraft group)
     {
@@ -331,8 +344,14 @@ internal sealed partial class TransformationSearchEditor : Control
             });
             string origin = source.IsAncient ? "A" : source.Id.StartsWith("E.", StringComparison.Ordinal) ? "E" : "N";
             string stage = source.IsAncient && source.AncientAct > 0 ? _text.Format("query.ancient.act", source.AncientAct) + " · " : "";
-            var caption = Text(content, origin + " · " + stage + name, 108, y + 2, width - 352, 16);
-            caption.Size = new(width - 352, 40);
+            string? amount = SourceCount(source)?.ToString();
+            var count = Text(content, amount is null ? "—" : "×" + amount, 0, y + 8, 1, 16, true);
+            count.Size = new(Mathf.Ceil(count.GetThemeFont("font").GetStringSize(count.Text, fontSize: 16).X) + 2, 28);
+            count.AccessibilityName = _text.Get("query.transform.result_count") + " · " + (amount ?? "—");
+            var caption = Text(content, origin + " · " + stage + name, 108, y + 2, width - 312, 16);
+            float nameWidth = Mathf.Ceil(caption.GetThemeFont("font").GetStringSize(caption.Text, fontSize: 16).X) + 2;
+            caption.Size = new(Math.Max(1, Math.Min(nameWidth, width - 320 - count.Size.X)), 40);
+            count.Position = new(caption.Position.X + caption.Size.X + 8, count.Position.Y);
             caption.AutowrapMode = TextServer.AutowrapMode.WordSmart;
             caption.MaxLinesVisible = 2;
             caption.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
@@ -340,10 +359,6 @@ internal sealed partial class TransformationSearchEditor : Control
             caption.AccessibilityName = name;
             caption.MouseFilter = MouseFilterEnum.Ignore;
             if (participates) MainPanelTheme.SetColor(caption, "font_color", _p.Selected);
-            string? amount = SourceCount(source)?.ToString();
-            var count = Text(content, amount is null ? "—" : "×" + amount, width - 272, y + 8, 64, 16, true);
-            count.HorizontalAlignment = HorizontalAlignment.Center;
-            count.AccessibilityName = _text.Get("query.transform.result_count") + " · " + (amount ?? "—");
             Button(content, _text.Get("query.transform.sources.edit"), width - 192, y + 4, 176,
                 () => { if (available) SourceEditorRequested?.Invoke(source);
                     else SourcePageRequested?.Invoke(source.IsAncient ? "ancient" : source.Id.StartsWith("E.", StringComparison.Ordinal) ? "events" : "neow"); }, false, 36);

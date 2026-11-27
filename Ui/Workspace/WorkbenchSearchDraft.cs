@@ -56,6 +56,8 @@ internal sealed record WorkbenchSearchDraft(ModelKey Character, int Ascension, S
     public int Version { get; init; } = 3;
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
     public bool RequiresLobbyRead { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool UseFullUnlocks { get; init; }
     public IReadOnlyList<string>? ManualFamilyOrder { get; init; }
     public AncientEditorStateSnapshot? AncientEditor { get; init; }
     public NeowEditorStateSnapshot? NeowEditor { get; init; }
@@ -75,7 +77,7 @@ internal sealed record WorkbenchSearchDraft(ModelKey Character, int Ascension, S
     {
         Version = 5, GameVersion = "", Profile = null, RequiresLobbyRead = false,
         Players = Players.Select(p => p with { Unlocks = null,
-            UnlockSource = p.UnlockSource == "AssumedFullyUnlocked" ? "AssumedFullyUnlocked" : "CurrentContext" }).ToArray()
+            UnlockSource = UseFullUnlocks || p.UnlockSource == "AssumedFullyUnlocked" ? "AssumedFullyUnlocked" : "CurrentContext" }).ToArray()
     };
 
     internal WorkbenchSearchDraft BindPresetIntent(ModRuntimeSnapshot runtime,
@@ -121,6 +123,18 @@ internal sealed record WorkbenchSearchDraft(ModelKey Character, int Ascension, S
         }
     };
 
+    internal bool HasEditorSnapshots => AncientEditor != null || NeowEditor != null || EventEditor != null ||
+        TransformationEditor != null || CombatRewardEditor != null || PartyAncientEditor != null || MapEditor != null ||
+        Players.Any(p => p.AncientEditor != null || p.NeowEditor != null || p.EventEditor != null || p.CombatRewardEditor != null);
+
+    internal WorkbenchSearchDraft WithoutEditorSnapshots() => this with
+    {
+        AncientEditor = null, NeowEditor = null, EventEditor = null, TransformationEditor = null,
+        CombatRewardEditor = null, PartyAncientEditor = null, MapEditor = null,
+        Players = Players.Select(p => p with
+            { AncientEditor = null, NeowEditor = null, EventEditor = null, CombatRewardEditor = null }).ToArray()
+    };
+
     internal CompiledSearch Compile(ModRuntimeSnapshot runtime, out RuntimeContextAuthoritySnapshot authority,
         RuntimeContextAuthoritySnapshot? capturedAuthority = null, OrderedPartyAuthority? capturedParty = null)
     {
@@ -135,7 +149,7 @@ internal sealed record WorkbenchSearchDraft(ModelKey Character, int Ascension, S
         if (Mode is not (WorldGameMode.Singleplayer or WorldGameMode.Multiplayer) || (Mode == WorldGameMode.Multiplayer) != (Players.Count > 0))
             throw new InvalidOperationException("Party.DraftModeMismatch");
         if (Players.Count == 0)
-            return WorkbenchQueryCompiler.CompileAuthoredQuery(Query, AncientPremises, runtime, Character, Ascension, out authority, capturedAuthority);
+            return WorkbenchQueryCompiler.CompileAuthoredQuery(Query, AncientPremises, runtime, Character, Ascension, out authority, capturedAuthority, UseFullUnlocks);
         if (Version < 2 || (Version < 3 && PartyNeowQuery.HasTransactions(Query)) || ObservationVersion != (PartyNeowQuery.HasTransactions(Query) ? Core.Effects.PartyNeowAdmission.ObservationVersion : OrderedPartyAuthority.ObservationVersion) ||
             Character != Players[0].Character ||
             Players.Where((p, i) => p.Slot != i || string.IsNullOrWhiteSpace(p.UnlockSource)).Any())

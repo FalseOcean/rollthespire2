@@ -78,6 +78,15 @@ internal static class NeowWorkEstimate
     internal static FamilyPhysicalQuote? Gpu(NeowFamily family, Work work, FamilyPhysicalQuoteRequest g)
     {
         if (family.Coverage.Count != 1 || family.GpuPlan is not { } gpu) return null;
+        if (!g.CompactInput && gpu.NumericalVariant == NeowGpuNumericalVariant.NativeFloat64 && family.UsesDenseFirstDraw)
+        {
+            // With 10%, 30% and 50% acceptance the same dense terminal draw
+            // measured .034–.040 ns/root across three single-dispatch sizes.
+            return FamilyCoarsePricing.Gpu(family.FamilyId, "N.DenseDirectFirstDraw", .04,
+                NeowFamilyGpuExecutor.Capacity, g,
+                "N.DenseDirectFirstDraw.DispatchSlope.20261125;AcceptanceAnchors=0.1,0.3,0.5;InputAnchor=4194304..16777216;NoHostTransport",
+                setupMilliseconds: 2400, publicTransportClass: "LargeResidentAppend32");
+        }
         var p = family.Replay;
         int bones = p.Authority.BonesEligibleRelicIds.Length;
         int curses = p.Authority.EligibleCurseRelicIds.Length;

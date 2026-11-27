@@ -64,6 +64,8 @@ internal static partial class WorldFamily
         var gpuPlan = gpu;
         body = new(prepared, gpuPlan.Revision(false), model.ProfileId)
         {
+            SmallTailCpuMatcher = replay.Plan.Acts.Any(act => act.HasEventPredicate || act.HasEncounterPredicate)
+                ? null : replay.Matches,
             UsesGpu = true, WindowCapacity = gpuPlan.Capacity * gpuPlan.GroupingK, CpuWorkers = workers,
             PlayersCount = authority.PlayersCount, InputIdentity = model.SnapshotFingerprint,
             NumericRequirements = gpuPlan.NumericRequirements, CpuAlternatives = cpu,
@@ -86,6 +88,8 @@ internal static partial class WorldFamily
                     WorldPhysicalPricing.Quote(replay, gpuPlan, geometry) ?? WorldWorkEstimate.Gpu(replay, gpuPlan, geometry)),
                 CalibrationQuote = geometry => WorldPhysicalPricing.Quote(replay, gpuPlan, geometry) ?? WorldWorkEstimate.Gpu(replay, gpuPlan, geometry)
             },
+            LargeWindowRole = GpuLargeWindowRole.Dense | GpuLargeWindowRole.Compact,
+            SupportsStandaloneLargeWindow = true,
             BindPrivate = gpuPlan.NumericalVariant == GpuNumericalVariant.NativeFloat64
                 ? (device, input, output) => Bind(gpuPlan, device, input, output) : null,
             CreateExecution = (self, _) => new GpuFilterExecution<WorldFamilyGpuExecutor>(self,

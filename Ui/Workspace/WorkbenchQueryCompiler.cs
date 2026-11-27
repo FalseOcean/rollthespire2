@@ -67,15 +67,16 @@ internal static class WorkbenchQueryCompiler
 
     internal static CompiledSearch CompileAuthoredQuery(SearchQuery query, AncientOptionConditionProfile ancientAssumptions,
         ModRuntimeSnapshot runtime, ModelKey characterKey, int ascension, out RuntimeContextAuthoritySnapshot authority,
-        RuntimeContextAuthoritySnapshot? capturedAuthority = null)
+        RuntimeContextAuthoritySnapshot? capturedAuthority = null, bool fullUnlocks = false)
     {
         CharacterIdentity character = CharacterIdentity.FromKey(characterKey);
         string contextAuthoritySeed = ProfileSeedGenerator.CreateProbeSeed(runtime.Profile);
+        var unlocks = fullUnlocks ? MegaCrit.Sts2.Core.Unlocks.UnlockState.all : null;
         authority = capturedAuthority ?? RuntimeContextAuthorityCapture.CaptureRuntimeReadOnly(
             runtime.Profile, contextAuthoritySeed, character, ascension, runtime.Detection.DisplayVersion,
             playersCount: 1, playerSlotIndex: 0,
             predictionGameMode: WorldGameMode.Singleplayer,
-            predictionGameModeAuthority: PredictionGameModeAuthority.ExplicitRequest);
+            predictionGameModeAuthority: PredictionGameModeAuthority.ExplicitRequest, explicitUnlockState: unlocks);
         if (authority.Character.CharacterKey != characterKey || authority.Ascension != ascension ||
             authority.PlayersCount != 1 || authority.PlayerSlotIndex != 0 || authority.ProfileId != runtime.Profile.ProfileId ||
             authority.GameVersion != runtime.Detection.DisplayVersion)
@@ -87,19 +88,19 @@ internal static class WorkbenchQueryCompiler
         var scenarioAuthority = authority;
         query = query with { EventResultConditions = query.EventResultConditions.Select(c =>
             EventResultTransformSemantics.IsTransform(c.Kind)
-                ? c with { MorphicGroveScenario = Beta111MorphicGroveAuthorityCapture.CaptureAuthoredEventResult(scenarioAuthority, c.Kind) }
+                ? c with { MorphicGroveScenario = Beta111MorphicGroveAuthorityCapture.CaptureAuthoredEventResult(scenarioAuthority, c.Kind, unlocks) }
                 : c).ToArray() };
         if (query.TransformationAggregate is { } aggregate)
             query = query with { TransformationAggregate = aggregate with { EventScenario = aggregate.UsesEvents
-                ? CaptureAggregateEventPremises(authority, aggregate) : null } };
+                ? CaptureAggregateEventPremises(authority, aggregate, unlocks) : null } };
         RolltheSpire2.Infrastructure.Snapshots.ProductionSearchReplay.ExportIfRequested(context, query);
         return SearchCompiler.Compile(query, context);
     }
 
     private static RolltheSpire2.Core.Prediction.MorphicGroveScenario CaptureAggregateEventPremises(
-        RuntimeContextAuthoritySnapshot authority, TransformationAggregateCondition aggregate)
+        RuntimeContextAuthoritySnapshot authority, TransformationAggregateCondition aggregate, MegaCrit.Sts2.Core.Unlocks.UnlockState? unlocks)
     {
-        var source = Beta111MorphicGroveAuthorityCapture.ObserveAuthoredBasics(authority, aggregate.MorphicGrove || aggregate.TrialNondescript ? 2 : 1);
+        var source = Beta111MorphicGroveAuthorityCapture.ObserveAuthoredBasics(authority, aggregate.MorphicGrove || aggregate.TrialNondescript ? 2 : 1, unlocks);
         return new(source.Authority, source.Premises with { EventOccurrenceBasis =
             "Authored transformation events: " + (aggregate.MorphicGrove ? "Morphic Grove / Group; " : "") +
             (aggregate.AromaOfChaos ? "Aroma of Chaos / LetGo; " : "") + (aggregate.WhisperingHollow ? "Whispering Hollow / Hug; " : "") +

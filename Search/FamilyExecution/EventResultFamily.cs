@@ -81,6 +81,8 @@ internal static partial class EventResultFamily
                     var output = resource.Execute(input, token, out var metrics);
                     return new(output, metrics.CanonicalMs, metrics.DispatchSyncMs, metrics.ReadbackMs, metrics.ReadbackBytes);
                 }, resource => resource.Dispose(), plan.Reference, profile, resource => (resource.Device, resource.SetupMs)),
+            LargeWindowRole = GpuLargeWindowRole.Dense | GpuLargeWindowRole.Compact,
+            SupportsStandaloneLargeWindow = true,
             BindPrivate = !finalHeader ? null : (device, input, output) => {
                 var resource = new EventResultFamilyGpuExecutor(device, plan, input, output);
                 return new(resource, resource.Device, resource.SetupMs, input, output, (batch, count, token) => {

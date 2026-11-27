@@ -85,7 +85,7 @@ internal static partial class UiSurfaceChecks
             "first Settings navigation constructs only its requested page");
         Check(shell.FindChild("SettingsCategoryPage0", true, false) is not null &&
             new[] { 1, 2, 3 }.All(i => shell.FindChild("SettingsCategoryPage" + i, true, false) is null) &&
-            Field("_language") is null && Field("_originInput") is null && Field("_logPath") is null,
+            Field("_language") is null && Field("_queryHistoryLimit") is null && Field("_logPath") is null,
             "first Settings visit builds only its Features category");
         ((Button)shell.FindChild("SettingsCategory1", true, false)).EmitSignal(Button.SignalName.Pressed);
         Check(!shell.IsCurrentPageReady, "first General visit awaits its actual controls, text and draw");
@@ -136,7 +136,7 @@ internal static partial class UiSurfaceChecks
         }
         ((Button)shell.FindChild("SettingsCategory2", true, false)).EmitSignal(Button.SignalName.Pressed);
         await AwaitPageReady(root, shell);
-        var origin = (LineEdit)Field("_originInput"); origin.Text = "000000000789";
+        var history = (SpinBox)Field("_queryHistoryLimit"); history.Value = 7;
         ((Button)shell.FindChild("SettingsCategory1", true, false)).EmitSignal(Button.SignalName.Pressed);
         await AwaitPageReady(root, shell);
         Check(shell.FindChild("SettingsCategoryPage3", true, false) is null && Field("_logPath") is null,
@@ -176,8 +176,8 @@ internal static partial class UiSurfaceChecks
         void CheckRetainedState()
         {
             Check(ReferenceEquals(Field("_references"), frame) && ReferenceEquals(store.Runtime, runtime) &&
-                origin.Text == "000000000789" && store.CurrentPersistentOriginSeed == initialCursor,
-                "font changes preserve editor, runtime and unsubmitted settings");
+                history.Value == 7 && store.CurrentPersistentOriginSeed == initialCursor,
+                "font changes preserve editor, runtime, history limit and search cursor");
             Check(independentLabel.GetThemeFont("font").GetInstanceId() == nativeFont.GetInstanceId() &&
                 independentLabel.GetThemeFont("font").GetRids().SequenceEqual(independentRids) &&
                 independentLabel.GetThemeColor("font_color") == independentColor,

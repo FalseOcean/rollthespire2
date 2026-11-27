@@ -45,6 +45,71 @@ internal sealed partial class PredictorRun
 
     private static int CrystalIndex(int x, int y) => PredictorCrystalBoard.Index(x, y);
 
+    private bool CrystalClickCompletes(CrystalItem item, int x, int y)
+    {
+        if (!item.Placed || item.Revealed) return false;
+        int radius = _crystalTool == PredictorCrystalTool.Big ? 1 : 0;
+        for (int i = item.X; i < item.X + item.Width; i++)
+            for (int j = item.Y; j < item.Y + item.Height; j++)
+                if (_crystalHidden[CrystalIndex(i, j)] && (Math.Abs(i - x) > radius || Math.Abs(j - y) > radius))
+                    return false;
+        return true;
+    }
+
+    private ImmutableArray<PredictorCombatPendingCause> CrystalClickReadCauses(int x, int y, List<RouteDependency> dependencies)
+    {
+        var revealed = _crystalItems.Where(item => CrystalClickCompletes(item, x, y)).Select(item => item.Kind).ToArray();
+        var causes = ImmutableArray.CreateBuilder<PredictorCombatPendingCause>();
+        if (revealed.Contains("CURSE"))
+            causes.AddRange(RouteEventFixedCardReadCauses(this, PredictorCardChanges.Definition(Context, new("CARD", "DOUBT")).Prototype, dependencies));
+        if (_crystalRemaining == 1) causes.AddRange(CrystalSettlementReadCauses(revealed, dependencies));
+        return PredictorRouteCauseEvidence.Normalize(causes);
+    }
+
+    private ImmutableArray<PredictorCombatPendingCause> CrystalSettlementReadCauses(IEnumerable<string> newlyRevealed,
+        List<RouteDependency> dependencies)
+    {
+        var rewards = newlyRevealed.Concat(_crystalRevealed.Select(index => _crystalItems[index].Kind)).ToHashSet();
+        var causes = ImmutableArray.CreateBuilder<PredictorCombatPendingCause>();
+        if (rewards.Contains("RELIC")) causes.AddRange(RouteRelicBagCauses(dependencies, shared: false));
+        if (rewards.Any(kind => kind.StartsWith("CARD_", StringComparison.Ordinal)))
+        {
+            foreach (string relic in new[] { "DINGY_RUG", "PRISMATIC_GEM", "MOLTEN_EGG", "TOXIC_EGG", "FROZEN_EGG",
+                "SILVER_CRUCIBLE", "SILKEN_TRESS", "WING_CHARM", "FRESNEL_LENS", "GLITTER", "DRIFTWOOD" })
+                causes.AddRange(RouteRelicMembershipCauses(this, dependencies, relic));
+            foreach (string relic in new[] { "SILVER_CRUCIBLE", "SILKEN_TRESS" })
+                causes.AddRange(RouteRelicStateCauses(this, dependencies, relic));
+            if (PredictorSettlementEffects.Has(Working, "WING_CHARM"))
+                causes.AddRange(CausesFor(dependencies, StreamKnowledgeDomain(PredictorCardRewardRelicHooks.WingCharmStream(Context))));
+        }
+        return PredictorRouteCauseEvidence.Normalize(causes);
+    }
+
+    private PredictorCrystalView? FinishDrawingCrystalWithoutNewItems(List<RouteDependency> dependencies,
+        List<PredictorCombatPendingCause> local, CancellationToken token)
+    {
+        if (_preview.Settings.Policy != PredictorRoutePreviewPolicy.LiveMapDefaults || local.Count != 0 || CrystalView is not { } board)
+            return null;
+        // Leave one fogged cell on every incomplete item. Small-tool clicks
+        // on the remaining cells legally spend the divinations with no new item.
+        var reserved = new HashSet<int>();
+        bool CanSpendReveal(PredictorCrystalCellView cell)
+        {
+            int item = _crystalOccupancy[CrystalIndex(cell.X, cell.Y)];
+            return cell.Hidden && (item < 0 || !reserved.Add(item));
+        }
+        var clicks = board.Cells.Where(CanSpendReveal).Take(board.Remaining).ToArray();
+        if (clicks.Length != board.Remaining || !CrystalSettlementReadCauses([], dependencies).IsEmpty) return null;
+        Submit(Request!, new SelectCrystalTool(PredictorCrystalTool.Small), token);
+        foreach (var cell in clicks)
+            if (Submit(Request!, new RevealCrystalCell(cell.X, cell.Y), token) != PredictorInputResult.Accepted)
+                throw new InvalidOperationException("PredictorCrystalDefaultClickInvalid");
+        _preview.Partial?.Facts.RecordResult("event.crystal.remainingClicks", Working.Position.NodeId,
+            string.Join(" | ", clicks.Select(cell => $"{cell.X},{cell.Y}")), origin: PredictorKnowledgeOrigin.ApprovedDefault,
+            operation: "Spent remaining divinations with the small tool without completing another item");
+        return board;
+    }
+
     private void BeginCrystalSphere(int reveals)
     {
         _crystalActive = true;

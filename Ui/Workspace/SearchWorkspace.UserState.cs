@@ -76,6 +76,12 @@ internal sealed partial class SearchWorkspace
         MarkPreferencesDirty(); FlushPreferences();
     }
 
+    internal void SetGpuRootBatchSize(int size)
+    {
+        _preferences.GpuRootBatchSize = GpuRootBatchSizes.Normalize(size);
+        MarkPreferencesDirty(); FlushPreferences();
+    }
+
     public void SetSkipExactValidation(bool enabled)
     {
         _preferences.SkipExactValidation = enabled;
@@ -119,6 +125,14 @@ internal sealed partial class SearchWorkspace
         if (!NeedsNotesAcknowledgement(chapter) || string.IsNullOrWhiteSpace(chapter.AcknowledgementVersion)) return;
         _preferences.ReadNotesVersions[chapter.Id] = chapter.AcknowledgementVersion;
         MarkPreferencesDirty(); FlushPreferences();
+    }
+
+    internal void SetPersistentSearch(bool enabled)
+    {
+        if (_preferences.PersistentSearch == enabled) return;
+        _preferences.PersistentSearch = enabled;
+        MarkPreferencesDirty();
+        FlushPreferences();
     }
 
     public void SetShowInRunPredictionEntry(bool enabled)
@@ -302,6 +316,7 @@ internal sealed partial class SearchWorkspace
         _preferences.Language = string.Equals(_preferences.Language, "zh", StringComparison.OrdinalIgnoreCase) ? "zh" :
             string.Equals(_preferences.Language, "en", StringComparison.OrdinalIgnoreCase) ? "en" : string.Empty;
         _preferences.SearchMode = string.Equals(_preferences.SearchMode, "CPU", StringComparison.OrdinalIgnoreCase) ? "CPU" : "Auto";
+        _preferences.GpuRootBatchSize = GpuRootBatchSizes.Normalize(_preferences.GpuRootBatchSize);
         _preferences.MapLossyGpuBatchSize = MapLossyPreferences.GpuBatchSize;
         _preferences.WorkbenchFlags ??= new();
         _preferences.InRunConsoleVerticalPercent = double.IsFinite(_preferences.InRunConsoleVerticalPercent)

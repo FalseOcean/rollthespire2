@@ -47,7 +47,11 @@ public static class SearchPreparationCompiler
     {
         ArgumentNullException.ThrowIfNull(compiled);
         ArgumentNullException.ThrowIfNull(runOptions);
-        runOptions = runOptions with { MapLossy = (runOptions.MapLossy ?? MapLossyOptions.Default).Normalize() };
+        runOptions = runOptions with
+        {
+            MapLossy = (runOptions.MapLossy ?? MapLossyOptions.Default).Normalize(),
+            GpuRootBatchSize = GpuRootBatchSizes.Normalize(runOptions.GpuRootBatchSize)
+        };
 
         SearchContext context = compiled.Context;
         RuntimeVersionResolution compatibility = RuntimeProfileRegistry.Resolve(context.Detection);

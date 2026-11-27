@@ -15,6 +15,7 @@ internal sealed record PredictorEventOption(string Key, bool Enabled = true, int
     int? HealthHeal = null, int? LocalPotionOrdinal = null, ModelKey? LocalPotionKey = null)
 {
     public ModelKey? OfferedCardPool { get; init; }
+    public ModelKey? TradedRelic { get; init; }
     public bool HasHiddenObtain { get; init; }
 }
 internal sealed record PredictorEventHealthFact(int CurrentHp, int MaxHp);
@@ -115,6 +116,8 @@ internal sealed partial class PredictorRun
         }
         EventOptions = eventKey.Entry switch
         {
+            "MUSEUM_OF_TORTURE" or "SHRINE_OF_THE_WARLORD" or "WATERFALL_OF_OBVIOUS_SECRETS" or
+                "WUPPY_IN_TROUBLE" or "THERMAE_NONUPEIPE" when Context.UsesNonCombatGeneration => ModernEventOptions(eventKey.Entry),
             "AROMA_OF_CHAOS" => [new("LET_GO"), new("MAINTAIN_CONTROL")],
             "MORPHIC_GROVE" =>
                 [new("GROUP"), new("LONER")],
@@ -196,6 +199,17 @@ internal sealed partial class PredictorRun
             if (crystalResult != null) return crystalResult;
             if (_conveyorEntryHealthPending)
             {
+                if (input is ChooseEventOption { OptionKey: "OBSERVE_CHEF" } chef &&
+                    _preview.Settings.Policy == PredictorRoutePreviewPolicy.LiveMapDefaults)
+                {
+                    // The first dish always consumes one NextFloat, whatever
+                    // its eligible pool. Observe Chef never reads that dish.
+                    _ = _eventRng!.NextFloat();
+                    _conveyorEntryHealthPending = false;
+                    _eventBranch = chef.OptionKey;
+                    Accept(new("EventOption:" + chef.OptionKey, 0, [], null, null));
+                    return SubmitEventConveyorOption(chef, new(chef.OptionKey), token);
+                }
                 if (input is ProvideConveyorInputs conveyor && _preview.Settings.Policy == PredictorRoutePreviewPolicy.LiveMapDefaults &&
                     conveyor.Fact is { EmptyPotionSlots: >= 0, LostHp: >= 0 })
                 {
@@ -257,7 +271,7 @@ internal sealed partial class PredictorRun
                 ("SLIPPERY_BRIDGE", "HOLD_ON") or ("ROUND_TEA_PARTY", "ENJOY_TEA") or
                 ("ABYSSAL_BATHS", "IMMERSE") or ("ABYSSAL_BATHS", "LINGER") or ("ABYSSAL_BATHS", "ABSTAIN") or
                 ("COLOSSAL_FLOWER", "REACH_DEEPER") or ("COLOSSAL_FLOWER", "POLLINOUS_CORE") or
-                ("DENSE_VEGETATION", "REST") or ("SPIRALING_WHIRLPOOL", "DRINK")))
+                ("DENSE_VEGETATION", "REST") or ("SPIRALING_WHIRLPOOL", "DRINK") or ("WUPPY_IN_TROUBLE", "BE_CAUTIOUS")))
             {
                 _pendingHealthOption = choice.OptionKey;
                 _pendingHealthOptions = EventOptions;
@@ -269,8 +283,8 @@ internal sealed partial class PredictorRun
             Accept(new("EventOption:" + choice.OptionKey, 0, [], null, null));
             return _eventKey!.Value.Entry switch
             {
-                "MUSEUM_OF_TORTURE" or "WATERFALL_OF_OBVIOUS_SECRETS" or "WUPPY_IN_TROUBLE" or "THERMAE_NONUPEIPE" =>
-                    SubmitModernOperationEvent(choice, option, token),
+                "MUSEUM_OF_TORTURE" or "SHRINE_OF_THE_WARLORD" or "WATERFALL_OF_OBVIOUS_SECRETS" or "WUPPY_IN_TROUBLE" or "THERMAE_NONUPEIPE" =>
+                    SubmitModernEvent(choice, option, token),
                 "AROMA_OF_CHAOS" or "SYMBIOTE" or "MORPHIC_GROVE" or
                 "WHISPERING_HOLLOW" or "TRASH_HEAP" or "TINKER_TIME" or
                 "TRIAL" or "COLORFUL_PHILOSOPHERS" =>
@@ -654,7 +668,7 @@ internal sealed partial class PredictorRun
     private void ApplyEventFullHeal()
     {
         if (_eventHealth == null && _preview.Event.ProjectHealthIndependently)
-            _preview.Event.UnknownHealingAmount = true;
+            _preview.Event.UnknownNonlethalHealthAmount = true;
         else ApplyEventHealth(_eventHealth!.MaxHp - _eventHealth.CurrentHp, 0);
     }
 

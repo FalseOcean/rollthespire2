@@ -221,7 +221,7 @@ internal static partial class UiSurfaceChecks
                 check(allStatus.Text == text.Get("settings.operation.mode.Mixed"),
                     language + " an individual override makes the global aggregate visibly mixed");
                 ((Button)shell.FindChild("SettingsOperationBatchEventOptionAuto", true, false)).EmitSignal(BaseButton.SignalName.Pressed);
-                store.SetOperationPredictionEnabled(false); Call(shell, "RefreshSettings", false);
+                store.SetOperationPredictionEnabled(false); Call(shell, "RefreshSettings");
                 foreach (var mode in new[] { OperationPredictionMode.Off, OperationPredictionMode.On, OperationPredictionMode.Auto })
                 {
                     var global = (Button)shell.FindChild("SettingsOperationAll" + mode, true, false);
@@ -237,7 +237,7 @@ internal static partial class UiSurfaceChecks
                 check(allStatus.Text == text.Get("settings.operation.mode.Mixed"),
                     language + " leaves remain independently editable after a global batch");
                 ((Button)shell.FindChild("SettingsOperationAllAuto", true, false)).EmitSignal(BaseButton.SignalName.Pressed);
-                store.SetOperationPredictionEnabled(true); Call(shell, "RefreshSettings", false);
+                store.SetOperationPredictionEnabled(true); Call(shell, "RefreshSettings");
                 Search(sourceName);
                 check(rows["event:POTION_COURIER"].Visible,
                     language + " search finds a source by its localized game name");
@@ -295,8 +295,8 @@ internal static partial class UiSurfaceChecks
             var known = new RandomForeseerSnapshot(RandomForeseerStatus.Known, "0.13.19", "Loaded");
             var unknown = new RandomForeseerSnapshot(RandomForeseerStatus.Unknown, "", "LoadDetectionFailed");
             var absent = new RandomForeseerSnapshot(RandomForeseerStatus.NotLoaded, "", "NotLoaded");
-            check(!Plan(known).MayPredict,
-                "automatic known-RF Ransack demand stops before capture for a confirmed duplicate");
+            check(Plan(known).MayPredict,
+                "a loaded RF with unread settings retains automatic Ransack");
             check(Plan(unknown).MayPredict && Plan(absent).MayPredict,
                 "automatic unknown or absent RF retains Ransack prediction demand");
             preferences.SetOperationPredictionMode("event:POTION_COURIER", OperationPredictionMode.On);
@@ -337,20 +337,8 @@ internal static partial class UiSurfaceChecks
 
     private static void RunOperationPolicyChecks(Action<bool, string> check)
     {
-        var known = new RandomForeseerSnapshot(RandomForeseerStatus.Known, "0.13.19", "Loaded");
-        check(known.IsLoaded && (known with { Version = "unrecognized-version" }).IsLoaded,
-            "confirmed RF loading enables the coexistence assumption independently of its version");
-        foreach (var status in Enum.GetValues<RandomForeseerStatus>())
-        foreach (string version in new[] { "0.13.20", "0.13.19", "0.8.4", "", "unrecognized-version" })
-        {
-            var rf = known with { Status = status, Version = version };
-            bool loaded = status == RandomForeseerStatus.Known;
-            check(rf.IsLoaded == loaded &&
-                OperationPredictionPolicy.Wants(OperationPredictionMode.Auto, rf.IsLoaded, false) == !loaded &&
-                OperationPredictionPolicy.Wants(OperationPredictionMode.On, rf.IsLoaded, false) &&
-                !OperationPredictionPolicy.Wants(OperationPredictionMode.Off, rf.IsLoaded, false),
-                status + ":" + version + " uses confirmed loading alone for ordinary and philosopher reroll Auto; On restores and Off suppresses");
-        }
+        var unknown = new RandomForeseerSnapshot(RandomForeseerStatus.Known, "0.17.0", "Loaded");
+        check(unknown.IsLoaded && !unknown.Features.Covers("reward:reroll"), "loading alone does not establish overlap");
 
         check(!OperationPredictionPolicy.Wants(OperationPredictionMode.Off, true, true) &&
             !OperationPredictionPolicy.Wants(OperationPredictionMode.Auto, true, false) &&
@@ -418,10 +406,10 @@ internal static partial class UiSurfaceChecks
         var chain = new OperationPreview(bones, [tablet], [], false, [new([], [identity, effect], [], 1, true)], []);
         var chainDemand = Demand(preferences, "relic:NEOWS_BONES") with { ChainOnly = true };
         var identityOnly = OperationPredictionPolicy.Filter(chain with { Branches = [new([], [identity], [], 1, true)] }, chainDemand);
-        var actualChain = OperationPredictionPolicy.Filter(chain, chainDemand);
+        var actualChain = OperationPredictionPolicy.Filter(chain, chainDemand with { HideBonesRelics = true });
         check(identityOnly.Branches.Single().Sections.IsEmpty && identityOnly.ContainedRelics.IsEmpty &&
-            actualChain.Branches.Single().Sections.Length == 2 && actualChain.ContainedRelics.SequenceEqual([tablet]),
-            "Auto RF settlement hides a plain duplicate but preserves full context when a visible obtain consequence exists");
+            actualChain.Branches.Single().Sections is [var child] && child.Source == tablet && actualChain.ContainedRelics.IsEmpty,
+            "Auto keeps the child effect while removing duplicate Bones relic identities");
         var trash = new ModelKey("EVENT", "TRASH_HEAP");
         var ordinaryEvent = new OperationPreview(trash, [], [], false, [new([], [
             new(trash, [new(OperationPreviewAction.ObtainRelic, [tablet], [], false)], []), effect], [], 1, true)], []);

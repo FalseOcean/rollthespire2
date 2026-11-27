@@ -13,9 +13,12 @@ internal static class NeowPrefixHashCache
     internal const uint BlockSize = 1_336_336; // 34^4 suffixes per fixed first8.
     internal const ulong SpaceSize = 2_386_420_683_693_101_056; // 34^12.
     internal const ulong PrefixCount = 1_785_793_904_896; // 34^8.
-    internal const int MaxCandidateCount = 1 << 24;
-    internal const int HeaderWords = 4, RowWords = 4, MaximumRows = 14;
+    internal const int MaxCandidateCount = FamilyPhysicalExecutionDefaults.DefaultCandidateBatchSize;
+    internal const int HeaderWords = 4, RowWords = 4;
+    internal const int MaximumRows = 14;
     internal const int MaximumTableWords = HeaderWords + RowWords * MaximumRows;
+    internal static int TableWordsFor(int capacity) =>
+        HeaderWords + RowWords * (1 + (int)(((uint)capacity + BlockSize - 2) / BlockSize));
     private const string Alphabet = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ";
     private const ulong Prime1 = 11400714785074694791UL, Prime2 = 14029467366897019727UL;
     private const ulong Prime3 = 1609587929392839161UL, Prime4 = 9650029242287828579UL;
@@ -24,14 +27,14 @@ internal static class NeowPrefixHashCache
     // binding13 uint ABI: [initial suffix ordinal, row count, reserved0, reserved0],
     // then rows [prefix hash lo, hi, first8 ASCII lo, hi]. A row's prefix hash is
     // the complete hash state immediately before the tail4 * Prime1 XOR.
-    internal static uint[] BuildTable(ulong batchBase, int count)
+    internal static uint[] BuildTable(ulong batchBase, int count, int capacity = MaxCandidateCount)
     {
-        if (count < 0 || count > MaxCandidateCount) throw new ArgumentOutOfRangeException(nameof(count));
+        if (count < 0 || count > capacity || capacity > GpuRootWindow.Maximum) throw new ArgumentOutOfRangeException(nameof(count));
         if (batchBase > SpaceSize || (ulong)count > SpaceSize - batchBase)
             throw new ArgumentOutOfRangeException(nameof(batchBase), "Dense prefix table exceeds the 12-character seed space.");
         uint suffix = (uint)(batchBase % BlockSize);
         int rows = count == 0 ? 0 : checked((int)((suffix + (uint)count - 1u) / BlockSize + 1u));
-        if (rows > MaximumRows) throw new InvalidOperationException("NeowPrefixHashCache.RowCapacity");
+        if (HeaderWords + rows * RowWords > TableWordsFor(capacity)) throw new InvalidOperationException("NeowPrefixHashCache.RowCapacity");
         uint[] words = new uint[HeaderWords + rows * RowWords];
         words[0] = suffix; words[1] = (uint)rows;
         ulong firstBlock = batchBase / BlockSize;

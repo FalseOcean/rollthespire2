@@ -13,7 +13,16 @@ public sealed record SearchRunOptions(
     bool IncludeDiagnostics = true,
     bool SkipExactValidation = false,
     IReadOnlyList<string>? ManualFamilyOrder = null,
-    MapLossyOptions? MapLossy = null);
+    MapLossyOptions? MapLossy = null,
+    int GpuRootBatchSize = 0);
+
+public static class GpuRootBatchSizes
+{
+    public static IReadOnlyList<int> Supported { get; } =
+        Array.AsReadOnly(new[] { 0, 1 << 24, 1 << 25, 1 << 26, 1 << 27 });
+
+    public static int Normalize(int value) => Supported.Contains(value) ? value : 0;
+}
 
 /// <summary>Frozen authored requirements and domain computation inputs, independent of a scan schedule.</summary>
 public sealed record SearchModel(
@@ -52,10 +61,11 @@ public sealed record PreparedSearch(
 
 /// <summary>Physical preferences are captured once; they contain no authored query or scan range.</summary>
 internal sealed record FilterExecutionPreferences(int WorkerCount, bool SkipExactValidation,
-    MapLossyOptions MapLossy)
+    MapLossyOptions MapLossy, int GpuRootBatchSize = 0)
 {
     internal static FilterExecutionPreferences From(SearchRunOptions options) =>
-        new(options.WorkerCount, options.SkipExactValidation, options.MapLossy ?? MapLossyOptions.Default);
+        new(options.WorkerCount, options.SkipExactValidation, options.MapLossy ?? MapLossyOptions.Default,
+            GpuRootBatchSizes.Normalize(options.GpuRootBatchSize));
 }
 
 public sealed record SearchPreparationResult(

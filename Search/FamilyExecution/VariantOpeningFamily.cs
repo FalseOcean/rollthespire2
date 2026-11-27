@@ -86,6 +86,8 @@ internal static class VariantOpeningFamily
             Cost = new() { MinimumComparableInput = _ => gpu.Capacity * gpu.GroupingK,
                 Quote = (_, geometry, passed) => Quote(plan, geometry, true, workers, numericalVariant),
                 CalibrationQuote = geometry => Quote(plan, geometry, true, workers, numericalVariant) },
+            LargeWindowRole = GpuLargeWindowRole.Dense | GpuLargeWindowRole.Compact,
+            SupportsStandaloneLargeWindow = true,
             BindPrivate = numericalVariant == GpuNumericalVariant.NativeFloat64
                 ? (device, input, output) => Bind(gpu, device, input, output) : null,
             CreateExecution = (self, _) => new GpuFilterExecution<WorldFamilyGpuExecutor>(self,

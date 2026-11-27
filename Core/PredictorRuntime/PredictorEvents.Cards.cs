@@ -172,7 +172,7 @@ internal sealed partial class PredictorRun
                 return PredictorInputResult.Accepted;
             case ("SPIRALING_WHIRLPOOL", "DRINK"):
                 if (_eventHealth == null && _preview.Event.ProjectHealthIndependently)
-                    _preview.Event.UnknownHealingAmount = true;
+                    _preview.Event.UnknownNonlethalHealthAmount = true;
                 else ApplyEventHealth((int)(_eventHealth!.MaxHp * .33m), 0);
                 FinishEvent();
                 return PredictorInputResult.Accepted;

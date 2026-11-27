@@ -17,22 +17,26 @@ internal sealed class PrivateOrdinalBuffer : IDisposable
     private bool _smallReadbackSubmitted;
     private bool _disposed;
     internal Rid Buffer { get; }
-    internal PrivateOrdinalBuffer(RenderingDevice rd)
+    internal int ElementCapacity { get; }
+    internal PrivateOrdinalBuffer(RenderingDevice rd, int elementCapacity = Capacity)
     {
         _rd = rd;
-        Buffer = FamilyGpuComputeUtility.AllocateStorageBuffer(rd, Capacity * 4);
+        if (elementCapacity < 1 || elementCapacity > GpuRootWindow.Maximum) throw new ArgumentOutOfRangeException(nameof(elementCapacity));
+        ElementCapacity = elementCapacity;
+        Buffer = FamilyGpuComputeUtility.AllocateStorageBuffer(rd, elementCapacity * sizeof(uint), "PrivateOrdinal");
         _owned.Add(Buffer);
     }
     internal void CheckCount(int count)
     {
         if (_owner != System.Environment.CurrentManagedThreadId) throw new InvalidOperationException("PrivateOrdinal.OwnerMismatch");
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (count < 0 || count > Capacity) throw new InvalidDataException("PrivateOrdinal.CountOutsideCapacity");
+        if (count < 0 || count > GpuRootWindow.Maximum) throw new InvalidDataException("PrivateOrdinal.CountOutsideCapacity");
     }
     internal void CheckPopulation(SearchBatch batch, int count)
     {
         CheckCount(batch.BatchCandidateCount);
         CheckCount(count);
+        if (count > ElementCapacity) throw new InvalidDataException("PrivateOrdinal.PopulationOutsideAllocation");
         if (count > batch.BatchCandidateCount) throw new InvalidDataException("PrivateOrdinal.CountOutsideBatch");
         if (_smallReadbackSubmitted) throw new InvalidOperationException("PrivateOrdinal.ReadbackAwaitingSync");
     }

@@ -47,6 +47,10 @@ internal sealed partial class PredictorRun
         RequirePlan(plans.Select(p => p.NodeId).Distinct(StringComparer.Ordinal).Count() == plans.Length);
         foreach (var plan in plans)
         {
+            if (plan.RedrawnRoute is { } redraw)
+                RequirePlan(redraw.Act is >= 1 and <= 3 && !redraw.Points.IsDefaultOrEmpty && redraw.Points[0].Row == 0 &&
+                    redraw.Points.All(p => p.Column >= 0 && p.Row >= 0) &&
+                    redraw.Points.Skip(1).Select((p, i) => p.Row == redraw.Points[i].Row + 1).All(adjacent => adjacent));
             RequirePlan(!plan.ObtainInputs.IsDefault && plan.ObtainInputs.All(optional => optional != null &&
                 optional.Address != null && Enum.IsDefined(optional.Address.Destination) && optional.Address.SourceId >= 0 &&
                 optional.Address.Occurrence >= 0 && !optional.Address.ParentSourceIds.IsDefault &&

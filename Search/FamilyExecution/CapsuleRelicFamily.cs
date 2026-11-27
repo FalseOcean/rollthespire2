@@ -114,6 +114,8 @@ internal static partial class CapsuleRelicFamily
                         metrics.ReadbackMs, metrics.ReadbackBytes);
                 }, resource => resource.Dispose(), replay.Matches, profile, resource => (resource.DeviceName, resource.SetupMs), 256,
                 faultCleanupStage: "CapsuleGpuFault.Dispose"),
+            SupportsStandaloneLargeWindow = true,
+            LargeWindowRole = GpuLargeWindowRole.Dense | GpuLargeWindowRole.Compact,
             BindPrivate = gpuPlan.NumericalVariant != GpuNumericalVariant.NativeFloat64 ? null :
                 (device, input, output) => RelicFamilyGpuExecutor.Create(device, identity, gpuPlan, input, false, output).BindPrivateSerial()
         };

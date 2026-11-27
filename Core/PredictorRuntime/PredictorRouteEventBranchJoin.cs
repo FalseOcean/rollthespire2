@@ -8,7 +8,7 @@ internal sealed partial class PredictorRun
     private sealed record RouteEventOptionOutcome(string Key, PredictorState State, PredictorPhase Phase,
         ImmutableArray<PredictorCombatPendingCause> Local,
         ImmutableArray<RouteDependency> Dependencies,
-        ImmutableArray<PredictorEventHealthDelta> HealthCommands, bool UnknownHealing,
+        ImmutableArray<PredictorEventHealthDelta> HealthCommands, bool UnknownNonlethalHealthAmount,
         PendingRouteEventCardEffect? CardEffect, int? AssignedGold);
 
     // Join only actual completed alternatives from the same event boundary.
@@ -95,7 +95,7 @@ internal sealed partial class PredictorRun
                 ["run.counters"]);
         foreach (var stream in witness.Streams)
             if (Varies(s => s.Streams.Single(r => r.Stream == stream.Stream))) domains |= StreamKnowledgeDomain(stream.Stream);
-        if (outcomes.Any(o => o.UnknownHealing || !o.HealthCommands.IsEmpty)) domains |= PredictorCombatDomain.Health;
+        if (outcomes.Any(o => o.UnknownNonlethalHealthAmount || !o.HealthCommands.IsEmpty)) domains |= PredictorCombatDomain.Health;
 
         string[] VaryingRelics(bool membership) => outcomes.SelectMany(o => o.State.Relics.Select(r => r.Key.Entry)).Distinct()
             .Where(key => Varies(s => membership

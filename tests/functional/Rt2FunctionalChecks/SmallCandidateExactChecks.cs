@@ -201,8 +201,96 @@ internal static partial class SmallCandidateExactChecks
             }
         }
         await CheckDenseBatchGroupingAsync(plan);
+        await CheckAdaptiveSessionRecoveryAsync(plan);
+        await CheckRootWindowBindingRecoveryAsync(plan);
+        await CheckPublicGpuTailAsync(plan);
         Console.WriteLine($"SMALL_CANDIDATE_EXACT_PASS checks={_checks};realMatchAndReject=true;cancelResume=true;skipExactPreserved=true;partyAndMap=true");
         return 0;
+    }
+    private static async Task CheckRootWindowBindingRecoveryAsync(PreparedSearch template)
+    {
+        const int ordinary = 1 << 24, enlarged = 1 << 25;
+        const ulong start = 37;
+        const int count = enlarged + 17;
+        ulong[] hits = [start + 1, start + (ulong)ordinary, start + (ulong)enlarged + 16];
+        var cause = new GpuStorageAllocationRefused("Injected root storage refusal");
+        var refusal = new GpuRootWindowBindingRefused("window-fixture", cause);
+        var cleanup = new AggregateException("Injected release failure", refusal, new IOException("Cleanup failed"));
+        SearchContinuationSnapshot? continuation = null;
+
+        foreach (var (window, strict, failure) in new (int, bool, Exception)[] {
+            (ordinary, false, refusal), (enlarged, true, refusal), (enlarged, false, cleanup),
+            (enlarged, false, new InvalidDataException("Injected invalid GPU header")) })
+        {
+            var fixture = new RootWindowBindingFixture(failure, hits);
+            await using var session = Session(fixture, window, strict);
+            await session.Completion.WaitAsync(PairTimeout);
+            var progress = session.GetProgress();
+            var saved = session.CaptureContinuation()!;
+            Check(fixture.Batches.SequenceEqual([new SearchBatch(start, window)]) &&
+                progress.State == SearchRunState.Faulted && progress.ActiveGpuRootBatchSize == window &&
+                progress.FailureCode.Contains(failure.Message, StringComparison.Ordinal) &&
+                progress.ScannedCount == 0 && saved.NextOrdinal == start && Drain(session).Length == 0,
+                "default window, strict execution and unrelated or cleanup failures retain the original fault and frontier");
+            if (strict) continuation = saved;
+        }
+
+        // Resume the strict failure at its uncommitted frontier with ordinary production recovery.
+        var recovering = new RootWindowBindingFixture(refusal, hits);
+        await using var recovered = Session(recovering, enlarged, strict: false, continuation);
+        var reference = new RootWindowBindingFixture(null, hits);
+        await using var single = Session(reference, ordinary, strict: false);
+        await Task.WhenAll(recovered.Completion, single.Completion).WaitAsync(PairTimeout);
+        SearchBatch[] completed = [new(start, ordinary), new(start + (ulong)ordinary, ordinary),
+            new(start + (ulong)enlarged, 17)];
+        Check(recovering.Batches.SequenceEqual(new[] { new SearchBatch(start, enlarged) }.Concat(completed)) &&
+            reference.Batches.SequenceEqual(completed), "32M refusal retries the same ordinal once at 16M and retains that size");
+        foreach (var session in new[] { recovered, single })
+        {
+            var progress = session.GetProgress();
+            var candidates = Drain(session);
+            Check(progress.State == SearchRunState.Completed && progress.ActiveGpuRootBatchSize == ordinary &&
+                progress.ScannedCount == count && progress.MatchCount == hits.Length &&
+                candidates.All(candidate => !candidate.IsUnverified) &&
+                candidates.Select(candidate => candidate.Seed).Order(StringComparer.Ordinal)
+                    .SequenceEqual(hits.Select(Beta110SeedCodec.FormatOrdinal).Order(StringComparer.Ordinal)),
+                "smaller GPU windows deliver the same Exact hits and scan count as the reference GPU schedule");
+            foreach (var candidate in candidates) session.AcknowledgeCandidate(candidate.Seed);
+            Check(session.CaptureContinuation()!.NextOrdinal == start + count,
+                "ACK commits the entire retried range without counting the refused large batch");
+        }
+
+        ProductionSearchSession Session(RootWindowBindingFixture fixture, int window, bool strict,
+            SearchContinuationSnapshot? resume = null)
+        {
+            var options = template.RunOptions with { StartSeed = Beta110SeedCodec.FormatOrdinal(start),
+                ScanCount = count, GpuRootBatchSize = window == ordinary ? 0 : window };
+            var request = SearchPreparationCompiler.Compile(template.Model.CompiledSearch, options).Plan!;
+            var execution = FamilyPlanner.InOrder([fixture.Body]);
+            return new(request, execution, FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(request, execution),
+                execution), window, 16, null, "", failOnPhysicalRecovery: strict, continuation: resume,
+                executionContextFactory: () => new FilterRuntimeServices(requiresGpu: false, failOnPhysicalRecovery: strict));
+        }
+    }
+
+    // The selected stage advertises GPU execution but injects only binding outcomes and compact ABI1.
+    // This exercises production session recovery and Exact without allocating millions of roots or a device.
+    private sealed class RootWindowBindingFixture(Exception? failure, ulong[] hits) : IFilterExecution
+    {
+        internal List<SearchBatch> Batches { get; } = [];
+        private FilterBodyDescription? _body;
+        public FilterBodyDescription Body => _body ??= new(new PreparedFilter("window-fixture"), "WindowFixture", RuntimeProfileId.Beta111)
+        { UsesGpu = true, WindowCapacity = 1 << 25, MaximumGpuRootWindow = 1 << 25, CreateExecution = (_, _) => this };
+        public bool ExecutionFaulted => false;
+        public ValueTask<FamilyCandidateSet> FilterAsync(FilterRuntimeServices services, FamilyCandidateSet input, CancellationToken token)
+        {
+            Batches.Add(input.Batch);
+            if (failure is not null && Batches.Count == 1) throw failure;
+            ulong first = input.Batch.BatchBase, end = first + (ulong)input.Count;
+            return ValueTask.FromResult(FamilyCandidateSet.FromAbi1(input.Batch,
+                hits.Where(root => root >= first && root < end).Select(root => root - first).ToArray()));
+        }
+        public ValueTask DisposeAsync(FilterRuntimeServices services) => ValueTask.CompletedTask;
     }
     private static ProductionSearchSession Start(PreparedSearch request, FamilyExecutionPlan execution,
         int window, SearchContinuationSnapshot? continuation = null,

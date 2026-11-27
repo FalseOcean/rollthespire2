@@ -30,7 +30,12 @@ internal sealed partial class InRunMapNodeDetails
             DrawLine(from, to, new Color(.72f, .72f, .60f, .42f), 1, true);
     }
 
-    public override void _ExitTree() => CloseHover();
+    public override void _ExitTree()
+    {
+        CloseHover();
+        _optionCardPreview.ReleaseCardDisplays();
+        while (_pendingRewardFaces.TryDequeue(out var pending)) pending.ReleaseCardDisplays();
+    }
 
     public override void _Notification(int what)
     {

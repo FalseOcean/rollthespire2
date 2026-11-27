@@ -44,6 +44,8 @@ internal static class NeowOperationPredictionPatch
         // Observe the concrete native entry as well as the base observer. This
         // records admission without starting a second prediction or selection.
         Observe(typeof(NGridCardHolder), "OnFocus", nameof(GridCardFocused));
+        Observe(typeof(NDeckTransformSelectScreen), "_Ready", nameof(TransformSelectorReady));
+        Observe(typeof(NEventOptionButton), nameof(NEventOptionButton.EnableButton), nameof(EventOptionReady));
         foreach (var type in new[] { typeof(NEventOptionButton), typeof(NRestSiteButton), typeof(NMerchantSlot), typeof(NPotionHolder),
             typeof(NGridCardHolder), typeof(NRelicInventoryHolder) })
             Observe(type, "_ExitTree", nameof(Left));
@@ -91,6 +93,15 @@ internal static class NeowOperationPredictionPatch
     {
         try { NeowOperationHoverController.ObserveGridFocus(__instance); }
         catch (Exception error) { RuntimeLog.Fault("operationUiFailed=true;stage=gridFocusObservation", error); }
+    }
+    private static void TransformSelectorReady(NDeckTransformSelectScreen __instance)
+    {
+        NeowOperationHoverController.QueueEventHoverPreparation(__instance);
+    }
+    private static void EventOptionReady(NEventOptionButton __instance)
+    {
+        if (__instance.Event?.Id.Entry == "THE_FUTURE_OF_POTIONS")
+            NeowOperationHoverController.QueueEventHoverPreparation(__instance);
     }
     private static void Left(Control __instance)
     {

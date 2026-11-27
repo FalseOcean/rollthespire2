@@ -43,7 +43,10 @@ internal sealed class TransformationAggregateGpuPlan
     internal bool FullTarget { get; }
     internal bool AncientFixedPool { get; }
     internal bool ScopedCount { get; }
+    internal bool ScopedJoint { get; }
     private bool HasEventPrefix { get; }
+    private bool RareRemainder { get; }
+    private bool LimitTargetCopies { get; }
     internal bool UsesModern113 { get; }
     internal bool PrefixReuse { get; }
     internal const string PrefixReuseRevision = ".DensePrefixReuse.20261027.v1";
@@ -56,7 +59,9 @@ internal sealed class TransformationAggregateGpuPlan
     internal GpuNumericRequirements NumericRequirements => Supported ? GpuIntegerNumerics.Requirements(NumericalVariant) : GpuNumericRequirements.None;
     internal string NumericalRevision => NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "";
     internal string Revision(bool compact) => AncientFixedPool ?
-        (HasEventPrefix ? "T.Gpu.ScopedStreamCount.EventPrefix.20261124.v1." : ScopedCount ? "T.Gpu.ScopedStreamCount.20261124.v2." : "T.Gpu.Ancient.FixedPool.PrefixTable.20261121.v1.") + (compact ? "CompactAbi1" : "Dense") + NumericalRevision + GpuRngRotation.Revision :
+        (ScopedJoint ? "T.Gpu.ScopedJoint.20261125.v1." : HasEventPrefix ? "T.Gpu.ScopedStreamCount.EventPrefix.20261124.v1." : ScopedCount ? "T.Gpu.ScopedStreamCount.20261124.v2." : "T.Gpu.Ancient.FixedPool.PrefixTable.20261121.v1.") +
+        (RareRemainder ? (LimitTargetCopies ? "ExactCopies." : "") + "RareRemainder.20261125.v1." : "") +
+        (compact ? "CompactAbi1" : "Dense") + NumericalRevision + GpuRngRotation.Revision :
         (BonesOptimized ? "T.Gpu.BonesTracked."+(FullTarget?"TransformFirst.Carry8.AllRequired":"OpeningFirst.Generic")+".20261001.v1" :
         FullTarget?FullTargetRevision:GenericRevision)+"."+(compact?"CompactAbi1":"Dense")+".CanonicalAbi1Ready" + NumericalRevision +
         (EntryIdentityTracked ? EntryIdentityRevision : "") + (PrefixReuse ? PrefixReuseRevision : "") +
@@ -73,6 +78,14 @@ internal sealed class TransformationAggregateGpuPlan
     {
         ScopedCount = true;
         HasEventPrefix = plan.HasEventPrefix;
+        RareRemainder = plan.RequiresRareRemainder;
+        LimitTargetCopies = plan.LimitTargetCopies;
+    }
+    internal TransformationAggregateGpuPlan(ScopedTransformationGeneralPlan plan,
+        GpuNumericalVariant numericalVariant) : this(plan.PackGpu(), numericalVariant)
+    {
+        ScopedJoint = true;
+        RareRemainder = plan.NeedsAllDraws;
     }
     private TransformationAggregateGpuPlan(uint[][] buffers, GpuNumericalVariant numericalVariant)
     {
@@ -189,8 +202,10 @@ internal sealed class TransformationAggregateGpuPlan
         {
             string ancient = FamilyGpuComputeUtility.LoadEmbeddedShader("TransformationAncientFixedPool.comp.glsl")
                 .Replace("/*__RNG__*/", rng, StringComparison.Ordinal)
-                .Replace("/*__SCOPED_COUNT__*/", HasEventPrefix ? "#define SCOPED_COUNT\n#define EVENT_PREFIX" : ScopedCount ? "#define SCOPED_COUNT" : "", StringComparison.Ordinal)
-                .Replace("/*__COUNTERS__*/", (ScopedCount ? 0u : Buffers[0][7]).ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal)
+                .Replace("/*__SCOPED_COUNT__*/", (ScopedJoint ? "#define SCOPED_JOINT" : ScopedCount ? "#define SCOPED_COUNT" : "") +
+                    (HasEventPrefix ? "\n#define EVENT_PREFIX" : "") + (RareRemainder ? "\n#define RARE_REMAINDER" : "") +
+                    (LimitTargetCopies ? "\n#define LIMIT_TARGET_COPIES" : ""), StringComparison.Ordinal)
+                .Replace("/*__COUNTERS__*/", (ScopedJoint ? Buffers[0][0] : ScopedCount ? 0u : Buffers[0][7]).ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal)
                 .Replace("/*__PREFIX__*/", FamilyGpuComputeUtility.LoadEmbeddedShader("NeowSeedPrefixTable.glsl"), StringComparison.Ordinal);
             return NumericalVariant == GpuNumericalVariant.IntegerRne ? TransformationAggregateGpuNumericalSource.IntegerRne(ancient) : ancient;
         }

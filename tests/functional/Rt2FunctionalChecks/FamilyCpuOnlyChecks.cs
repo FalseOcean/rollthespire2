@@ -320,6 +320,9 @@ internal static class FamilyCpuOnlyChecks
                 "unverified non-Metal allowance retains the existing N GPU candidate");
             var compatibleNeow = FamilyExecutionCoordinator.CreateRegisteredFamilies(Request(cases[0]),
                 gpuAvailable: true, gpuFloat64Available: false).Single(body => body.FamilyId == "N.Neow");
+            check(GpuRootWindow.PrepareStandalone(compatibleNeow, 1 << 25).WindowCapacity == 1 << 25 &&
+                compatibleNeow.LargeWindowRole == GpuLargeWindowRole.Dense,
+                "integer N supports a 32M public first dispatch");
             check(((FilterBodyDescription)compatibleNeow).GpuNumericRequirements == GpuNumericRequirements.Int64 &&
                 !((FilterBodyDescription)compatibleNeow).CanBindPrivateSerial &&
                 (compatibleNeow.QuotePhysicalWork(new(false, false, 65536)) is not { } compatibleQuote ||
@@ -546,6 +549,20 @@ internal static class FamilyCpuOnlyChecks
                 Environment.SetEnvironmentVariable("PROCESSOR_IDENTIFIER", previousCpuIdentity);
                 SearchPerformanceProfileFoundation.ObserveGpuIdentity(previousDevice.GpuIdentity.Length == 0 ? "Unknown" : previousDevice.GpuIdentity,
                     previousDevice.RenderingBackend.Length == 0 ? "unknown" : previousDevice.RenderingBackend);
+            }
+            foreach (bool bothSeats in new[] { false, true })
+            {
+                var offers = ModelKeySetFilter.Empty with { All = [BaseGameModelKeys.Relics.NeowsBones] };
+                var integerQuery = SearchQuery.Empty with { Players = [new(0, offers),
+                    new(1, bothSeats ? offers : ModelKeySetFilter.Empty)] };
+                var integerParty = FamilyExecutionCoordinator.CreateRegisteredFamilies(Request(integerQuery, partyContext),
+                    gpuAvailable: true, gpuFloat64Available: false).Single(f => f.FamilyId == "N.Neow");
+                var enlarged = GpuRootWindow.PrepareStandalone(integerParty, 1 << 25);
+                check(enlarged.WindowCapacity == 1 << 25 && !enlarged.CanBindPrivateSerial &&
+                    enlarged.PhysicalBodies.Count == (bothSeats ? 2 : 1) &&
+                    enlarged.PhysicalBodies.All(child => !child.CanBindPrivateSerial &&
+                        child.NumericRequirements == GpuNumericRequirements.Int64),
+                    "public integer party N admits the wide root and retains every selected seat's integer program");
             }
             var partyQuery = SearchQuery.Empty with { Players = [new(0, ModelKeySetFilter.Empty) { Conditions = cases[0] },
                 new(1, ModelKeySetFilter.Empty) { Conditions = donor.Query }] };

@@ -23,6 +23,8 @@ internal sealed partial class NeowFilterExecution : IFilterExecution, IDenseFami
         bool skipExactValidation,IRuntimeProfile profile,NeowCapsuleSparseRefinement? sparse=null)
     {Body=body;_plan=plan;_gpuPlan=gpu;_composite=composite;_transformations=transformations;_gpuOptimizations=optimizations;_skipExactValidation=skipExactValidation;_profile=profile;var match=NeowFamilyReplay.Bind(plan);_cpuMatcher=transformations is null ? match : root=>match(root)&&transformations.Numerical.Matches(root);_sparseRefinement=sparse is null ? null : new(sparse,body.InputIdentity);}
     private NeowFamilyGpuExecutor? _gpu;
+    private int _resourceCapacity = PrivateOrdinalBuffer.Capacity;
+    private bool _hasPublicCompactStorage;
     private bool _disabled, _compact, _parity;
     private int _batches, _steady;
     private long _inputs, _outputs, _liveInputs;
@@ -44,8 +46,18 @@ internal sealed partial class NeowFilterExecution : IFilterExecution, IDenseFami
         _compact = !input.IsDense;
         try
         {
-            if (_gpu is null) _gpu = await executionContext.ExecuteGpuAsync(rd => new NeowFamilyGpuExecutor(rd, _gpuPlan,
-                (uint)RolltheSpire2.Core.Seed.XxHash64.HashUtf8(Body.InputIdentity, 0), _composite, optimizations: _gpuOptimizations), cancellationToken).ConfigureAwait(false);
+            int capacity = GpuRootWindow.PublicCapacity(Body, input.Count);
+            if (_gpu is null || capacity > _resourceCapacity || _resourceCapacity > PrivateOrdinalBuffer.Capacity && _hasPublicCompactStorage == input.IsDense)
+            {
+                _gpu = await executionContext.ExecuteGpuAsync(rd => {
+                    if (_gpu is { } old) { _gpu = null; old.Dispose(); }
+                    return GpuRootWindow.BindPublic(FamilyId, capacity, () => new NeowFamilyGpuExecutor(rd, _gpuPlan,
+                        (uint)RolltheSpire2.Core.Seed.XxHash64.HashUtf8(Body.InputIdentity, 0), _composite, optimizations: _gpuOptimizations, publicCompact: !input.IsDense));
+                }, cancellationToken).ConfigureAwait(false);
+                _resourceCapacity = capacity;
+                _hasPublicCompactStorage = !input.IsDense;
+                _parity = false;
+            }
             var result = await executionContext.ExecuteGpuAsync(_ => {
                 var survivors = _gpu.Execute(input, cancellationToken, out var metrics); return (survivors, metrics);
             }, cancellationToken).ConfigureAwait(false);
@@ -54,6 +66,7 @@ internal sealed partial class NeowFilterExecution : IFilterExecution, IDenseFami
             ObserveGpuResult(executionContext, input, survivors, result.metrics with {CanonicalMs=result.metrics.CanonicalMs+refineMs});
             return survivors;
         }
+        catch (GpuRootWindowBindingRefused) { throw; }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {

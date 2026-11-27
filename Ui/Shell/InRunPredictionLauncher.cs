@@ -72,8 +72,9 @@ internal sealed partial class InRunPredictionLauncher : Button
         var preferences = SearchWorkspace.Open(OS.GetUserDataDir()).Preferences;
         string language = preferences.LanguageOverride is "zh" or "en" ? preferences.LanguageOverride
             : TranslationServer.GetLocale().StartsWith("zh", StringComparison.OrdinalIgnoreCase) ? "zh" : "en";
+        bool enabled = preferences.ShowInRunPredictionEntry || preferences.PersistentSearch;
         var entry = new InRunPredictionLauncher { Name = name, Text = "", _run = run, _runtime = runtime,
-            _enabledByPreference = preferences.ShowInRunPredictionEntry, Visible = preferences.ShowInRunPredictionEntry,
+            _enabledByPreference = enabled, Visible = enabled,
             _debugInfo = globalUi?.DebugInfo,
             TooltipText = "",
             CustomMinimumSize = new Vector2(56, 56), Size = new Vector2(56, 56), FocusMode = FocusModeEnum.None };

@@ -556,7 +556,18 @@ internal static class EventOperationForecast
 
         private ImmutableArray<OperationOutcomeSource> Observe(PredictorOperationResult before, PredictorOperationResult after)
         {
-            var sections = RelicOperationForecast.ObserveResult(snapshot.Context, before.State, before, after, scene.Event).ToBuilder();
+            // The named reward is already on the button. Observe its obtain
+            // directly so hidden choices, potions and upgrades keep their source.
+            // Independent event effects (such as the Museum's curse) are added below.
+            ModelKey? offered = scene.Event.Entry switch
+            {
+                "RELIC_TRADER" or "MUSEUM_OF_TORTURE" or "THERMAE_NONUPEIPE" =>
+                    scene.Options.FirstOrDefault(o => o.Key == optionKey)?.OfferedRelic,
+                "HUNGRY_FOR_MUSHROOMS" => new("RELIC", optionKey),
+                _ => null
+            };
+            var sections = RelicOperationForecast.ObserveResult(snapshot.Context, before.State, before, after,
+                offered ?? scene.Event).ToBuilder();
             if (scene.Event.Entry == "TRIAL" && optionKey == "NONDESCRIPT_GUILTY")
             {
                 int ordinal = 0;
@@ -564,20 +575,6 @@ internal static class EventOperationForecast
                     sections[i] = sections[i] with { CardGroups = sections[i].CardGroups
                         .Select(group => group with { Kind = (++ordinal).ToString() }).ToImmutableArray() };
             }
-            // These identities are already printed on their native option.
-            // Retain only the hidden obtain consequences (potions, upgrades,
-            // extra relics, etc.) in the prediction surface.
-            ModelKey? publicRelic = scene.Event.Entry switch
-            {
-                "RELIC_TRADER" or "MUSEUM_OF_TORTURE" or "THERMAE_NONUPEIPE" => scene.Options.FirstOrDefault(o => o.Key == optionKey)?.OfferedRelic,
-                "HUNGRY_FOR_MUSHROOMS" => new("RELIC", optionKey),
-                _ => null
-            };
-            if (publicRelic is { } known)
-                for (int i = 0; i < sections.Count; i++)
-                    sections[i] = sections[i] with { Rows = sections[i].Rows.Select(row => row.Action == OperationOutcomeAction.ObtainRelic
-                        ? row with { Models = row.Models.Where(key => key != known).ToImmutableArray() } : row)
-                        .Where(row => !row.Models.IsEmpty || !row.Cards.IsEmpty).ToImmutableArray() };
             var rows = ImmutableArray.CreateBuilder<OperationOutcome>();
             var transformGroups = ImmutableArray.CreateBuilder<OperationOutcomeChoices>();
             var effects = after.Effects.Skip(before.Effects.Length);

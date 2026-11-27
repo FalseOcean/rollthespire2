@@ -24,6 +24,9 @@ internal sealed record PredictorReward(
     public bool WasGoldStolenBack { get; init; }
     public bool GoldAmountUnspecified { get; init; }
     public bool GoldNetRestored { get; init; }
+    // A normal potion reward closes on native NotAllowed, without adding a bottle.
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool PotionReceiptDenied { get; init; }
     internal bool HasValidGoldDisposition => !GoldAmountUnspecified && !GoldNetRestored ||
         GoldAmountUnspecified && GoldNetRestored && Kind == PredictorRewardKind.Gold && WasGoldStolenBack &&
         Status == PredictorRewardStatus.Taken && !CanSkip && !PopulateGold && GoldAmount == 0;
@@ -244,7 +247,8 @@ internal sealed partial class PredictorRun
             if (amount < 0) throw new ArgumentException("PredictorGoldRewardInvalid");
             built.Add(prototype with { Id = rewardId, Cards = cards.ToImmutable(), GoldAmount = amount,
                 Status = prototype.GoldNetRestored ? PredictorRewardStatus.Taken : PredictorRewardStatus.Open, CardSelectionEntered = false,
-                RelicSubscriptionActive = prototype.Kind == PredictorRewardKind.Card && !prototype.ManuallySetCards, ContentInstanceId = contentId });
+                RelicSubscriptionActive = prototype.Kind == PredictorRewardKind.Card && !prototype.ManuallySetCards, ContentInstanceId = contentId,
+                PotionReceiptDenied = false });
         }
         working.Validate();
         Working = working;
@@ -434,7 +438,7 @@ internal sealed partial class PredictorRun
                 if (PredictorSettlementEffects.Has(Working, "SOZU"))
                 {
                     // Vanilla NotAllowed settles the reward without procuring a bottle.
-                    MarkTaken(selected.Id);
+                    MarkTaken(selected.Id, potionReceiptDenied: true);
                     Accept(new("PotionNotAllowed", selected.Id, [], null, null));
                     return PredictorInputResult.NotAllowed;
                 }
@@ -581,10 +585,11 @@ internal sealed partial class PredictorRun
 
     private bool MatchesPotion(int slot, long id) => slot >= 0 && slot < Working.PotionSlots.Length && Working.PotionSlots[slot]?.Id == id;
     private int OpenReward(long id) => Rewards.FindIndex(r => r.Id == id && r.Status == PredictorRewardStatus.Open);
-    private void MarkTaken(long id)
+    private void MarkTaken(long id, bool potionReceiptDenied = false)
     {
         int i = OpenReward(id);
-        Rewards = Rewards.SetItem(i, Rewards[i] with { Status = PredictorRewardStatus.Taken, CardSelectionEntered = false, RelicSubscriptionActive = false });
+        Rewards = Rewards.SetItem(i, Rewards[i] with { Status = PredictorRewardStatus.Taken, CardSelectionEntered = false,
+            RelicSubscriptionActive = false, PotionReceiptDenied = potionReceiptDenied });
     }
     private void Procure(long rewardId)
     {

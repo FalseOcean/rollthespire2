@@ -156,6 +156,11 @@ internal sealed partial class InRunMapNodePresenter
     private void ShopEditor(Context c, EditorParts parts, PredictorShopNodeKnowledge shop, bool detailed = true)
     {
         if (detailed) parts.Sections.Add(new("", ShopGoldBalance(shop), [], []));
+        if (c.Plan.AssumePriorPotionDropsSkippedAtShop || shop.PendingCauses.Any(cause => cause.Code == "ShopAutomaticPurchasePending" &&
+            PredictorRouteCauseEvidence.OriginalCauses([cause]).Any(root => root.Code == "MapPotionInventoryNotProjected")))
+            parts.Sections.Add(new("", "", [], [Choice(c, M("shop_assume_skipped_potions"), context => Set(context,
+                context.Plan with { AssumePriorPotionDropsSkippedAtShop = !context.Plan.AssumePriorPotionDropsSkippedAtShop }),
+                selected: c.Plan.AssumePriorPotionDropsSkippedAtShop)]));
         ShopPlanEditor(c, parts, detailed);
         // The balance and its source are explained once at node level. An
         // offer keeps only causes specific to its stock/price or operation.
@@ -265,8 +270,10 @@ internal sealed partial class InRunMapNodePresenter
             (card.UpgradeLevel > 0 ? "+" + (card.UpgradeLevel > 1 ? card.UpgradeLevel.ToString() : "") : "");
         foreach (var offer in premisesOnly ? [] : ancient.Offers)
         {
-            var value = offer.Value;
+            var value = offer.Value ?? offer.ConditionalValue;
             var details = new List<string>();
+            if (offer.ConditionalValue != null && !offer.IsKnown)
+                details.Add(M("ancient_conditional_offer"));
             if (value?.PreparedCard is { } prepared)
                 details.Add(M("ancient_card") + ": " + _names.Resolve(prepared, GameContentKind.Card));
             if (value?.CharacterTarget is { } character)
@@ -283,8 +290,10 @@ internal sealed partial class InRunMapNodePresenter
             details.AddRange(PendingLines(offer.ReplacementPendingCauses));
             bool locked = value is { Selectable: false } && !value.Relic.IsValid;
             var choose = Choice(c, locked ? M("ancient_locked") : R("plan.take"), context => Set(context, context.Plan with
-                { Ancient = !detailed && context.Plan.Ancient?.ExpectedOffer == value ? null : new(ancient.Ancient, value!) }),
-                value == null || locked ? null : Object(value.Relic), enabled: offer.IsKnown && value!.Selectable,
+                { Ancient = !detailed && context.Plan.Ancient?.ExpectedOffer == value ? null :
+                    new(ancient.Ancient, value!) { AssumeProjectedOffer = !offer.IsKnown } }),
+                value == null || locked ? null : Object(value.Relic),
+                enabled: value?.Selectable == true && (offer.IsKnown || offer.ConditionalValue != null),
                 selected: c.Plan.Ancient?.ExpectedOffer == value);
             parts.Sections.Add(new("", string.Join("\n", details), [], []) { HeaderChoice = choose });
         }

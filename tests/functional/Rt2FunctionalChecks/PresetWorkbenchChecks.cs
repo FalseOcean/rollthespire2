@@ -68,6 +68,15 @@ internal static class PresetWorkbenchChecks
         CheckSharedEditorInputs(runtime, directory, solo);
         CheckRetainedShellHotOpen(runtime, directory);
         var soloPreset = RoundTrip(runtime, frame, store, directory, solo, "solo");
+        // A retired relic in an inactive mode does not change the preset's requested query.
+        var editor = solo.AncientEditor!;
+        var oldModes = editor.Modes.ToArray();
+        var oldRow = oldModes[1].Rows[0] with { Options = [new("RELIC", "RETIRED_DORMANT_OPTION")] };
+        oldModes[1] = oldModes[1] with { Rows = [oldRow] };
+        var archivedPreset = soloPreset with { Workbench = soloPreset.Workbench! with { AncientEditor = editor with { Modes = oldModes } } };
+        frame.ApplyPreset(archivedPreset, render: false);
+        AssertCompiled(solo.Compile(runtime, out _), frame.CaptureDraft().Compile(runtime, out _), "Retired inactive preset selection");
+        Check(archivedPreset.Workbench.AncientEditor!.Modes[1].Rows[0] == oldRow, "The original preset retained its inactive draft");
         CheckPoolRebind(runtime, frame, store, directory, solo);
         CheckUnavailableAuthoredIdentityRetention(runtime, frame);
         CheckAutomaticRestorePreservesSource(runtime, directory, solo);
@@ -159,7 +168,14 @@ internal static class PresetWorkbenchChecks
         }
         finally { library.Free(); }
         frame.ApplyPreset(reported, render: false);
-        AssertSameIntent(runtime, reported.Workbench!, frame.CaptureDraft(), "Reported preset normal Use transaction");
+        // Independent event pool captures carry timestamps. The portable query and
+        // the ordered roster can be compared directly, before capturing those pools again.
+        var loaded = frame.CaptureDraft().ToPresetIntent();
+        var originalIntent = reported.Workbench!.ToPresetIntent();
+        Check(QueryHistoryIdentity.Key(originalIntent) == QueryHistoryIdentity.Key(loaded) &&
+            originalIntent.Character == loaded.Character && originalIntent.Ascension == loaded.Ascension &&
+            originalIntent.Players.Select(p => p.Character).SequenceEqual(loaded.Players.Select(p => p.Character)),
+            "Reported preset retained authored conditions and ordered roster at the Use entry");
         Check(File.ReadAllText(path) == original && !frame.HasActiveSearch, "Reported input stays intact and applying leaves Search stopped");
         Console.WriteLine("PRESET_ENCOUNTER_REPORTED=PASS;id=" + reported.Id);
     }

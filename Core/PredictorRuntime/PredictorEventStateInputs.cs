@@ -73,11 +73,14 @@ internal sealed partial class PredictorRun
             var slots = run._eventKey == key && run.HasLocalEventPotionIdentities ? run.EventPotionSlots
                 : local ? supplied!.OrderedSlots.Select((model, index) => model is { } potion
                     ? new PredictorPotion(-(index + 1L), potion) : null).ToImmutableArray() : run.Working.PotionSlots;
-            if (local) Read("potions.localOrderedSlots", string.Join(" | ", supplied!.OrderedSlots.Select(model => model?.Serialized ?? "empty")),
-                origin: PredictorKnowledgeOrigin.PlayerInput, operation: "Event-local ordered potion hypothesis; not a route inventory fact");
+            bool captured = run.UsesCapturedEventPotions(key);
+            var origin = captured ? PredictorKnowledgeOrigin.Captured : local ? PredictorKnowledgeOrigin.PlayerInput : PredictorKnowledgeOrigin.Derived;
+            if (local) Read(captured ? "potions.capturedOrderedSlots" : "potions.localOrderedSlots",
+                string.Join(" | ", supplied!.OrderedSlots.Select(model => model?.Serialized ?? "empty")),
+                origin: origin, operation: captured ? "Ordered bottles at the start of this drawing" : "Event-local ordered potion hypothesis; not a route inventory fact");
             return Read("potions.occupiedAtLeast." + required, slots.Count(p => p != null) >= required,
                 local ? [] : CausesFor(dependencies, PredictorCombatDomain.PotionInventory),
-                origin: local ? PredictorKnowledgeOrigin.PlayerInput : PredictorKnowledgeOrigin.Derived,
+                origin: origin,
                 operation: "Event " + stage + ": occupied potion count >= " + required,
                 sourceProperties: local ? [] : ["potions.slots"]);
         }
@@ -105,11 +108,7 @@ internal sealed partial class PredictorRun
 
         internal EventStateInput<bool> TradableAtLeast(int required)
         {
-            var entries = run.Context.Catalog!.TradableRelicTypes;
-            var membership = entries.SelectMany(relic => RouteRelicMembershipCauses(run, dependencies, relic.Entry));
-            var states = new[] { "LIZARD_TAIL", "WINGED_BOOTS", "WONGOS_MYSTERY_TICKET" }
-                .SelectMany(entry => RouteRelicStateCauses(run, dependencies, entry));
-            var causes = PredictorRouteCauseEvidence.Normalize(membership.Concat(states));
+            var causes = RouteTradableRelicPoolCauses(run, dependencies);
             var tradable = run.Working.Relics.Where(run.IsRelicTradable).ToImmutableArray();
             int guaranteed = tradable.Count(relic => RouteRelicMembershipCauses(run, dependencies, relic.Key.Entry).IsEmpty &&
                 (relic.Key.Entry is not ("LIZARD_TAIL" or "WINGED_BOOTS" or "WONGOS_MYSTERY_TICKET") ||
@@ -154,8 +153,8 @@ internal sealed partial class PredictorRun
         internal EventStateInput<bool> EventPetMember()
         {
             var pets = run.Context.Catalog!.EventPetRelics;
-            bool present = run.Working.Relics.Any(r => !r.Melted && pets.Contains(r.Key));
-            bool guaranteed = run.Working.Relics.Any(r => !r.Melted && pets.Contains(r.Key) &&
+            bool present = run.Working.Relics.Any(r => pets.Contains(r.Key));
+            bool guaranteed = run.Working.Relics.Any(r => pets.Contains(r.Key) &&
                 RouteRelicMembershipCauses(run, dependencies, r.Key.Entry).IsEmpty);
             var causes = guaranteed ? ImmutableArray<PredictorCombatPendingCause>.Empty :
                 PredictorRouteCauseEvidence.Normalize(pets.SelectMany(pet => RouteRelicMembershipCauses(run, dependencies, pet.Entry)));
@@ -178,11 +177,18 @@ internal sealed partial class PredictorRun
         internal EventAppearanceResult Appearance(bool? allowed, bool healthAssumed, bool deckAssumed)
         {
             var causes = allowed.HasValue ? ImmutableArray<PredictorCombatPendingCause>.Empty : Causes;
-            Recorder?.RecordResult("event.appearance." + key.Entry + ".allowed",
-                run.Working.Position.NodeId, allowed, causes, operation: "IsAllowed: source predicate over recorded inputs",
-                allReadFactIds: Facts, unresolvedReadFactIds: allowed.HasValue ? [] : Facts.Where(id =>
-                    Recorder!.Fact(id).Status != PredictorKnowledgeStatus.Known).ToImmutableArray(),
-                derivation: allowed.HasValue && !Causes.IsEmpty ? "A known conjunct/disjunct settles this predicate independently of the remaining inputs." : null);
+            string property = "event.appearance." + key.Entry + ".allowed";
+            if (allowed.HasValue)
+                Recorder?.RecordResult(property, run.Working.Position.NodeId, allowed.Value,
+                    operation: "IsAllowed: source predicate over recorded inputs", allReadFactIds: Facts,
+                    derivation: !Causes.IsEmpty ? "A known conjunct/disjunct settles this predicate independently of the remaining inputs." : null);
+            else if (!causes.IsEmpty)
+                Recorder?.RecordUnknown(property, run.Working.Position.NodeId, PredictorRouteFactPhase.Results, causes,
+                    operation: "IsAllowed depends on unresolved inputs", allReadFactIds: Facts,
+                    unresolvedReadFactIds: Facts.Where(id => Recorder!.Fact(id).Status != PredictorKnowledgeStatus.Known).ToImmutableArray());
+            else
+                Recorder?.RecordResult("event.appearance." + key.Entry + ".admissionAssumed", run.Working.Position.NodeId, true,
+                    origin: PredictorKnowledgeOrigin.ApprovedDefault, operation: "Drawing assumes an unevaluated event admission", allReadFactIds: Facts);
             return new(allowed, causes, Facts, healthAssumed, deckAssumed);
         }
 

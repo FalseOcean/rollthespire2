@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using RolltheSpire2.Compatibility;
+using RolltheSpire2.Core.Authority.Runtime;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Core.World;
@@ -18,6 +19,15 @@ internal static class ReleaseCompatibilityChecks
     {
         int checks=0;
         void Check(bool value,string issue){checks++;if(!value)throw new InvalidOperationException(issue);}
+        foreach (string releaseVersion in new[] { RuntimeVersionCompatibility.SupportedStableVersion, RuntimeVersionCompatibility.SupportedBetaVersion })
+        {
+            int schema = RuntimeAuthorityFingerprintSchema.Current;
+            var baseline = VerifiedVanillaBaselineRegistry.GetAll().SingleOrDefault(b =>
+                b.GameVersion == releaseVersion && b.FingerprintSchemaVersion == schema);
+            Check(baseline != null && RuntimeAuthorityInterpreter.InterpretHistoricalFingerprint(releaseVersion, schema,
+                baseline.OverallSemanticHash, out string matched) == SemanticEnvironmentStatus.VerifiedVanillaMatch && matched == releaseVersion,
+                $"Missing same-version semantic baseline for release target {releaseVersion}, schema {schema}");
+        }
         var options=ProductionSearchReplay.JsonOptions;
         string corpus="tools/ProductionSearchHost/Corpus/";
         string raw=File.ReadAllText(corpus+"v1/context.json");

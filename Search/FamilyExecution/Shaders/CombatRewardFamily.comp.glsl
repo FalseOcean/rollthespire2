@@ -127,6 +127,9 @@ bool c_keep_root(uint64_t root){
 // reward simulation independent. Eight candidates per Dense invocation do not
 // change Compact ABI1 or the authored opening/reward semantics.
 void c_dense_carry8(){
+#ifdef RT2_C_LARGE_WINDOW
+    if(gl_WorkGroupID.x*512u>=batch_meta.values[3])return;
+#endif
     uint lid=gl_LocalInvocationID.x,first=gl_GlobalInvocationID.x*8u;
     uint keep_mask=0u;
     if(first<batch_meta.values[3]){
@@ -167,6 +170,9 @@ void main(){
 #if RT2_C_DENSE_CARRY8
     // Batch input mode is uniform, so all lanes take the same barrier path.
     if(batch_meta.values[4]==0u){c_dense_carry8();return;}
+#endif
+#ifdef RT2_C_LARGE_WINDOW
+    if(gl_WorkGroupID.x*64u>=batch_meta.values[3])return;
 #endif
     uint index=gl_GlobalInvocationID.x,lid=gl_LocalInvocationID.x;
     bool valid=index<batch_meta.values[3],keep=false;

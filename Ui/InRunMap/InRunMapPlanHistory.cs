@@ -27,13 +27,19 @@ internal sealed class InRunMapPlanHistory
                 plan = plan with { Event = authored with { ExpectedOccurrence = new(selected.Event, selected.QueueEvent,
                     selected.RawOrdinal, occurrence.Cursor, selected.Cursor) } };
         }
-        var entry = new Entry(plan, node.Room, node.Model?.Serialized);
-        // Appearance exclusions belong to the coordinate, while operations
-        // belong to an event instance. Restoring another instance must not
-        // restore its obsolete appearance policy and select the first one again.
-        _entries = _entries.RemoveAll(old => SameInstance(old, entry)).Select(old =>
-            old.Plan.NodeId == plan.NodeId ? old with
-            { Plan = old.Plan with { EventOccurrenceExclusions = plan.EventOccurrenceExclusions } } : old).ToImmutableArray().Add(entry);
+        var entry = new Entry(plan, node.Room, plan.Event?.ExpectedEvent.Serialized ?? node.Model?.Serialized);
+        // Only the latest edit at this coordinate owns appearance choices.
+        // Older instance actions keep their receipt and can rebind after the
+        // current rules independently select that instance again.
+        _entries = _entries.RemoveAll(old => SameInstance(old, entry)).Select(old => old.Plan.NodeId == plan.NodeId ? old with
+        {
+            Plan = old.Plan with
+            {
+                EventOccurrenceExclusions = plan.EventOccurrenceExclusions,
+                Event = old.Plan.Event is { Occurrence: { } prior } eventPlan ? eventPlan with
+                    { Occurrence = null, ExpectedOccurrence = prior } : old.Plan.Event
+            }
+        } : old).ToImmutableArray().Add(entry);
         return plan;
     }
 

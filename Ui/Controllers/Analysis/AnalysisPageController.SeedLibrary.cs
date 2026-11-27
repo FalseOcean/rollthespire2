@@ -23,6 +23,8 @@ internal sealed partial class AnalysisPageController
     private SeedLibraryOpeningSelection? _librarySoloSelection;
     private SearchQuery _librarySoloPremise = SearchQuery.Empty;
     private bool _soloExplicitOpening;
+    private int _checkingOpeningSlot;
+    internal bool ReopenedWithoutHistoricalOpening { get; private set; }
 
     internal void ClearSeedLibraryOverrides(bool preserveResultOrigin = false)
     {
@@ -79,7 +81,27 @@ internal sealed partial class AnalysisPageController
     }
 
     internal void OpenPredictionContext(string rawSeed, SeedLibraryContext context)
-        => OpenPredictionContext(rawSeed, context, null);
+    {
+        ReopenedWithoutHistoricalOpening = false;
+        bool historical = context.GameVersion != _runtime.Detection.NormalizedVersion || context.Profile != _runtime.Profile.ProfileId;
+        while (true)
+        {
+            _checkingOpeningSlot = 0;
+            try { OpenPredictionContext(rawSeed, context, null); return; }
+            catch (InvalidOperationException ex) when (historical && ex.Message == "SeedLibrary.OpeningSelectionUnavailable")
+            {
+                // Retry the authored opening without the obsolete saved pickup first.
+                // Each retry removes one failed input on the analysis copy for that seat.
+                var player = context.Players[_checkingOpeningSlot];
+                SeedLibraryPlayer revised;
+                if (player.Selection != null) revised = player with { Selection = null };
+                else if (player.OpeningPremise.OpeningRoute != null) revised = player with { OpeningPremise = SearchQuery.Empty };
+                else throw;
+                context = context with { Players = context.Players.Select(p => p.Slot == revised.Slot ? revised : p).ToArray() };
+                ReopenedWithoutHistoricalOpening = true;
+            }
+        }
+    }
 
     internal void OpenRunPredictionContext(string rawSeed, SeedLibraryContext context, LiveRunPredictionPremises premises)
         => OpenPredictionContext(rawSeed, context, premises);
@@ -90,7 +112,9 @@ internal sealed partial class AnalysisPageController
             SeedLibraryStore.ValidateCapturedRunContext(context, Bootstrap.RuntimeAuthorityEnvironment.Current.Authority);
         else
             SeedLibraryStore.ValidateRuntimeReferences(context, Bootstrap.RuntimeAuthorityEnvironment.Current.Authority);
-        if (context.GameVersion != _runtime.Detection.NormalizedVersion || context.Profile != _runtime.Profile.ProfileId)
+        // A live capture belongs to the running game. A stored context supplies the
+        // player's inputs for a fresh prediction, with its original identity kept by the caller.
+        if (premises is not null && (context.GameVersion != _runtime.Detection.NormalizedVersion || context.Profile != _runtime.Profile.ProfileId))
             throw new InvalidOperationException("SeedLibrary.StaleContext: " + context.GameVersion);
         if (!ProfileSeedRules.TryCanonicalizePredictionSeed(_runtime.Profile, rawSeed, out var seed, out var issue)) throw new InvalidOperationException(issue);
         var characters = RuntimeCharacterCatalogCapture.Capture().EffectiveCharacters;
@@ -129,7 +153,7 @@ internal sealed partial class AnalysisPageController
             var draft = PartyDraftFromContext(context);
             draft = draft with
             { Version = 4, AncientPremises = AncientOptionConditionProfile.BroadDefault,
-                GameVersion = context.GameVersion, Profile = context.Profile,
+                GameVersion = _runtime.Detection.NormalizedVersion, Profile = _runtime.Profile.ProfileId,
                 ObservationVersion = PartyNeowQuery.HasTransactions(draft.Query)
                     ? PartyNeowAdmission.ObservationVersion : OrderedPartyAuthority.ObservationVersion };
             // Explicitly install every slot before analysis; SetPartyDraft would
